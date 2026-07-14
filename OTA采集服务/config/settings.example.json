@@ -1,0 +1,89 @@
+{
+  "python_path": "runtime\\python.exe",
+  "service": {
+    "task_name": "HotelOTACollector",
+    "interval_minutes": 60,
+    "timeout_seconds": 300,
+    "panel_host": "127.0.0.1",
+    "panel_port": 8765
+  },
+  "price_scheduler": {
+    "enabled": true,
+    "interval_minutes": 5,
+    "startup_delay_seconds": 60,
+    "max_tasks_per_run": 20
+  },
+  "hotel": {
+    "hotel_id": ""
+  },
+  "paths": {
+    "meituan_code_dir": "美团OTA数据采集代码",
+    "ctrip_code_dir": "携程OTA数据采集代码",
+    "base_dir": ".",
+    "output_dir": "OTA数据"
+  },
+  "pms": {
+    "enabled": true,
+    "username": "",
+    "password": "",
+    "code_dir": "正式数据抓取-PMS（别样红）\\PMS登录",
+    "entry_script": "fetch_main.py",
+    "timeout_seconds": 900
+  },
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "",
+    "password": "",
+    "database": ""
+  },
+  "meituan": {
+    "enabled": true,
+    "hotel_name": "",
+    "poi_id": "",
+    "partner_id": "",
+    "biz_account_id": "",
+    "eb_cookie": "",
+    "me_cookie": "",
+    "review_contrast_url": "",
+    "dianping_review_contrast_url": "",
+    "review_ranking_url": "",
+    "review_detail_url": "",
+    "goods_query_url": "",
+    "calc_price_url": "",
+    "price_status_url": "",
+    "price_status_payload_file": "",
+    "promotion_finance_url": ""
+  },
+  "ctrip": {
+    "enabled": true,
+    "hotel_name": "",
+    "hotel_id": "",
+    "cookie": "",
+    "rating_url": "",
+    "comment_list_url": "",
+    "promotion_url": "",
+    "goods_query_url": ""
+  },
+  "tasks": {
+    "meituan_business": true,
+    "meituan_joined_rights": true,
+    "meituan_promotion_status": true,
+    "meituan_video_upload_status": true,
+    "meituan_promotion_finance": true,
+    "meituan_exposure_source": true,
+    "meituan_order_loss": true,
+    "meituan_user_source": true,
+    "meituan_review": true,
+    "meituan_review_detail": true,
+    "meituan_promotion": true,
+    "meituan_goods_price": true,
+    "meituan_nearby_event": true,
+    "ctrip_business": true,
+    "ctrip_review": true,
+    "ctrip_review_detail": true,
+    "ctrip_promotion": true,
+    "ctrip_goods_price": true,
+    "pms_fetch": true
+  }
+}

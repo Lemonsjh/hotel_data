@@ -1,0 +1,9 @@
+ALTER TABLE meituan_price_task
+  MODIFY COLUMN execute_status
+  ENUM('PENDING','EXECUTING','SUCCESS','FAILED')
+  DEFAULT 'PENDING';
+
+ALTER TABLE ctrip_price_task
+  MODIFY COLUMN execute_status
+  ENUM('PENDING','EXECUTING','SUCCESS','FAILED')
+  DEFAULT 'PENDING';

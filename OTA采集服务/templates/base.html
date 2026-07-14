@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <h1>{{ title }}</h1>
+        <div class="subtitle">本机 OTA 数据采集、入库和运行监控</div>
+      </div>
+      <nav class="nav">
+        {% for key, href, label in nav_items %}
+          <a class="nav-link {% if key == active %}active{% endif %}" href="{{ href }}">{{ label }}</a>
+        {% endfor %}
+      </nav>
+    </section>
+    {{ body|safe }}
+  </main>
+</body>
+</html>

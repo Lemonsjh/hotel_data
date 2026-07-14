@@ -1,0 +1,40 @@
+# Bundled runtime and generated caches
+runtime/
+__pycache__/
+*.pyc
+
+# Documentation excluded from GitHub upload by request
+文档/
+*.md
+*.docx
+*.pdf
+.docx_qa/
+
+# Local configuration and secrets
+OTA采集服务/config/settings.json
+**/*cookie*.txt
+**/pms_session*.json
+**/JD01_preOrderDetailReport.json
+美团OTA数据采集代码/meituan_price_status_payload.json
+正式数据抓取-PMS（别样红）/ota调价/meituan_hotel_config.json
+
+# Runtime state and logs
+OTA采集服务/logs/
+OTA采集服务/state/
+*.log
+*.log.*
+
+# Browser profiles and local sessions
+**/*user-data/
+**/browser_profiles/
+
+# Collection outputs and exported workbooks
+OTA数据/
+**/output/
+*.xlsx
+*.xls
+*.csv
+
+# Local editor and OS noise
+.DS_Store
+Thumbs.db
