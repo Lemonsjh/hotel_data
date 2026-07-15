@@ -19,6 +19,7 @@ from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE, PARTNER_ID, POI
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import OUTPUT_DIR, sync_table
+from meituan_review_overview_sync import sync_overview_rows
 
 
 DEFAULT_EXCEL_PATH = OUTPUT_DIR / "meituan_ota_collected_data.xlsx"
@@ -204,8 +205,8 @@ def normalize_overview_rows(
 ) -> list[list[Any]]:
     info = payload.get("commentAnalysisInfo") or {}
     if review_platform == "dianping":
-        total = to_number(info.get("dpTotalCount30"))
-        negative = to_number(info.get("dpBadCount30"))
+        total = ""
+        negative = ""
     else:
         total = to_number(first_present(info.get("totalCount365"), info.get("totalCount180"), info.get("totalCount30")))
         bad_rate = to_percent(first_present(info.get("badPercent365"), info.get("badPercent180"), info.get("badPercent30")))
@@ -345,7 +346,10 @@ def save_single_sheet(wb: Workbook, sheet_name: str, filename: str) -> Path:
     rows = [list(row) for row in out_ws.iter_rows(min_row=2, values_only=True)]
     headers = [cell.value for cell in out_ws[1]]
     write_standard_json(out_path, headers, rows)
-    sync_table(f"meituan_{Path(filename).stem}", headers, rows)
+    if filename == "ota_review_overview.xlsx":
+        sync_overview_rows(headers, rows)
+    else:
+        sync_table(f"meituan_{Path(filename).stem}", headers, rows)
     try:
         out_wb.save(out_path)
     except PermissionError:

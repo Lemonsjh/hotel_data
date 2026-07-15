@@ -31,6 +31,7 @@ TASKS = {
     "meituan_promotion_finance": ("meituan", "meituan_promotion_finance_detail.py", []),
     "meituan_exposure_source": ("meituan", "meituan_exposure_source_data.py", []),
     "meituan_order_loss": ("meituan", "meituan_order_loss_data.py", []),
+    "meituan_scan_order": ("meituan", "meituan_scan_order_data.py", []),
     "meituan_user_source": ("meituan", "meituan_user_source_data.py", []),
     "meituan_review": ("meituan", "meituan_review_data.py", []),
     "meituan_review_detail": ("meituan", "meituan_review_detail_data.py", []),
@@ -157,6 +158,7 @@ def build_env(settings: dict[str, Any]) -> dict[str, str]:
     put_if(env, "MEITUAN_DIANPING_REVIEW_CONTRAST_URL", meituan.get("dianping_review_contrast_url"))
     put_if(env, "MEITUAN_REVIEW_RANKING_URL", meituan.get("review_ranking_url"))
     put_if(env, "MEITUAN_REVIEW_DETAIL_URL", meituan.get("review_detail_url"))
+    put_if(env, "MEITUAN_DIANPING_REVIEW_DETAIL_URL", meituan.get("dianping_review_detail_url"))
     put_if(env, "MEITUAN_GOODS_QUERY_URL", meituan.get("goods_query_url"))
     put_if(env, "MEITUAN_CALC_PRICE_URL", meituan.get("calc_price_url"))
     put_if(env, "MEITUAN_PRICE_STATUS_URL", meituan.get("price_status_url"))

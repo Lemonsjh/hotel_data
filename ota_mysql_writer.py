@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -38,6 +39,28 @@ class MysqlSyncError(RuntimeError):
     pass
 
 
+def connect_mysql(*, autocommit: bool = False):
+    """Connect with short retries for transient network interruptions."""
+    import pymysql
+
+    for attempt in range(3):
+        try:
+            return pymysql.connect(
+                **DB_CONFIG,
+                autocommit=autocommit,
+                connect_timeout=12,
+                read_timeout=30,
+                write_timeout=30,
+            )
+        except pymysql.err.OperationalError as exc:
+            retryable = bool(exc.args) and exc.args[0] in {2003, 2006, 2013}
+            if not retryable or attempt == 2:
+                raise
+            delay = 2 * (attempt + 1)
+            print(f"MySQL connection retry in {delay}s ({attempt + 1}/3), error={exc.args[0]}")
+            time.sleep(delay)
+
+
 def sync_table(table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
     if not table_name.replace("_", "").isalnum():
         raise MysqlSyncError(f"Invalid table name: {table_name}")
@@ -46,15 +69,7 @@ def sync_table(table_name: str, headers: Sequence[str], rows: Sequence[Sequence[
     except ImportError as exc:
         raise MysqlSyncError("Missing dependency: pip install pymysql") from exc
 
-    connection = pymysql.connect(
-        host=DB_CONFIG["host"],
-        port=DB_CONFIG["port"],
-        user=DB_CONFIG["user"],
-        password=DB_CONFIG["password"],
-        database=DB_CONFIG["database"],
-        charset=DB_CONFIG["charset"],
-        autocommit=False,
-    )
+    connection = connect_mysql(autocommit=False)
     try:
         with connection.cursor() as cursor:
             column_types = load_column_types(cursor, table_name)
@@ -108,7 +123,7 @@ def sync_metric_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], r
     import pymysql
 
     table_name = "meituan_ota_business_metrics"
-    connection = pymysql.connect(**DB_CONFIG, autocommit=False)
+    connection = connect_mysql(autocommit=False)
     try:
         with connection.cursor() as cursor:
             column_types = load_column_types(cursor, table_name)
@@ -153,7 +168,7 @@ def sync_monthly_history(
     """按统计窗口结束日期保留近30天指标快照。"""
     import pymysql
 
-    connection = pymysql.connect(**DB_CONFIG, autocommit=False)
+    connection = connect_mysql(autocommit=False)
     try:
         with connection.cursor() as cursor:
             column_types = load_column_types(cursor, table_name)
@@ -200,12 +215,50 @@ def sync_exposure_source_daily_history(
     sync_monthly_history("meituan_ota_exposure_source_daily", headers, rows, retention_days)
 
 
+def sync_meituan_scan_orders(
+    headers: Sequence[str], rows: Sequence[Sequence[Any]], hotel_id: str, retention_start: date
+) -> None:
+    table_name = "meituan_ota_scan_order_detail"
+    connection = connect_mysql(autocommit=False)
+    try:
+        with connection.cursor() as cursor:
+            column_types = load_column_types(cursor, table_name)
+            missing = [header for header in headers if header not in column_types]
+            if missing:
+                raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
+            columns = ", ".join(f"`{column}`" for column in headers)
+            values = ", ".join(["%s"] * len(headers))
+            updates = ", ".join(
+                f"`{column}`=VALUES(`{column}`)" for column in headers if column not in {"hotel_id", "order_id"}
+            )
+            if rows:
+                cursor.executemany(
+                    f"INSERT INTO `{table_name}` ({columns}) VALUES ({values}) ON DUPLICATE KEY UPDATE {updates}",
+                    [tuple(convert_value(value, column_types[column]) for column, value in zip(headers, row)) for row in rows],
+                )
+            if hotel_id:
+                cursor.execute(
+                    f"DELETE FROM `{table_name}` WHERE hotel_id=%s AND scan_time < %s",
+                    (hotel_id, retention_start),
+                )
+                deleted = cursor.rowcount
+            else:
+                deleted = 0
+        connection.commit()
+        print(f"DB synced: {table_name} rows={len(rows)} retention_deleted={deleted}")
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def sync_order_loss_snapshot(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
     """覆写保存当前美团近30天流失订单竞争酒店快照。"""
     table_name = "meituan_ota_order_loss_monthly"
     import pymysql
 
-    connection = pymysql.connect(**DB_CONFIG, autocommit=False)
+    connection = connect_mysql(autocommit=False)
     try:
         with connection.cursor() as cursor:
             column_types = load_column_types(cursor, table_name)
@@ -234,7 +287,7 @@ def sync_joined_rights_snapshot(headers: Sequence[str], rows: Sequence[Sequence[
     table_name = "meituan_ota_joined_rights"
     import pymysql
 
-    connection = pymysql.connect(**DB_CONFIG, autocommit=False)
+    connection = connect_mysql(autocommit=False)
     try:
         with connection.cursor() as cursor:
             column_types = load_column_types(cursor, table_name)

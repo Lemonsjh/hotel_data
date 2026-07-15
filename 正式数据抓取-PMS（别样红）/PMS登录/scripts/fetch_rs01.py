@@ -26,6 +26,7 @@ import pms_utils
 import pms_history
 
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output"
+SESSION_FILE = Path(__file__).resolve().parents[1] / "pms_session_playwright.json"
 REPORT_URL = "https://xingfeng.beyondh.com:8081/"
 
 
@@ -60,15 +61,30 @@ def add_cookies_to_context(context, cookies):
 def open_rs01_report(page):
     """打开 RS01 房费日报表"""
     print("\n正在访问 PMS 报表中心...")
+    page.goto(REPORT_URL.rstrip("/") + "/report/RS01", wait_until="domcontentloaded", timeout=60000)
+    time.sleep(5)
+    try:
+        pms_utils.get_query_button(page, timeout=15000)
+        print("当前页面:", page.url)
+        print("页面标题:", page.title())
+        return
+    except Exception as exc:
+        print("⚠️ 直达 RS01 页面失败，尝试从菜单进入:", exc)
+
     page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
     time.sleep(5)
-
     print("点击【门店】...")
-    page.locator("text=门店").first.click(timeout=10000)
+    try:
+        page.locator("text=门店").first.click(timeout=15000)
+    except Exception:
+        page.locator(".ant-menu-item", has_text="门店").first.click(timeout=15000)
     time.sleep(2)
 
     print("点击【RS01 房费日报表(固化)】...")
-    page.locator("text=RS01 房费日报表(固化)").first.click(timeout=10000)
+    try:
+        page.locator("text=RS01 房费日报表(固化)").first.click(timeout=15000)
+    except Exception:
+        page.locator(".ant-menu-item", has_text="RS01").first.click(timeout=15000)
     pms_utils.get_query_button(page)
 
     print("当前页面:", page.url)
@@ -102,6 +118,32 @@ def click_query_and_capture_rs01(page):
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
     return api_url, payload
+
+
+def load_rs01_template():
+    """读取上次捕获到的 RS01 接口模板"""
+    if not SESSION_FILE.exists():
+        return None, None
+    with SESSION_FILE.open("r", encoding="utf-8") as file:
+        session = json.load(file)
+    api_url = session.get("rs01_api_url")
+    payload = session.get("rs01_payload")
+    if api_url and isinstance(payload, dict):
+        return api_url, payload
+    return None, None
+
+
+def save_rs01_template(api_url, payload):
+    """保存 RS01 接口模板，页面偶发打不开时可复用"""
+    if not SESSION_FILE.exists():
+        return
+    with SESSION_FILE.open("r", encoding="utf-8") as file:
+        session = json.load(file)
+    session["rs01_api_url"] = api_url
+    session["rs01_payload"] = payload
+    with SESSION_FILE.open("w", encoding="utf-8") as file:
+        json.dump(session, file, ensure_ascii=False, indent=2)
+    print("✅ RS01 接口信息已保存到会话文件")
 
 
 def set_recent_30_days(payload, start_date=None, end_date=None):
@@ -150,6 +192,7 @@ def fetch_rs01_with_requests(cookies, api_url, payload):
     print("\n使用 requests 抓取 RS01 数据...")
 
     session = requests.Session()
+    session.trust_env = False
     session.cookies.update(cookies)
 
     session.headers.update({
@@ -223,7 +266,12 @@ def fetch_rs01(start_date=None, end_date=None):
         print("❌ 浏览器捕获 RS01 接口失败:", e)
         import traceback
         traceback.print_exc()
-        return None
+        api_url, payload = load_rs01_template()
+        if not api_url:
+            return None
+        print("✅ 使用会话文件中缓存的 RS01 接口模板")
+    else:
+        save_rs01_template(api_url, payload)
 
     if start_date and end_date:
         backfill, windows = False, [("指定日期", start_date, end_date)]

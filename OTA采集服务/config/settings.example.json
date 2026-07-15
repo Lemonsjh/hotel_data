@@ -73,6 +73,7 @@
     "meituan_promotion_finance": true,
     "meituan_exposure_source": true,
     "meituan_order_loss": true,
+    "meituan_scan_order": true,
     "meituan_user_source": true,
     "meituan_review": true,
     "meituan_review_detail": true,

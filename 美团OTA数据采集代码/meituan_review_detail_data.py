@@ -26,6 +26,7 @@ API_URL = os.environ.get(
     "MEITUAN_REVIEW_DETAIL_URL",
     "https://me.meituan.com/api/gw/v1/base/comments/queryGeneralCommentInfo",
 ).strip()
+DIANPING_API_URL = os.environ.get("MEITUAN_DIANPING_REVIEW_DETAIL_URL", "").strip()
 OUTPUT_PATH = OUTPUT_DIR / "ota_review_detail.xlsx"
 TABLE_NAME = "meituan_ota_review_detail"
 HOTEL_ID = os.environ.get("HOTEL_ID", "").strip()
@@ -61,8 +62,9 @@ COMMENT_PAGE_URL = "https://me.meituan.com/ebooking/merchant/comment-manage-reac
 
 
 class MeituanReviewDetailClient:
-    def __init__(self, cookie: str):
-        self.endpoint = API_URL.split("?", 1)[0]
+    def __init__(self, cookie: str, api_url: str = API_URL, platform: int = 1):
+        self.endpoint = api_url.split("?", 1)[0]
+        self.platform = platform
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(headless=True)
         self.context = self.browser.new_context(user_agent=USER_AGENT, viewport={"width": 1440, "height": 1000})
@@ -92,7 +94,7 @@ class MeituanReviewDetailClient:
             {
                 "poiId": POI_ID,
                 "partnerId": PARTNER_ID,
-                "platform": 1,
+                "platform": self.platform,
                 "tag": "",
                 "keywords": "",
                 "replyType": 0,
@@ -256,6 +258,17 @@ def collect_online(
     return rows, overview_counts
 
 
+def collect_overview_counts(api_url: str, platform: int) -> dict[str, int]:
+    if not api_url:
+        print(f"review_detail platform={platform} overview sync skipped: URL is empty")
+        return {}
+    client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE, api_url, platform)
+    try:
+        return extract_overview_counts(client.fetch_page(1, 10))
+    finally:
+        client.close()
+
+
 def load_existing_review_ids() -> set[str]:
     connection = pymysql.connect(**DB_CONFIG)
     try:
@@ -357,12 +370,14 @@ def main() -> None:
         rows, overview_counts = collect_online(
             max(1, args.limit), max(1, args.max_pages), full_history, existing_ids
         )
+    dianping_counts = collect_overview_counts(DIANPING_API_URL, 0) if not args.input_json else {}
     headers = [*HEADERS, "hotel_id"]
     rows = [list(row) + [HOTEL_ID] for row in rows]
     save_outputs(headers, rows)
     if not args.no_db:
         upsert_mysql(headers, rows)
         sync_overview_counts(overview_counts, HOTEL_ID)
+        sync_overview_counts(dianping_counts, HOTEL_ID, "dianping")
     print(f"review_detail rows={len(rows)}")
     print(f"Excel saved: {OUTPUT_PATH}")
 

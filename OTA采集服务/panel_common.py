@@ -27,6 +27,7 @@ TASK_LABELS = {
     "meituan_promotion_finance": "美团推广费用明细",
     "meituan_exposure_source": "美团曝光来源",
     "meituan_order_loss": "美团流失订单",
+    "meituan_scan_order": "美团扫码订单明细",
     "meituan_user_source": "美团用户来源",
     "meituan_review": "美团评价",
     "meituan_review_detail": "美团评价明细",
