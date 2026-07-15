@@ -15,22 +15,14 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, EXTRA_HEADERS, USER_AGENT
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ota_mysql_writer import OUTPUT_DIR, sync_table
+from ota_mysql_writer import OUTPUT_DIR, sync_ctrip_metric_history
 
 
 ENDPOINTS = {
-    "hotel_advice": "/datacenter/api/dataCenter/report/getHotelAdvice",
-    "real_time": "/datacenter/api/dataCenter/report/getDayReportRealTimeDate",
-    "flow_compete": "/datacenter/api/dataCenter/report/getDayReportFlowCompete",
+    "order_loss": "/restapi/soa2/24588/getTripartiteOrderLoss",
     "visitor_title": "/datacenter/api/dataCenter/current/fetchVisitorTitleV2",
-    "capacity": "/datacenter/api/dataCenter/current/fetchCapacityOverViewV4",
-    "tensity": "/datacenter/api/dataCenter/current/fetchTensityOverViewV1",
-    "hotel_min_price": "/datacenter/api/dataCenter/current/queryHotelMinPriceV1",
-    "order_trend": "/datacenter/api/dataCenter/current/queryOrderTrendV1",
-    "market_details": "/datacenter/api/dataCenter/sale/queryMarketDetailsV1",
-    "rank": "/datacenter/api/biddingajax/fetchCurrentHotelSeqInfoV1",
-    "flow_transfor": "/datacenter/api/inland/marketanalysis/flowanalysis/queryFlowTransforNewV1?hostType=Ebooking&v=0.123",
-    "scan_flow": "/datacenter/api/inland/marketanalysis/flowanalysis/queryScanFlowDetailsV2?hostType=Ebooking&v=0.123",
+    "management_data": "/restapi/soa2/24588/getManagementData",
+    "flow_data": "/restapi/soa2/24588/getFlowData",
 }
 DEFAULT_OUTPUT = OUTPUT_DIR / "ctrip_ota_business_metrics.xlsx"
 COMPETITION_CAPTURE = OUTPUT_DIR / "ctrip_competition_profile_dom_capture.json"
@@ -40,13 +32,11 @@ HOTEL_ID = os.environ.get("HOTEL_ID", "").strip()
 
 HEADERS = [
     "snapshot_time",
-    "stats_period_type",
     "business_date",
-    "period_days",
+    "metric_code",
     "hotel_name",
     "metric_group",
     "metric_name",
-    "metric_display_name",
     "metric_value",
     "metric_unit",
     "compare_label",
@@ -58,38 +48,26 @@ HEADERS = [
 METRIC_LABELS = {
     "booking_order_count": ("\u7ecf\u8425\u5bf9\u6bd4", "\u9884\u8ba2\u8ba2\u5355\u91cf"),
     "booking_sales_amount": ("\u7ecf\u8425\u5bf9\u6bd4", "\u9884\u8ba2\u9500\u552e\u989d"),
-    "booking_room_night": ("\u7ecf\u8425\u6536\u76ca", "\u9884\u8ba2\u95f4\u591c\u91cf"),
-    "checkout_sales_amount": ("\u7ecf\u8425\u6536\u76ca", "\u79bb\u5e97\u9500\u552e\u989d"),
-    "checkout_room_night": ("\u7ecf\u8425\u6536\u76ca", "\u79bb\u5e97\u95f4\u591c\u91cf"),
-    "checkout_conversion_rate": ("\u7ecf\u8425\u6536\u76ca", "\u79bb\u5e97\u6210\u4ea4\u7387"),
-    "checkout_average_sale_price": ("\u7ecf\u8425\u6536\u76ca", "\u79bb\u5e97\u5e73\u5747\u5356\u4ef7"),
+    "booking_room_night": ("\u7ecf\u8425\u5bf9\u6bd4", "\u9884\u8ba2\u95f4\u591c\u91cf"),
     "inhouse_room_night": ("\u7ecf\u8425\u5bf9\u6bd4", "\u5728\u5e97\u95f4\u591c"),
     "occupancy_rate": ("\u7ecf\u8425\u5bf9\u6bd4", "\u51fa\u79df\u7387"),
-    "room_tensity_rate": ("\u5b9e\u65f6\u7ecf\u8425", "\u7d27\u5f20\u5ea6"),
-    "lowest_sale_price": ("\u5b9e\u65f6\u7ecf\u8425", "\u5f53\u524d\u6700\u4f4e\u4ef7"),
     "ctrip_app_visitor_count": ("\u7ecf\u8425\u5bf9\u6bd4", "\u643a\u7a0bAPP\u8bbf\u5ba2"),
     "ctrip_app_conversion_rate": ("\u7ecf\u8425\u5bf9\u6bd4", "\u643a\u7a0bAPP\u8f6c\u5316\u7387"),
+    "management_order_conversion_rate": ("\u7ecf\u8425\u5bf9\u6bd4", "\u8ba2\u5355\u8f6c\u5316\u7387"),
+    "realtime_booking_sales_amount": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u9884\u8ba2\u9500\u552e\u989d"),
+    "realtime_booking_room_night": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u9884\u8ba2\u95f4\u591c\u91cf"),
+    "realtime_order_conversion_rate": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u8ba2\u5355\u8f6c\u5316\u7387"),
+    "realtime_occupancy_rate": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u51fa\u79df\u7387"),
     "realtime_booking_order_count": ("实时经营", "实时预订订单"),
     "realtime_inhouse_room_night": ("实时经营", "实时在店间夜"),
-    "realtime_ctrip_order_count": ("\u5b9e\u65f6\u7ecf\u8425", "\u643a\u7a0b\u8ba2\u5355\u91cf"),
-    "realtime_qunar_order_count": ("\u5b9e\u65f6\u7ecf\u8425", "\u53bb\u54ea\u513f\u8ba2\u5355\u91cf"),
-    "realtime_elong_order_count": ("\u5b9e\u65f6\u7ecf\u8425", "\u827a\u9f99\u8ba2\u5355\u91cf"),
-    "realtime_visitor_count": ("实时经营", "实时访客量"),
-    "realtime_rank": ("实时经营", "实时排名"),
-    "qunar_realtime_visitor_count": ("实时经营", "去哪儿实时访客量"),
     "list_page_exposure_count": ("流量漏斗", "列表页曝光量"),
     "detail_page_visitor_count": ("流量漏斗", "详情页访客量"),
-    "order_page_visitor_count": ("流量漏斗", "订单页访客量"),
-    "order_submit_count": ("流量漏斗", "订单提交数"),
+    "order_submit_count": ("流量漏斗", "订单量"),
     "exposure_conversion_rate": ("流量漏斗", "曝光转化率"),
     "order_conversion_rate": ("流量漏斗", "下单转化率"),
-    "transaction_conversion_rate": ("流量漏斗", "成交转化率"),
-    "visitor_order_conversion_rate": ("流量漏斗", "访客订单转化率"),
-    "detail_page_uv_count": ("流量漏斗", "详情页UV"),
-    "detail_page_order_count": ("流量漏斗", "详情页订单数"),
-    "lost_room_night_count_7d": ("流失诊断", "近7天流失间夜"),
-    "lost_visitor_count_7d": ("流失诊断", "近7天流失访客"),
-    "lost_order_amount_7d": ("流失诊断", "近7天流失订单金额"),
+    "lost_order_count": ("流失诊断", "流失订单量"),
+    "lost_room_night_count": ("流失诊断", "流失间夜量"),
+    "lost_order_amount": ("流失诊断", "流失订单金额"),
 }
 
 
@@ -182,6 +160,27 @@ def parse_number(value: Any) -> Any:
         return value
 
 
+def normalize_metric_value(value: Any, unit: str) -> Any:
+    if unit == "%" and isinstance(value, str) and value.strip().endswith("%"):
+        return parse_number(value.strip()[:-1])
+    return parse_number(value)
+
+
+def round_number(value: Any, digits: int = 2) -> Any:
+    parsed = parse_number(value)
+    if isinstance(parsed, float):
+        parsed = round(parsed, digits)
+        return int(parsed) if parsed.is_integer() else parsed
+    return parsed
+
+
+def percent_points(value: Any) -> Any:
+    parsed = parse_number(value)
+    if isinstance(parsed, (int, float)):
+        return round_number(parsed * 100)
+    return parsed
+
+
 def write_single_sheet(
     output_path: Path,
     sheet_name: str,
@@ -256,37 +255,53 @@ class CtripBusinessClient(CtripClient):
         data = {
             name: self.post_json(path, {})
             for name, path in ENDPOINTS.items()
-            if name not in {"flow_transfor", "scan_flow", "market_details", "order_trend"}
+            if name not in {"order_loss", "flow_data", "management_data", "management_data_realtime"}
         }
-        data["market_details"] = {}
-        for target_type in (1, 2, 0):
-            payload = {
-                "platform": 0,
-                "startDateType": 0,
-                "startDate": yesterday,
+        data["management_data"] = self.post_json(
+            ENDPOINTS["management_data"],
+            {
+                "dateType": 2,
+                "beginDate": yesterday,
                 "endDate": yesterday,
-                "type": target_type,
-            }
-            data["market_details"][str(target_type)] = self.post_json(ENDPOINTS["market_details"], payload)
-        data["order_trend"] = self.optional_post_json(ENDPOINTS["order_trend"], {"ota": 0, "includeCanceled": False})
-        flow_payload = {"platform": "Ctrip", "startDate": yesterday, "endDate": yesterday}
-        scan_payload = {
-            "platform": "Ctrip",
-            "channelType": "0",
-            "startDate": yesterday,
-            "endDate": yesterday,
-            "dateDimension": "0",
-            "dataType": 0,
-        }
-        scan_peer_payload = dict(scan_payload, dataType=3)
-        data["flow_transfor"] = self.optional_post_json(
-            ENDPOINTS["flow_transfor"], flow_payload, "application/json;"
+                "cipher": {},
+                "header": {"platform": "WEB"},
+            },
         )
-        data["scan_flow"] = self.optional_post_json(
-            ENDPOINTS["scan_flow"], scan_payload, "application/json;|cas"
+        data["management_data_realtime"] = self.post_json(
+            ENDPOINTS["management_data"],
+            {
+                "dateType": 1,
+                "beginDate": "",
+                "endDate": "",
+                "cipher": {},
+                "header": {"platform": "WEB"},
+            },
         )
-        data["scan_flow_peer"] = self.optional_post_json(
-            ENDPOINTS["scan_flow"], scan_peer_payload, "application/json;|cas"
+        data["order_loss"] = self.post_json(
+            ENDPOINTS["order_loss"],
+            {
+                "ota": "ctrip",
+                "dateType": 2,
+                "beginDate": yesterday,
+                "endDate": yesterday,
+                "pageNo": 1,
+                "pageSize": 10,
+                "sortKey": 0,
+                "desc": 2,
+                "cipher": {},
+                "header": {"platform": "WEB"},
+            },
+        )
+        data["flow_data"] = self.post_json(
+            ENDPOINTS["flow_data"],
+            {
+                "dateType": 2,
+                "beginDate": yesterday,
+                "endDate": yesterday,
+                "ota": "ctrip",
+                "cipher": {},
+                "header": {"platform": "WEB"},
+            },
         )
         return data
 
@@ -297,20 +312,11 @@ def payload_data(response: Any) -> Any:
     return response
 
 
-def pick(item: dict[str, Any], *keys: str, default: Any = "") -> Any:
-    for key in keys:
-        if key in item and item[key] not in (None, ""):
-            return item[key]
-    return default
-
-
 def row(
     captured_at: datetime,
-    period_type: str,
     business_date: Any,
-    period_days: Any,
     hotel_name: str,
-    metric_name: str,
+    metric_code: str,
     metric_value: Any,
     metric_unit: str = "",
     compare_label: str = "",
@@ -318,38 +324,24 @@ def row(
     competitor_rank: Any = "",
     peer_average: Any = "",
 ) -> list[Any]:
-    metric_group, metric_display_name = METRIC_LABELS.get(metric_name, ("其他", metric_name))
+    metric_group, metric_name = METRIC_LABELS.get(metric_code, ("其他", metric_code))
     return [
         captured_at,
-        period_type,
         business_date,
-        period_days,
+        metric_code,
         hotel_name,
         metric_group,
         metric_name,
-        metric_display_name,
-        parse_number(metric_value),
+        normalize_metric_value(metric_value, metric_unit),
         metric_unit,
         compare_label,
         compare_value,
         competitor_rank,
-        peer_average,
+        normalize_metric_value(peer_average, metric_unit) if metric_unit == "%" else peer_average,
     ]
 
 
-def rank_text(rank_value: Any, total_value: Any = "") -> str:
-    if rank_value in (None, ""):
-        return ""
-    if total_value not in (None, ""):
-        return f"{rank_value}/{total_value}"
-    return str(rank_value)
-
-
 COMPETITION_TITLE_MAP = {
-    "\u9884\u8ba2\u8ba2\u5355\u91cf": ("booking_order_count", "order"),
-    "\u9884\u8ba2\u9500\u552e\u989d": ("booking_sales_amount", "CNY"),
-    "\u5728\u5e97\u95f4\u591c": ("inhouse_room_night", "room_night"),
-    "\u51fa\u79df\u7387": ("occupancy_rate", "%"),
     "\u643a\u7a0bAPP\u8bbf\u5ba2": ("ctrip_app_visitor_count", "person"),
     "\u643a\u7a0bAPP\u8f6c\u5316\u7387": ("ctrip_app_conversion_rate", "%"),
 }
@@ -389,7 +381,6 @@ def competition_profile_rows(data: dict[str, Any], captured_at: datetime, busine
         return []
     period_type = data.get("statsPeriodType") or "yesterday"
     period_business_date = captured_at.date() if period_type == "realtime" else business_date
-    period_days = 0 if period_type == "realtime" else 1
     rows: list[list[Any]] = []
     for item in metrics:
         if not isinstance(item, dict):
@@ -402,9 +393,7 @@ def competition_profile_rows(data: dict[str, Any], captured_at: datetime, busine
         rows.append(
             row(
                 captured_at,
-                period_type,
                 period_business_date,
-                period_days,
                 hotel_name,
                 metric_name,
                 item.get("hotelValue"),
@@ -427,14 +416,13 @@ def extract_hotel_name_from_api(data: dict[str, Any]) -> str | None:
             value = visitor_title.get(key)
             if value:
                 return str(value).strip()
-    # 2. 尝试 capacity / tensity 等接口中的 hotelIdName 类字段
-    for endpoint in ("capacity", "tensity", "hotel_min_price", "hotel_advice"):
-        resp = payload_data(data.get(endpoint))
-        if isinstance(resp, dict):
-            for key in ("hotelName", "hotel_name", "name", "hotelTitle", "hotelIdName"):
-                value = resp.get(key)
-                if value:
-                    return str(value).strip()
+    # 2. 尝试标题接口中的酒店名称
+    resp = payload_data(data.get("visitor_title"))
+    if isinstance(resp, dict):
+        for key in ("hotelName", "hotel_name", "name", "hotelTitle", "hotelIdName"):
+            value = resp.get(key)
+            if value:
+                return str(value).strip()
     return None
 
 
@@ -469,173 +457,104 @@ def extract_hotel_name(payload: dict[str, Any], override_name: str | None = None
 
 
 def business_diagnosis_rows(data: dict[str, Any], captured_at: datetime, business_date: Any, hotel_name: str) -> list[list[Any]]:
-    flow = payload_data(data.get("flow_compete")) or {}
+    response = payload_data(data.get("order_loss")) or {}
+    loss = response.get("orderLossdata") or {}
+    if not loss:
+        return []
     return [
-        row(captured_at, "last_7_days", business_date, 7, hotel_name, "lost_room_night_count_7d", flow.get("ordquantity"), "room_night"),
-        row(captured_at, "last_7_days", business_date, 7, hotel_name, "lost_visitor_count_7d", flow.get("comhtluv"), "person"),
-        row(captured_at, "last_7_days", business_date, 7, hotel_name, "lost_order_amount_7d", flow.get("ordamount"), "CNY"),
+        row(captured_at, business_date, hotel_name, "lost_order_count", loss.get("order"), "order", "较前日", round_number(loss.get("orderYoy"))),
+        row(captured_at, business_date, hotel_name, "lost_room_night_count", loss.get("quantity"), "room_night", "较前日", round_number(loss.get("quantityYoy"))),
+        row(captured_at, business_date, hotel_name, "lost_order_amount", loss.get("amount"), "CNY", "较前日", round_number(loss.get("amountYoy"))),
     ]
 
 
-MARKET_DETAIL_METRICS = {
-    "1": [
-        ("booking_sales_amount", "CNY"),
-        ("booking_room_night", "room_night"),
-        ("booking_order_count", "order"),
-    ],
-    "2": [
-        ("inhouse_room_night", "room_night"),
-        ("room_tensity_rate", "%"),
-        ("occupancy_rate", "%"),
-    ],
-    "0": [
-        ("checkout_sales_amount", "CNY"),
-        ("checkout_room_night", "room_night"),
-        ("checkout_conversion_rate", "%"),
-        ("checkout_average_sale_price", "CNY"),
-    ],
+MANAGEMENT_DATA_METRICS = {
+    0: ("booking_order_count", "order"),
+    1: ("booking_sales_amount", "CNY"),
+    2: ("inhouse_room_night", "room_night"),
+    3: ("occupancy_rate", "%"),
+    4: ("booking_room_night", "room_night"),
+    5: ("management_order_conversion_rate", "%"),
+}
+
+REALTIME_MANAGEMENT_DATA_METRICS = {
+    0: ("realtime_booking_order_count", "order"),
+    1: ("realtime_booking_sales_amount", "CNY"),
+    2: ("realtime_inhouse_room_night", "room_night"),
+    3: ("realtime_occupancy_rate", "%"),
+    4: ("realtime_booking_room_night", "room_night"),
+    5: ("realtime_order_conversion_rate", "%"),
 }
 
 
-def market_detail_rows(data: dict[str, Any], captured_at: datetime, business_date: Any, hotel_name: str) -> list[list[Any]]:
-    market_details = data.get("market_details") or {}
+def management_data_rows(
+    data: dict[str, Any],
+    captured_at: datetime,
+    business_date: Any,
+    hotel_name: str,
+    realtime: bool = False,
+) -> list[list[Any]]:
+    response_key = "management_data_realtime" if realtime else "management_data"
+    response = payload_data(data.get(response_key)) or {}
+    items = response.get("dataList") or []
+    metrics = REALTIME_MANAGEMENT_DATA_METRICS if realtime else MANAGEMENT_DATA_METRICS
+    compare_label = "\u8f83\u6628\u65e5\u540c\u671f" if realtime else "\u8f83\u4e0a\u5468\u540c\u671f"
     rows: list[list[Any]] = []
-    if not isinstance(market_details, dict):
-        return rows
-    for target_type, metrics in MARKET_DETAIL_METRICS.items():
-        response = market_details.get(target_type) or {}
-        items = payload_data(response) or []
-        if not isinstance(items, list):
+    for item in items:
+        if not isinstance(item, dict) or item.get("indexType") not in metrics:
             continue
-        for index, (metric_name, metric_unit) in enumerate(metrics):
-            if index >= len(items) or not isinstance(items[index], dict):
-                continue
-            item = items[index]
-            rows.append(
-                row(
-                    captured_at,
-                    "yesterday",
-                    business_date,
-                    1,
-                    hotel_name,
-                    metric_name,
-                    item.get("tip1"),
-                    metric_unit,
-                    "same_period_last_week_change_rate",
-                    item.get("tip2"),
-                    "",
-                    item.get("tip3"),
-                )
+        metric_code, metric_unit = metrics[item["indexType"]]
+        is_percentage = metric_unit == "%"
+        value = lambda key: percent_points(item.get(key)) if is_percentage else round_number(item.get(key))
+        rows.append(
+            row(
+                captured_at,
+                business_date,
+                hotel_name,
+                metric_code,
+                value("val"),
+                metric_unit,
+                compare_label,
+                value("lastVal"),
+                item.get("rankComp", ""),
+                value("avgComp"),
             )
+        )
     return rows
 
 
-def realtime_business_rows(data: dict[str, Any], captured_at: datetime, hotel_name: str) -> list[list[Any]]:
-    business_date = captured_at.date()
-    capacity = data.get("capacity") or {}
-    tensity = data.get("tensity") or {}
-    min_price = payload_data(data.get("hotel_min_price")) or {}
-    now_tensity = tensity.get("nowTensityDetail") or {}
-    pre_tensity = tensity.get("preTensityDetail") or {}
-    currency = min_price.get("currency") or "CNY"
-    if currency == "RMB":
-        currency = "CNY"
-    rows = [
-        row(captured_at, "realtime", business_date, 0, hotel_name, "realtime_booking_order_count", capacity.get("orderQuantity"), "order", "same_period_last_week", capacity.get("synchronizationOrderQuantity"), capacity.get("rankOfOrderQuantity"), capacity.get("competitorsAverageOrderQuantity")),
-        row(captured_at, "realtime", business_date, 0, hotel_name, "realtime_ctrip_order_count", capacity.get("ctripOrderQuantity"), "order", "same_period_last_week", capacity.get("ctripSynchronizationOrderQuantity"), capacity.get("ctripRankOfOrderQuantity"), ""),
-        row(captured_at, "realtime", business_date, 0, hotel_name, "realtime_qunar_order_count", capacity.get("qunarOrderQuantity"), "order", "same_period_last_week", capacity.get("qunarSynchronizationOrderQuantity"), capacity.get("qunarRankOfOrderQuantity"), ""),
-        row(captured_at, "realtime", business_date, 0, hotel_name, "realtime_elong_order_count", capacity.get("elongOrderQuantity"), "order", "same_period_last_week", capacity.get("elongSynchronizationOrderQuantity"), capacity.get("elongRankOfOrderQuantity"), ""),
-        row(captured_at, "realtime", business_date, 0, hotel_name, "realtime_inhouse_room_night", capacity.get("occupiedRooms"), "room_night", "same_period_last_week", capacity.get("synchronizationOccupiedRooms"), capacity.get("rankOfOccupiedRooms"), capacity.get("competitorsAverageOccupiedRooms")),
-        row(captured_at, "realtime", business_date, 0, hotel_name, "occupancy_rate", capacity.get("occupancyRate"), "%", "same_period_last_week", capacity.get("synchronizationOccupancyRate"), capacity.get("rankOfOccupancyRate"), ""),
-        row(captured_at, "realtime", business_date, 0, hotel_name, "room_tensity_rate", now_tensity.get("tensityScore"), "%", "previous_period", pre_tensity.get("tensityScore"), tensity.get("rankOfTensity"), ""),
-        row(captured_at, "realtime", business_date, 0, hotel_name, "lowest_sale_price", min_price.get("minPrice"), currency, "", "", rank_text(min_price.get("minPriceRank"), min_price.get("competitorHotelTotal")), ""),
-    ]
-    return [item for item in rows if item[8] not in (None, "")]
+FLOW_DATA_METRICS = {
+    6: ("list_page_exposure_count", "count"),
+    7: ("detail_page_visitor_count", "person"),
+    8: ("order_submit_count", "order"),
+    9: ("exposure_conversion_rate", "%"),
+    10: ("order_conversion_rate", "%"),
+}
 
 
-def first_flow_item(items: Any, hotel_id: int | None = None) -> dict[str, Any]:
-    if not isinstance(items, list):
-        return {}
+def flow_data_rows(data: dict[str, Any], captured_at: datetime, business_date: Any, hotel_name: str) -> list[list[Any]]:
+    response = payload_data(data.get("flow_data")) or {}
+    items = response.get("dataList") or []
+    rows: list[list[Any]] = []
     for item in items:
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or item.get("indexType") not in FLOW_DATA_METRICS:
             continue
-        if hotel_id is None and item.get("hotelId", 0) > 0:
-            return item
-        if item.get("hotelId") == hotel_id:
-            return item
-    return {}
-
-
-def pct(value: Any) -> Any:
-    if value in (None, ""):
-        return ""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return value
-
-
-def safe_rate(numerator: Any, denominator: Any) -> Any:
-    try:
-        denominator = float(denominator)
-        if denominator == 0:
-            return ""
-        return float(numerator) / denominator * 100
-    except (TypeError, ValueError):
-        return ""
-
-
-def sum_list(values: Any) -> Any:
-    if not isinstance(values, list):
-        return ""
-    total = 0
-    has_value = False
-    for value in values:
-        if value is None:
-            continue
-        total += float(value)
-        has_value = True
-    if not has_value:
-        return ""
-    return int(total) if total.is_integer() else total
-
-
-def first_list_value(data: Any, key: str) -> Any:
-    if not isinstance(data, dict):
-        return ""
-    payload = data.get("data") or data
-    values = payload.get(key) if isinstance(payload, dict) else None
-    return values[0] if isinstance(values, list) and values else ""
-
-
-def flow_conversion_rows(data: dict[str, Any], captured_at: datetime, business_date: Any, hotel_name: str) -> list[list[Any]]:
-    flow_items = payload_data(data.get("flow_transfor")) or []
-    mine = first_flow_item(flow_items)
-    peer = first_flow_item(flow_items, -1)
-    scan = payload_data(data.get("scan_flow")) or {}
-    scan_peer = payload_data(data.get("scan_flow_peer")) or {}
-
-    list_exposure = mine.get("listExposure")
-    detail_exposure = mine.get("detailExposure")
-    order_filling = mine.get("orderFillingNum")
-    order_submit = mine.get("orderSubmitNum")
-    peer_list_exposure = peer.get("listExposure")
-    peer_detail_exposure = peer.get("detailExposure")
-    peer_order_filling = peer.get("orderFillingNum")
-    peer_order_submit = peer.get("orderSubmitNum")
-
-    rows = [
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "list_page_exposure_count", list_exposure, "count", "", "", "", peer_list_exposure),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "detail_page_visitor_count", detail_exposure, "person", "", "", "", peer_detail_exposure),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "order_page_visitor_count", order_filling, "person", "", "", "", peer_order_filling),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "order_submit_count", order_submit, "order", "", "", "", peer_order_submit),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "exposure_conversion_rate", pct(mine.get("flowRate")), "%", "", "", "", pct(peer.get("flowRate"))),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "order_conversion_rate", safe_rate(order_filling, detail_exposure), "%", "", "", "", safe_rate(peer_order_filling, peer_detail_exposure)),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "transaction_conversion_rate", safe_rate(order_submit, order_filling), "%", "", "", "", safe_rate(peer_order_submit, peer_order_filling)),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "visitor_order_conversion_rate", pct(first_list_value(scan, "conversionsRatesDataList")), "%", "", "", "", pct(first_list_value(scan_peer, "conversionsRatesDataList"))),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "detail_page_uv_count", sum_list((scan.get("data") or scan).get("uvDataList")), "person", "same_period_last_week", sum_list((scan.get("data") or scan).get("uvLyList")), "", sum_list((scan_peer.get("data") or scan_peer).get("uvDataList"))),
-        row(captured_at, "yesterday", business_date, 1, hotel_name, "detail_page_order_count", sum_list((scan.get("data") or scan).get("orderDataList")), "order", "same_period_last_week", sum_list((scan.get("data") or scan).get("orderLyList")), "", sum_list((scan_peer.get("data") or scan_peer).get("orderDataList"))),
-    ]
+        metric_code, metric_unit = FLOW_DATA_METRICS[item["indexType"]]
+        is_percentage = metric_unit == "%"
+        rows.append(
+            row(
+                captured_at,
+                business_date,
+                hotel_name,
+                metric_code,
+                percent_points(item.get("val")) if is_percentage else item.get("val"),
+                metric_unit,
+                "previous_period",
+                percent_points(item.get("lastVal")) if is_percentage else item.get("lastVal"),
+                item.get("rankComp", ""),
+                percent_points(item.get("avgComp")) if is_percentage else item.get("avgComp"),
+            )
+        )
     return rows
 
 
@@ -646,13 +565,21 @@ def normalize_rows(payload: dict[str, Any], captured_at: datetime, hotel_name: s
     if not profiles and payload.get("competition_profile"):
         profiles = [payload["competition_profile"]]
     rows: list[list[Any]] = []
-    rows.extend(market_detail_rows(payload, captured_at, business_date, hotel_name))
-    rows.extend(realtime_business_rows(payload, captured_at, hotel_name))
+    rows.extend(management_data_rows(payload, captured_at, business_date, hotel_name))
+    rows.extend(management_data_rows(payload, captured_at, captured_at.date(), hotel_name, realtime=True))
     for profile in profiles:
         rows.extend(competition_profile_rows(profile, captured_at, business_date, hotel_name))
-    rows.extend(flow_conversion_rows(payload, captured_at, business_date, hotel_name))
+    rows.extend(flow_data_rows(payload, captured_at, business_date, hotel_name))
     rows.extend(business_diagnosis_rows(payload, captured_at, business_date, hotel_name))
     return rows
+
+
+def deduplicate_rows(rows: list[list[Any]]) -> list[list[Any]]:
+    """同一营业日和指标按组装顺序保留最后一条。"""
+    unique: dict[tuple[Any, Any], list[Any]] = {}
+    for item in rows:
+        unique[(item[1], item[2])] = item
+    return list(unique.values())
 
 
 def sample_payload() -> dict[str, Any]:
@@ -667,19 +594,24 @@ def sample_payload() -> dict[str, Any]:
 
 
 def save_rows(rows: list[list[Any]], output: Path = DEFAULT_OUTPUT) -> Path:
-    headers = [*HEADERS, "hotel_id"]
-    rows = [list(row) + [HOTEL_ID] for row in rows]
+    if not HOTEL_ID:
+        raise CtripApiError("HOTEL_ID 未配置，拒绝写入携程经营历史")
+    rows = deduplicate_rows(rows)
+    if not rows:
+        raise CtripApiError("携程经营接口未生成有效指标，保留数据库原有数据")
+    headers = [*HEADERS[:4], "hotel_id", *HEADERS[4:]]
+    rows = [list(item[:4]) + [HOTEL_ID] + list(item[4:]) for item in rows]
     output_path = write_single_sheet(
         output,
         SHEET_NAME,
         headers,
         rows,
-        widths=[20, 16, 14, 10, 24, 14, 28, 22, 14, 10, 22, 18, 14, 14, 16],
+        widths=[20, 14, 32, 24, 16, 16, 22, 14, 8, 14, 14, 12, 14],
         datetime_columns={1},
-        date_columns={3},
+        date_columns={2},
     )
     write_standard_json(output_path, headers, rows)
-    sync_table(output_path.stem, headers, rows)
+    sync_ctrip_metric_history(headers, rows)
     return output_path
 
 

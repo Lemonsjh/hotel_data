@@ -118,11 +118,15 @@ def sync_table(table_name: str, headers: Sequence[str], rows: Sequence[Sequence[
         connection.close()
 
 
-def sync_metric_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 30) -> None:
-    """美团经营指标按营业日和指标编码增量保存，避免覆盖历史。"""
-    import pymysql
-
-    table_name = "meituan_ota_business_metrics"
+def sync_metric_history_table(
+    table_name: str,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[Any]],
+    key_columns: set[str],
+    retention_days: int,
+) -> None:
+    if not rows:
+        raise MysqlSyncError(f"Refusing to sync empty metric history: {table_name}")
     connection = connect_mysql(autocommit=False)
     try:
         with connection.cursor() as cursor:
@@ -131,7 +135,9 @@ def sync_metric_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], r
             if missing:
                 raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
             columns = list(headers)
-            key_columns = {"hotel_id", "business_date", "metric_code"}
+            missing_keys = key_columns.difference(columns)
+            if missing_keys:
+                raise MysqlSyncError(f"Metric history keys missing: {', '.join(sorted(missing_keys))}")
             updates = [column for column in columns if column not in key_columns]
             placeholders = ", ".join(["%s"] * len(columns))
             sql = (
@@ -160,6 +166,30 @@ def sync_metric_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], r
         raise
     finally:
         connection.close()
+
+
+def sync_metric_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 30) -> None:
+    """美团经营指标按营业日和指标编码增量保存。"""
+    sync_metric_history_table(
+        "meituan_ota_business_metrics",
+        headers,
+        rows,
+        {"hotel_id", "business_date", "metric_code"},
+        retention_days,
+    )
+
+
+def sync_ctrip_metric_history(
+    headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 30
+) -> None:
+    """携程经营指标按营业日和指标编码增量保存。"""
+    sync_metric_history_table(
+        "ctrip_ota_business_metrics",
+        headers,
+        rows,
+        {"hotel_id", "business_date", "metric_code"},
+        retention_days,
+    )
 
 
 def sync_monthly_history(
