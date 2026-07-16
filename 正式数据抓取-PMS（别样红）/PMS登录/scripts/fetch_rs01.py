@@ -264,8 +264,6 @@ def fetch_rs01(start_date=None, end_date=None):
 
     except Exception as e:
         print("❌ 浏览器捕获 RS01 接口失败:", e)
-        import traceback
-        traceback.print_exc()
         api_url, payload = load_rs01_template()
         if not api_url:
             return None

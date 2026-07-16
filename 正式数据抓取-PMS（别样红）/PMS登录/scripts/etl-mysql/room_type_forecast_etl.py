@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +14,8 @@ from config import DB_CONFIG, HOTEL_CONFIG
 
 ROOT = Path(__file__).resolve().parents[2]
 JSON_PATH = ROOT / "output" / "FORECAST.json"
-TABLE_NAME = "pms_room_type_forecast_snapshot"
+TABLE_NAME = "pms_room_type_forecast"
 HOTEL_ID = os.environ.get("HOTEL_ID", "").strip() or str(HOTEL_CONFIG.get("id") or "").strip()
-RETENTION_DAYS = 30
 
 
 def number(value: Any) -> float | None:
@@ -58,7 +57,7 @@ def transform(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in rows if row["room_type_name"] and row["pms_room_type_id"]]
 
 
-def upsert_mysql(rows: list[dict[str, Any]], conn=None) -> None:
+def replace_mysql(rows: list[dict[str, Any]], conn=None) -> None:
     if not rows:
         print("房类预测无可入库数据")
         return
@@ -71,41 +70,19 @@ def upsert_mysql(rows: list[dict[str, Any]], conn=None) -> None:
         %(hotel_id)s, %(hotel_name)s, %(source_platform)s, %(snapshot_time)s, %(stay_date)s,
         %(room_type_name)s, %(pms_room_type_id)s, %(total_rooms)s, %(available_rooms)s,
         %(occupied_rooms)s, %(overbooking_rooms)s, %(room_revenue)s, %(adr)s, %(revpar)s
-    ) ON DUPLICATE KEY UPDATE
-        hotel_name=VALUES(hotel_name), source_platform=VALUES(source_platform),
-        total_rooms=VALUES(total_rooms), available_rooms=VALUES(available_rooms),
-        occupied_rooms=VALUES(occupied_rooms), overbooking_rooms=VALUES(overbooking_rooms),
-        room_revenue=VALUES(room_revenue), adr=VALUES(adr), revpar=VALUES(revpar)
+    )
     """
     owns_connection = conn is None
     conn = conn or pymysql.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cursor:
+            cursor.execute(f"DELETE FROM {TABLE_NAME} WHERE hotel_id=%s", (HOTEL_ID,))
             cursor.executemany(sql, rows)
         conn.commit()
     finally:
         if owns_connection:
             conn.close()
-    print(f"房类预测入库完成：{len(rows)} 行")
-
-
-def cleanup_expired_snapshots(conn=None) -> int:
-    """按入住日期保留最近 30 天的预测历史。"""
-    cutoff = date.today() - timedelta(days=RETENTION_DAYS)
-    owns_connection = conn is None
-    conn = conn or pymysql.connect(**DB_CONFIG)
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                f"DELETE FROM {TABLE_NAME} WHERE hotel_id=%s AND stay_date<%s",
-                (HOTEL_ID, cutoff),
-            )
-            deleted = cursor.rowcount
-        conn.commit()
-        return deleted
-    finally:
-        if owns_connection:
-            conn.close()
+    print(f"房类预测入库完成：{len(rows)} 行（已覆盖旧数据）")
 
 
 def main(conn=None) -> None:
@@ -114,9 +91,7 @@ def main(conn=None) -> None:
     payload = json.loads(JSON_PATH.read_text(encoding="utf-8"))
     rows = transform(payload)
     print(f"房类预测转换完成：{len(rows)} 行")
-    upsert_mysql(rows, conn)
-    deleted = cleanup_expired_snapshots(conn)
-    print(f"房类预测历史清理：保留 {RETENTION_DAYS} 天，删除 {deleted} 行")
+    replace_mysql(rows, conn)
 
 
 if __name__ == "__main__":

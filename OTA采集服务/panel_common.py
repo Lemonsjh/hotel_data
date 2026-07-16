@@ -21,10 +21,11 @@ KERNEL32.CloseHandle.argtypes = [ctypes.c_void_p]
 
 TASK_LABELS = {
     "meituan_business": "美团经营",
+    "meituan_flow_conversion": "美团近30天流量",
     "meituan_joined_rights": "美团已报名权益",
     "meituan_promotion_status": "美团促销开通状态",
     "meituan_video_upload_status": "美团视频上传情况",
-    "meituan_promotion_finance": "美团推广费用明细",
+    "meituan_promotion_performance": "美团近30天推广效果",
     "meituan_exposure_source": "美团曝光来源",
     "meituan_order_loss": "美团流失订单",
     "meituan_scan_order": "美团扫码订单明细",

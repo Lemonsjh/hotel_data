@@ -90,7 +90,7 @@ def main() -> int:
     parser.add_argument('--jl01-end-date', help='JL01 补采结束营业日，未填则与开始日期相同')
     parser.add_argument('--jl02-start-date', help='JL02 补采开始营业日，格式 YYYY-MM-DD')
     parser.add_argument('--jl02-end-date', help='JL02 补采结束营业日，未填则与开始日期相同')
-    parser.add_argument('--reports', nargs='+', choices=['RS01', 'JD01', 'JD04', 'JY01', 'JY03', 'JL01', 'JL02', 'KF11', 'FORECAST'], help='仅执行指定报表，例如 --reports JL01')
+    parser.add_argument('--reports', nargs='+', choices=['RS01', 'JD01', 'JD04', 'JY01', 'JY03', 'JL01', 'JL02', 'JL11', 'KF11', 'FORECAST', 'ROOM_STATUS'], help='仅执行指定报表，例如 --reports JL01')
     args = parser.parse_args()
     
     print("=" * 60)
@@ -127,7 +127,9 @@ def main() -> int:
     from fetch_jy03 import fetch_jy03
     from fetch_jl01 import fetch_jl01
     from fetch_jl02 import fetch_jl02
+    from fetch_jl11 import fetch_jl11
     from fetch_room_type_forecast import fetch_room_type_forecast
+    from fetch_room_type_hourly_status import fetch_room_type_hourly_status
     from fetch_rs01 import fetch_rs01
     from fetch_jd01 import fetch_jd01
     from fetch_jd04 import fetch_jd04
@@ -140,8 +142,10 @@ def main() -> int:
         ("JY03", "经营月报", lambda: fetch_jy03(args.jy03_backfill)),
         ("JL01", "经理综合日报", lambda: fetch_jl01(args.jl01_start_date, args.jl01_end_date)),
         ("JL02", "经营业绩日报", lambda: fetch_jl02(args.jl02_start_date, args.jl02_end_date)),
+        ("JL11", "房型分类统计", fetch_jl11),
         ("KF11", "房态快照", fetch_kf11),
         ("FORECAST", "房类预测", fetch_room_type_forecast),
+        ("ROOM_STATUS", "每小时房态", fetch_room_type_hourly_status),
     ]
     if args.reports:
         selected = set(args.reports)
@@ -160,7 +164,9 @@ def main() -> int:
     from jy03_etl import main as jy03_etl_main
     from jl01_etl import main as jl01_etl_main
     from jl02_etl import main as jl02_etl_main
+    from jl11_etl import main as jl11_etl_main
     from room_type_forecast_etl import main as room_type_forecast_etl_main
+    from room_type_hourly_status_etl import main as room_type_hourly_status_etl_main
     from kf11_etl import main as kf11_etl_main
     from config import DB_CONFIG
     
@@ -172,8 +178,10 @@ def main() -> int:
         ("JY03", jy03_etl_main),
         ("JL01", jl01_etl_main),
         ("JL02", jl02_etl_main),
+        ("JL11", jl11_etl_main),
         ("KF11", kf11_etl_main),
         ("FORECAST", room_type_forecast_etl_main),
+        ("ROOM_STATUS", room_type_hourly_status_etl_main),
     ]
     etl_jobs = [job for job in etl_jobs if job[0] in fetch_results]
     db_conn = connect_mysql(DB_CONFIG)

@@ -53,6 +53,7 @@ def fetch_jd01(start_date=None, end_date=None):
     
     # 使用 requests 请求 JD01 接口
     session = requests.Session()
+    session.trust_env = False
     session.cookies.update(cookies)
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -96,7 +97,18 @@ def fetch_jd01(start_date=None, end_date=None):
     print(f"请求参数: {json.dumps(payload, indent=2, ensure_ascii=False)}")
     
     try:
-        response = session.post(jd01_api_url, json=payload, timeout=30)
+        response = None
+        for attempt in range(2):
+            try:
+                response = session.post(jd01_api_url, json=payload, timeout=30)
+                break
+            except requests.RequestException as exc:
+                if attempt:
+                    raise
+                print(f"⚠️ JD01 request failed, retrying: {exc}")
+                time.sleep(2)
+        if response is None:
+            raise RuntimeError("JD01 request did not return a response")
         print(f"状态码: {response.status_code}")
         
         if response.status_code == 200:

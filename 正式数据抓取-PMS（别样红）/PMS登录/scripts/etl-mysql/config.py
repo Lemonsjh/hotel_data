@@ -79,6 +79,8 @@ REPORT_CONFIG = {
     "jy03_file": "JY03.json",
     "jl01_file": "JL01.json",
     "jl02_file": "JL02.json",
+    "jl11_file": "JL11.json",
     "forecast_file": "FORECAST.json",
+    "hourly_status_file": "ROOM_STATUS.json",
     "kf11_file": "KF11.json",
 }

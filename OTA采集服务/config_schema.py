@@ -100,7 +100,7 @@ ADVANCED_SECRET_GROUPS = [
             ("meituan.goods_query_url", "美团商品列表完整签名 URL"),
             ("meituan.calc_price_url", "美团计价完整签名 URL"),
             ("meituan.price_status_url", "美团调价 URL"),
-            ("meituan.promotion_finance_url", "美团推广费用明细 URL"),
+            ("meituan.promotion_performance_url", "美团近30天推广效果 URL"),
         ],
     ),
     (
@@ -157,7 +157,7 @@ CONFIG_SECTIONS = [
             ("meituan.goods_query_url", "商品列表签名 URL", True, True),
             ("meituan.calc_price_url", "计价签名 URL", True, True),
             ("meituan.price_status_url", "货价状态签名 URL", True, True),
-            ("meituan.promotion_finance_url", "推广费用明细签名 URL", True, True),
+            ("meituan.promotion_performance_url", "近30天推广效果签名 URL", True, True),
             ("meituan.price_status_payload_file", "货价 payload 文件", False, True),
         ],
     },

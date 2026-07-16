@@ -26,7 +26,7 @@
     "enabled": true,
     "username": "",
     "password": "",
-    "code_dir": "正式数据抓取-PMS（别样红）\\PMS登录",
+    "code_dir": "正式数据抓取-PMS（别样红）\\\\PMS登录",
     "entry_script": "fetch_main.py",
     "timeout_seconds": 900
   },
@@ -53,7 +53,7 @@
     "calc_price_url": "",
     "price_status_url": "",
     "price_status_payload_file": "",
-    "promotion_finance_url": ""
+    "promotion_performance_url": ""
   },
   "ctrip": {
     "enabled": true,
@@ -67,10 +67,11 @@
   },
   "tasks": {
     "meituan_business": true,
+    "meituan_flow_conversion": true,
     "meituan_joined_rights": true,
     "meituan_promotion_status": true,
     "meituan_video_upload_status": true,
-    "meituan_promotion_finance": true,
+    "meituan_promotion_performance": true,
     "meituan_exposure_source": true,
     "meituan_order_loss": true,
     "meituan_scan_order": true,

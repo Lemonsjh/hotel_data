@@ -40,6 +40,9 @@ ORDER_MENU = "\u8ba2\u5355\u7ba1\u7406"
 PUBLIC_WELFARE_CODE = "public_welfare_traffic"
 PUBLIC_WELFARE_NAME = "\u516c\u76ca\u6d41\u91cf"
 PUBLIC_WELFARE_ACTIVE = "\u751f\u6548\u4e2d"
+SCHEDULED_INVOICE_CODE = "reservation_invoice"
+SCHEDULED_INVOICE_NAME = "\u9884\u7ea6\u53d1\u7968"
+SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
 
 
 def fetch_youmeihui_status() -> str:
@@ -220,6 +223,31 @@ def fetch_public_welfare_status() -> str:
     raise RuntimeError("Public welfare page did not return a recognized status")
 
 
+def fetch_scheduled_invoice_status() -> str:
+    local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    profile = local_app_data / "HotelAgent" / "browser_profiles" / "meituan"
+    with sync_playwright() as playwright:
+        context = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile), channel="msedge", headless=True,
+            chromium_sandbox=True, locale="zh-CN",
+        )
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
+            for _ in range(40):
+                for frame in page.frames:
+                    try:
+                        text = frame.locator("span.no-join-title").all_inner_texts()
+                        if any("\u5f53\u524d\u95e8\u5e97\u6682\u672a\u5f00\u901a" in value and SCHEDULED_INVOICE_NAME in value for value in text):
+                            return "CLOSED"
+                    except Exception:
+                        continue
+                page.wait_for_timeout(500)
+        finally:
+            context.close()
+    raise RuntimeError("Scheduled invoice page did not return a recognized status")
+
+
 def save_status(hotel_id: str, code: str, name: str, status: str) -> None:
     import pymysql
 
@@ -249,6 +277,7 @@ def main() -> int:
         (PROMOTION_CODE, PROMOTION_NAME, fetch_youmeihui_status),
         (BUSINESS_TRAVEL_CODE, BUSINESS_TRAVEL_NAME, fetch_business_travel_status),
         (PUBLIC_WELFARE_CODE, PUBLIC_WELFARE_NAME, fetch_public_welfare_status),
+        (SCHEDULED_INVOICE_CODE, SCHEDULED_INVOICE_NAME, fetch_scheduled_invoice_status),
         (HOURLY_ROOM_CODE, HOURLY_ROOM_NAME, fetch_hourly_room_status),
         (HIGHLIGHTS_CODE, HIGHLIGHTS_NAME, fetch_hotel_highlights_status),
         (AUTO_ORDER_CODE, AUTO_ORDER_NAME, fetch_auto_order_status),

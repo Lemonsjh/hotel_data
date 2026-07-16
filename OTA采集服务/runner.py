@@ -25,10 +25,11 @@ LOG_DIR = ROOT / "logs"
 
 TASKS = {
     "meituan_business": ("meituan", "bussiness_data.py", []),
+    "meituan_flow_conversion": ("meituan", "meituan_flow_conversion_data.py", []),
     "meituan_joined_rights": ("meituan", "meituan_joined_rights_data.py", []),
     "meituan_promotion_status": ("meituan", "meituan_promotion_status_data.py", []),
     "meituan_video_upload_status": ("meituan", "meituan_video_upload_status_data.py", []),
-    "meituan_promotion_finance": ("meituan", "meituan_promotion_finance_detail.py", []),
+    "meituan_promotion_performance": ("meituan", "meituan_promotion_performance_data.py", []),
     "meituan_exposure_source": ("meituan", "meituan_exposure_source_data.py", []),
     "meituan_order_loss": ("meituan", "meituan_order_loss_data.py", []),
     "meituan_scan_order": ("meituan", "meituan_scan_order_data.py", []),
@@ -162,7 +163,7 @@ def build_env(settings: dict[str, Any]) -> dict[str, str]:
     put_if(env, "MEITUAN_GOODS_QUERY_URL", meituan.get("goods_query_url"))
     put_if(env, "MEITUAN_CALC_PRICE_URL", meituan.get("calc_price_url"))
     put_if(env, "MEITUAN_PRICE_STATUS_URL", meituan.get("price_status_url"))
-    put_if(env, "MEITUAN_PROMOTION_FINANCE_URL", meituan.get("promotion_finance_url"))
+    put_if(env, "MEITUAN_PROMOTION_PERFORMANCE_URL", meituan.get("promotion_performance_url"))
     put_if(env, "MEITUAN_PRICE_STATUS_PAYLOAD_FILE", meituan.get("price_status_payload_file"))
 
     put_if(env, "CTRIP_HOTEL_NAME", ctrip.get("hotel_name"))

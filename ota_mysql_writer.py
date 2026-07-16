@@ -231,6 +231,36 @@ def sync_monthly_history(
         connection.close()
 
 
+def sync_latest_row(table_name: str, headers: Sequence[str], row: Sequence[Any]) -> None:
+    """Replace the current hotel's row while leaving other hotels untouched."""
+    if "hotel_id" not in headers:
+        raise MysqlSyncError("Latest-row sync requires hotel_id")
+    hotel_id = str(row[headers.index("hotel_id")] or "").strip()
+    if not hotel_id:
+        raise MysqlSyncError("Latest-row sync requires a non-empty hotel_id")
+    connection = connect_mysql(autocommit=False)
+    try:
+        with connection.cursor() as cursor:
+            column_types = load_column_types(cursor, table_name)
+            missing = [header for header in headers if header not in column_types]
+            if missing:
+                raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
+            columns = ", ".join(f"`{header}`" for header in headers)
+            values = ", ".join(["%s"] * len(headers))
+            cursor.execute(f"DELETE FROM `{table_name}` WHERE hotel_id=%s", (hotel_id,))
+            cursor.execute(
+                f"INSERT INTO `{table_name}` ({columns}) VALUES ({values})",
+                tuple(convert_value(value, column_types[header]) for header, value in zip(headers, row)),
+            )
+        connection.commit()
+        print(f"DB synced: {table_name} rows=1 mode=latest")
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def sync_user_source_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 30) -> None:
     sync_monthly_history("meituan_ota_user_source_monthly", headers, rows, retention_days)
 

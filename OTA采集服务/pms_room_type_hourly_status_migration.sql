@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS `pms_room_type_hourly_status` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `hotel_id` VARCHAR(64) NOT NULL,
+    `hotel_name` VARCHAR(255) NOT NULL,
+    `source_platform` VARCHAR(32) NOT NULL DEFAULT 'PMS',
+    `snapshot_time` DATETIME(6) NOT NULL,
+    `snapshot_hour` DATETIME NOT NULL,
+    `stay_date` DATE NOT NULL,
+    `room_type_name` VARCHAR(255) NOT NULL,
+    `room_type_id` VARCHAR(50) NULL,
+    `pms_room_type_id` VARCHAR(64) NOT NULL,
+    `total_rooms` DECIMAL(18,4) NULL,
+    `available_rooms` DECIMAL(18,4) NULL,
+    `occupied_rooms` DECIMAL(18,4) NULL,
+    `overbooking_rooms` DECIMAL(18,4) NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_hourly_room_status` (`hotel_id`, `snapshot_hour`, `pms_room_type_id`),
+    KEY `idx_hourly_status_day` (`hotel_id`, `stay_date`),
+    KEY `idx_hourly_status_room_type` (`hotel_id`, `room_type_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
