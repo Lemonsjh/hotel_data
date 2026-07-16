@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_flow_conversion_30d` (
     `peer_pay_order_count` BIGINT NULL,
     `peer_exposure_to_browse_rate_pct` DECIMAL(9,4) NULL,
     `peer_browse_to_pay_rate_pct` DECIMAL(9,4) NULL,
+    `exposure_peer_rank` VARCHAR(32) NULL,
+    `browse_peer_rank` VARCHAR(32) NULL,
+    `pay_order_peer_rank` VARCHAR(32) NULL,
+    `exposure_to_browse_peer_rank` VARCHAR(32) NULL,
+    `browse_to_pay_peer_rank` VARCHAR(32) NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_meituan_flow_conversion_30d` (`hotel_id`, `business_date`),
     KEY `idx_meituan_flow_period_end` (`hotel_id`, `period_end_date`)

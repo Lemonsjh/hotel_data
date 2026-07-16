@@ -4,6 +4,8 @@ import json
 import os
 import re
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -43,6 +45,40 @@ PUBLIC_WELFARE_ACTIVE = "\u751f\u6548\u4e2d"
 SCHEDULED_INVOICE_CODE = "reservation_invoice"
 SCHEDULED_INVOICE_NAME = "\u9884\u7ea6\u53d1\u7968"
 SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
+PROFILE_LOCK_TIMEOUT_SECONDS = 120
+PROFILE_LOCK_STALE_SECONDS = 180
+
+
+def profile_lock_path() -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    return base / "HotelAgent" / "browser_profiles" / "meituan" / ".promotion_status.lock"
+
+
+@contextmanager
+def browser_profile_lock() -> Any:
+    path = profile_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + PROFILE_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(descriptor, str(os.getpid()).encode())
+            break
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > PROFILE_LOCK_STALE_SECONDS:
+                    path.unlink(missing_ok=True)
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Meituan browser profile is busy; retry after the active task finishes")
+            time.sleep(1)
+    try:
+        yield
+    finally:
+        os.close(descriptor)
+        path.unlink(missing_ok=True)
 
 
 def fetch_youmeihui_status() -> str:
@@ -283,10 +319,11 @@ def main() -> int:
         (AUTO_ORDER_CODE, AUTO_ORDER_NAME, fetch_auto_order_status),
     ]
     results = []
-    for code, name, check in checks:
-        status = check()
-        save_status(hotel_id, code, name, status)
-        results.append((code, name, status))
+    with browser_profile_lock():
+        for code, name, check in checks:
+            status = check()
+            save_status(hotel_id, code, name, status)
+            results.append((code, name, status))
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "meituan_ota_promotion_status.json").write_text(
         json.dumps(
