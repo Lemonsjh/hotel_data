@@ -350,8 +350,8 @@ def save_outputs(summary_rows: list[list[Any]], detail_rows: list[list[Any]], sy
     write_standard_json(summary_path, summary_headers, summary_rows)
     write_standard_json(detail_path, detail_headers, detail_rows)
     if sync_db:
-        sync_table(summary_path.stem, summary_headers, summary_rows)
-        sync_table(detail_path.stem, detail_headers, detail_rows)
+        sync_table(summary_path.stem, summary_headers, summary_rows, allow_empty_replace=True)
+        sync_table(detail_path.stem, detail_headers, detail_rows, allow_empty_replace=True)
     return summary_path, detail_path
 
 

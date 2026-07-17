@@ -656,8 +656,8 @@ def save_excel(captured_at: str, self_rows: list[dict[str, Any]], registered_row
     detail_path = save_single_sheet(wb, "活动产品明细", "ota_activity_product_detail.xlsx")
     write_standard_json(summary_path, summary_headers, summary_rows)
     write_standard_json(detail_path, detail_headers, detail_rows)
-    sync_table("meituan_ota_promotion_activity", summary_headers, summary_rows)
-    sync_table("meituan_ota_activity_product_detail", detail_headers, detail_rows)
+    sync_table("meituan_ota_promotion_activity", summary_headers, summary_rows, allow_empty_replace=True)
+    sync_table("meituan_ota_activity_product_detail", detail_headers, detail_rows, allow_empty_replace=True)
 
 
 def save_single_sheet(wb: Workbook, sheet_name: str, filename: str) -> Path:

@@ -35,7 +35,10 @@ def request_rights() -> dict[str, Any]:
     payload = response.json()
     if payload.get("status") != 0 or not isinstance(payload.get("data"), dict):
         raise RuntimeError(f"美团已报名权益接口返回异常：{payload.get('status')}")
-    return payload["data"]
+    data = payload["data"]
+    if not isinstance(data.get("joinedRightsList"), list):
+        raise RuntimeError("美团已报名权益接口缺少权益列表")
+    return data
 
 
 def confirm_mode(value: Any) -> str:
@@ -102,7 +105,7 @@ def main() -> int:
     captured_at = datetime.now()
     rows = build_rows(request_rights(), captured_at)
     write_output(rows, captured_at)
-    sync_joined_rights_snapshot(HEADERS, rows)
+    sync_joined_rights_snapshot(HEADERS, rows, allow_empty_replace=True)
     print(f"美团已报名权益采集完成：权益 {len(rows)} 项")
     return 0
 

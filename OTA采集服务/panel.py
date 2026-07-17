@@ -191,7 +191,7 @@ def config_page() -> str:
         message_html += f"<div class='warning'>{esc(error)}</div>"
     task_checks = []
     for name in runner.TASKS:
-        checked = "checked" if (settings.get("tasks") or {}).get(name, True) else ""
+        checked = "checked" if (settings.get("tasks") or {}).get(name, False) else ""
         task_checks.append(
             f"<label class='switch-item'><input type='checkbox' name='task.{esc(name)}' {checked}>"
             f"<span><strong>{esc(task_label(name))}</strong><small>{esc(name)}</small></span></label>"

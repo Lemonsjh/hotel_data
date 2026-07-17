@@ -44,13 +44,17 @@ def connect_mysql(*, autocommit: bool = False):
     return connect_with_retry(DB_CONFIG, autocommit=autocommit)
 
 
-def sync_table(table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
+def sync_table(
+    table_name: str,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[Any]],
+    *,
+    allow_empty_replace: bool = False,
+) -> None:
     if not table_name.replace("_", "").isalnum():
         raise MysqlSyncError(f"Invalid table name: {table_name}")
-    try:
-        import pymysql
-    except ImportError as exc:
-        raise MysqlSyncError("Missing dependency: pip install pymysql") from exc
+    if not rows and not allow_empty_replace:
+        raise MysqlSyncError(f"Refusing to replace {table_name} with empty rows")
 
     connection = connect_mysql(autocommit=False)
     try:
@@ -179,8 +183,6 @@ def sync_monthly_history(
     table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 30
 ) -> None:
     """按统计窗口结束日期保留近30天指标快照。"""
-    import pymysql
-
     connection = connect_mysql(autocommit=False)
     try:
         with connection.cursor() as cursor:
@@ -298,10 +300,13 @@ def sync_meituan_scan_orders(
         connection.close()
 
 
-def sync_order_loss_snapshot(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
+def sync_order_loss_snapshot(
+    headers: Sequence[str], rows: Sequence[Sequence[Any]], *, allow_empty_replace: bool = False
+) -> None:
     """覆写保存当前美团近30天流失订单竞争酒店快照。"""
     table_name = "meituan_ota_order_loss_monthly"
-    import pymysql
+    if not rows and not allow_empty_replace:
+        raise MysqlSyncError(f"Refusing to replace {table_name} with empty rows")
 
     connection = connect_mysql(autocommit=False)
     try:
@@ -312,7 +317,7 @@ def sync_order_loss_snapshot(headers: Sequence[str], rows: Sequence[Sequence[Any
                 raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
             columns = ", ".join(f"`{column}`" for column in headers)
             values = ", ".join(["%s"] * len(headers))
-            cursor.execute(f"TRUNCATE TABLE `{table_name}`")
+            cursor.execute(f"DELETE FROM `{table_name}`")
             if rows:
                 cursor.executemany(
                     f"INSERT INTO `{table_name}` ({columns}) VALUES ({values})",
@@ -327,10 +332,13 @@ def sync_order_loss_snapshot(headers: Sequence[str], rows: Sequence[Sequence[Any
         connection.close()
 
 
-def sync_joined_rights_snapshot(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
+def sync_joined_rights_snapshot(
+    headers: Sequence[str], rows: Sequence[Sequence[Any]], *, allow_empty_replace: bool = False
+) -> None:
     """覆写保存美团当前已报名权益快照。"""
     table_name = "meituan_ota_joined_rights"
-    import pymysql
+    if not rows and not allow_empty_replace:
+        raise MysqlSyncError(f"Refusing to replace {table_name} with empty rows")
 
     connection = connect_mysql(autocommit=False)
     try:

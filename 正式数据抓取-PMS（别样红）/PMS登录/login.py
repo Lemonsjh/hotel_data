@@ -23,6 +23,25 @@ REQUIRED_COOKIES = [
     'OwnerId',
     'LoginOrgId'
 ]
+OPTIONAL_TIMEOUT_MS = min(pms_config.ACTION_TIMEOUT_MS, 3_000)
+
+
+def mask_username(value):
+    text = str(value or "")
+    if len(text) <= 2:
+        return "*" * len(text)
+    return f"{text[0]}{'*' * (len(text) - 2)}{text[-1]}"
+
+
+def wait_for_required_cookies(context):
+    deadline = time.monotonic() + pms_config.ACTION_TIMEOUT_MS / 1000
+    cookies = {}
+    while time.monotonic() < deadline:
+        cookies = {cookie['name']: cookie['value'] for cookie in context.cookies()}
+        if all(name in cookies for name in REQUIRED_COOKIES):
+            return cookies
+        time.sleep(0.2)
+    return cookies
 
 
 def extract_hotel_name(page):
@@ -32,57 +51,39 @@ def extract_hotel_name(page):
     # 尝试多种方式获取酒店名称
     selectors = [
         '.ant-layout-header .logo',
-        '.ant-layout-header span',
         '.hotel-name',
         '.org-name',
-        'span:has-text("酒店")',
-        '//span[contains(text(),"酒店")]',
-        '.user-info span',
         '.org-selector',
         '#orgName',
-        'div.org-name',
-        'span.org-name'
     ]
     
     for selector in selectors:
         try:
             element = page.locator(selector)
-            if element.is_visible(timeout=2000):
-                hotel_name = element.text_content(timeout=2000).strip()
+            if element.is_visible(timeout=OPTIONAL_TIMEOUT_MS):
+                hotel_name = element.text_content(timeout=OPTIONAL_TIMEOUT_MS).strip()
                 if hotel_name and len(hotel_name) > 2:
                     print(f"✅ 获取酒店名称: {hotel_name}")
                     return hotel_name
         except (PlaywrightError, AttributeError):
             continue
     
-    # 尝试通过页面标题获取
-    try:
-        title = page.title()
-        if title and "酒店" in title:
-            # 提取标题中的酒店名称
-            parts = title.split("-")
-            for part in parts:
-                if "酒店" in part:
-                    hotel_name = part.strip()
-                    print(f"✅ 从标题获取酒店名称: {hotel_name}")
-                    return hotel_name
-    except PlaywrightError:
-        pass
-    
-    print("⚠️ 未能自动获取酒店名称，将使用默认值")
+    print("⚠️ 未能从精确页面元素获取酒店名称")
     return None
 
 
 def login(username, password):
     """使用 Playwright 登录并保存业务 Cookie"""
     print(f"\n=== 使用 Playwright 登录 ===")
-    print(f"用户名: {username}")
+    print(f"用户名: {mask_username(username)}")
     print("模式: 后台运行")
     
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
+            page.set_default_timeout(pms_config.ACTION_TIMEOUT_MS)
+            page.set_default_navigation_timeout(pms_config.NAVIGATION_TIMEOUT_MS)
             
             print("正在访问登录页面...")
             page.goto(pms_config.LOGIN_URL, timeout=pms_config.NAVIGATION_TIMEOUT_MS)
@@ -100,7 +101,7 @@ def login(username, password):
             
             for selector in agreement_selectors:
                 try:
-                    if page.locator(selector).is_visible(timeout=3000):
+                    if page.locator(selector).is_visible(timeout=OPTIONAL_TIMEOUT_MS):
                         if not page.locator(selector).is_checked():
                             print(f"勾选用户协议: {selector}")
                             page.click(selector)
@@ -109,12 +110,12 @@ def login(username, password):
                     continue
             
             print("等待输入框加载...")
-            page.wait_for_selector('#idUserNameInput', timeout=30000)
+            page.wait_for_selector('#idUserNameInput')
             
             print("填写用户名...")
             page.fill('#idUserNameInput', username)
             page.locator('#idUserNameInput').press("Tab")
-            page.wait_for_selector('.ant-select-selection-item[title]', timeout=15000)
+            page.wait_for_selector('.ant-select-selection-item[title]')
 
             # 显式确认页面当前推荐班次，避免异步加载尚未写入表单状态。
             shift_select = page.locator('.ant-select').nth(0)
@@ -135,7 +136,10 @@ def login(username, password):
             page.fill('#idPasswordInput', password)
             
             print("点击登录按钮...")
-            with page.expect_response(lambda response: '/API/Home/Login' in response.url, timeout=30000) as login_info:
+            with page.expect_response(
+                lambda response: '/API/Home/Login' in response.url,
+                timeout=pms_config.NAVIGATION_TIMEOUT_MS,
+            ) as login_info:
                 page.click('#idLoginButton')
             login_payload = login_info.value.json()
             login_code = login_payload.get("Code")
@@ -149,7 +153,7 @@ def login(username, password):
             print("\n检查弹窗...")
             try:
                 modal = page.locator('.ant-modal:visible')
-                modal.wait_for(state="visible", timeout=10000)
+                modal.wait_for(state="visible", timeout=OPTIONAL_TIMEOUT_MS)
                 close_button = modal.locator('.ant-modal-close')
                 if close_button.count():
                     print("关闭手机号绑定弹窗")
@@ -169,29 +173,27 @@ def login(username, password):
 
             print("等待进入系统...")
             try:
-                page.wait_for_url(lambda url: not str(url).rstrip("/").endswith("/login"), timeout=30000)
+                page.wait_for_url(lambda url: not str(url).rstrip("/").endswith("/login"))
             except PlaywrightTimeoutError:
                 print(f"⚠️ 登录后页面未自动跳转，将继续检查登录 Cookie: {page.url}")
 
-            # 等待页面稳定后获取 Cookie
-            try:
-                page.wait_for_load_state('networkidle', timeout=15000)
-            except PlaywrightTimeoutError:
-                pass
-            time.sleep(2)
-
-            cookies = {cookie['name']: cookie['value'] for cookie in page.context.cookies()}
+            # 登录响应完成后轮询关键 Cookie，避免依赖持续请求页面的 networkidle。
+            cookies = wait_for_required_cookies(page.context)
             print(f"\n获取到 {len(cookies)} 个 Cookie")
 
-            # 优先从 PMS 登录校验接口获取组织名称，DOM 仅作为兼容回退。
-            hotel_name = pms_utils.fetch_hotel_name(cookies) or extract_hotel_name(page)
+            # 接口优先，配置其次，精确 DOM 仅作为兼容回退。
+            hotel_name = (
+                pms_utils.fetch_hotel_name(cookies)
+                or os.environ.get("PMS_HOTEL_NAME", "").strip()
+                or extract_hotel_name(page)
+            )
 
             # 检查关键 Cookie
             print("\n检查关键 Cookie:")
             missing_cookies = []
             for cookie_name in REQUIRED_COOKIES:
                 if cookie_name in cookies:
-                    print(f"  ✅ {cookie_name}: {cookies[cookie_name][:30]}...")
+                    print(f"  ✅ {cookie_name}: 已获取")
                 else:
                     print(f"  ❌ {cookie_name}: 缺失")
                     missing_cookies.append(cookie_name)

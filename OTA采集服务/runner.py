@@ -77,7 +77,16 @@ def save_json(path: Path, data: Any) -> None:
 def load_settings() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Missing config: {CONFIG_PATH}")
-    return require_valid_settings(load_json(CONFIG_PATH, {}), CONFIG_PATH)
+    settings = require_valid_settings(load_json(CONFIG_PATH, {}), CONFIG_PATH)
+    tasks = settings.setdefault("tasks", {})
+    changed = False
+    for name in TASKS:
+        if name not in tasks:
+            tasks[name] = False
+            changed = True
+    if changed:
+        save_json(CONFIG_PATH, settings)
+    return settings
 
 
 def project_path(value: Any, default: str | Path = ".") -> Path:

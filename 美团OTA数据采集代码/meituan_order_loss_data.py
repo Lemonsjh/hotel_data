@@ -54,7 +54,10 @@ def query_loss_data(start_date: date, end_date: date) -> dict[str, Any]:
     payload = response.json()
     if payload.get("status") != 0 or not isinstance(payload.get("data"), dict):
         raise RuntimeError(f"美团流失订单接口返回异常：{payload.get('status')}")
-    return payload["data"]
+    data = payload["data"]
+    if not isinstance(data.get("orderLossPeerDetails"), list):
+        raise RuntimeError("美团流失订单接口缺少竞争酒店明细列表")
+    return data
 
 
 def room_types(items: list[dict[str, Any]]) -> tuple[str, str]:
@@ -99,7 +102,12 @@ def main() -> int:
     data = query_loss_data(start_date, end_date)
     rows = build_rows(data, start_date, end_date, captured_at)
     write_output(start_date, end_date, data, rows)
-    sync_order_loss_snapshot(HEADERS, rows)
+    total_loss_count = data.get("lossTotalCnt")
+    try:
+        allow_empty = float(total_loss_count) == 0
+    except (TypeError, ValueError):
+        allow_empty = False
+    sync_order_loss_snapshot(HEADERS, rows, allow_empty_replace=allow_empty)
     print(f"美团近30天流失订单采集完成：竞争酒店 {len(rows)} 家")
     return 0
 

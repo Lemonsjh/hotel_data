@@ -68,6 +68,8 @@ class MeituanNearbyEventClient:
         payload = response.json()
         if payload.get("status") != 0:
             raise RuntimeError(f"Nearby event request failed: status={payload.get('status')}")
+        if not isinstance(payload.get("data"), dict) or not isinstance(payload["data"].get("list"), list):
+            raise RuntimeError("Nearby event response is missing the event list")
         return payload
 
 
@@ -152,7 +154,7 @@ def save_outputs(rows: list[list[Any]], sync_db: bool = True) -> None:
         encoding="utf-8",
     )
     if sync_db:
-        sync_table(TABLE_NAME, headers, rows)
+        sync_table(TABLE_NAME, headers, rows, allow_empty_replace=True)
 
 
 def sample_payload() -> dict[str, Any]:

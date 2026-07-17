@@ -59,6 +59,7 @@ class ScanOrderSafetyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         sys.path.insert(0, str(ROOT))
+        sys.path.insert(0, str(MEITUAN_DIR))
         cls.module = load_module("test_scan_order", MEITUAN_DIR / "meituan_scan_order_data.py")
 
     def test_blank_order_ids_are_filtered_and_other_ids_normalized(self):
@@ -125,6 +126,84 @@ class ScanOrderSafetyTests(unittest.TestCase):
         self.assertEqual(params, ("H1", date(2026, 6, 17), date(2026, 6, 17)))
 
 
+class ReplacementSafetyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(ROOT))
+        cls.writer = load_module("test_replacement_writer", ROOT / "ota_mysql_writer.py")
+
+    class Cursor:
+        rowcount = 0
+
+        def __init__(self, fail_insert=False):
+            self.calls = []
+            self.fail_insert = fail_insert
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, params=None):
+            self.calls.append((sql, params))
+
+        def executemany(self, sql, rows):
+            self.calls.append((sql, rows))
+            if self.fail_insert:
+                raise RuntimeError("insert failed")
+
+    class Connection:
+        def __init__(self, fail_insert=False):
+            self.db_cursor = ReplacementSafetyTests.Cursor(fail_insert)
+            self.commits = 0
+            self.rollbacks = 0
+
+        def cursor(self):
+            return self.db_cursor
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def close(self):
+            pass
+
+    def test_empty_replacements_are_rejected_before_connecting(self):
+        with patch.object(self.writer, "connect_mysql") as connect:
+            with self.assertRaises(self.writer.MysqlSyncError):
+                self.writer.sync_table("sample_table", ["value"], [])
+            with self.assertRaises(self.writer.MysqlSyncError):
+                self.writer.sync_order_loss_snapshot(["value"], [])
+            with self.assertRaises(self.writer.MysqlSyncError):
+                self.writer.sync_joined_rights_snapshot(["value"], [])
+        connect.assert_not_called()
+
+    def test_explicit_empty_replace_deletes_and_commits(self):
+        connection = self.Connection()
+        with patch.object(self.writer, "connect_mysql", return_value=connection), patch.object(
+            self.writer, "load_column_types", return_value={"value": "varchar"}
+        ):
+            self.writer.sync_table("sample_table", ["value"], [], allow_empty_replace=True)
+        self.assertEqual(connection.commits, 1)
+        self.assertEqual(connection.rollbacks, 0)
+        self.assertIn("DELETE FROM", connection.db_cursor.calls[-1][0])
+
+    def test_order_loss_insert_failure_rolls_back_delete(self):
+        connection = self.Connection(fail_insert=True)
+        with patch.object(self.writer, "connect_mysql", return_value=connection), patch.object(
+            self.writer, "load_column_types", return_value={"value": "varchar"}
+        ):
+            with self.assertRaisesRegex(RuntimeError, "insert failed"):
+                self.writer.sync_order_loss_snapshot(["value"], [["x"]])
+        self.assertEqual(connection.commits, 0)
+        self.assertEqual(connection.rollbacks, 1)
+        self.assertIn("DELETE FROM", connection.db_cursor.calls[0][0])
+        self.assertNotIn("TRUNCATE", " ".join(call[0] for call in connection.db_cursor.calls))
+
+
 class TaskDefaultTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -139,6 +218,32 @@ class TaskDefaultTests(unittest.TestCase):
         name, (platform, _script, _args) = next(iter(self.runner.TASKS.items()))
         settings = {"tasks": {name: True}, platform: {"enabled": True}}
         self.assertEqual(self.runner.enabled_tasks(settings), [name])
+
+    def test_old_settings_are_upgraded_with_disabled_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text('{"tasks": {}}', encoding="utf-8")
+            with patch.object(self.runner, "CONFIG_PATH", path):
+                settings = self.runner.load_settings()
+            self.assertEqual(set(settings["tasks"]), set(self.runner.TASKS))
+            self.assertTrue(all(value is False for value in settings["tasks"].values()))
+            self.assertEqual(self.runner.load_json(path, {})["tasks"], settings["tasks"])
+
+    def test_signed_urls_and_secrets_are_redacted(self):
+        cookie = "cookie-value-that-must-not-appear"
+        signed_url = "https://example.test/data?mtgsig=signed-secret-value"
+        settings = {"meituan": {"cookie": cookie, "flow_url": signed_url}}
+        sanitized = self.runner.sanitize(f"cookie={cookie} url={signed_url}", settings)
+        self.assertNotIn(cookie, sanitized)
+        self.assertNotIn(signed_url, sanitized)
+        self.assertEqual(sanitized.count("[REDACTED]"), 2)
+
+
+class LoginLoggingTests(unittest.TestCase):
+    def test_login_source_does_not_print_cookie_values(self):
+        source = (PMS_SCRIPTS.parent / "login.py").read_text(encoding="utf-8")
+        self.assertNotIn("cookies[cookie_name][:30]", source)
+        self.assertIn("mask_username(username)", source)
 
 
 class SettingsValidationTests(unittest.TestCase):
@@ -181,6 +286,21 @@ class StreamedProcessTests(unittest.TestCase):
             self.assertEqual(result.return_code, 0)
             self.assertEqual(log_path.read_text(encoding="utf-8"), "token=[REDACTED]\n")
             self.assertEqual(result.output_tail, "token=[REDACTED]\n")
+
+    def test_timeout_terminates_process_and_preserves_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "timeout.log"
+            with self.assertRaises(self.process_runner.ProcessTimeoutError) as raised:
+                self.process_runner.run_streamed(
+                    [sys.executable, "-u", "-c", "import time; print('started'); time.sleep(5)"],
+                    cwd=directory,
+                    env=dict(os.environ),
+                    timeout=1,
+                    log_path=log_path,
+                    transform=lambda line: line,
+                )
+            self.assertIn("started", raised.exception.output_tail)
+            self.assertIn("started", log_path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
