@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -370,6 +373,102 @@ class StreamedProcessTests(unittest.TestCase):
                 )
             self.assertIn("started", raised.exception.output_tail)
             self.assertIn("started", log_path.read_text(encoding="utf-8"))
+
+
+@unittest.skipUnless(shutil.which("pwsh") or shutil.which("powershell"), "PowerShell is required")
+class WindowsTaskScriptTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.shell = shutil.which("pwsh") or shutil.which("powershell")
+        cls.common = SERVICE_DIR / "task_scheduler_common.ps1"
+
+    def run_powershell(self, body: str, **environment: str) -> str:
+        env = dict(os.environ)
+        env.update({key: str(value) for key, value in environment.items()})
+        prefix = "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new();"
+        result = subprocess.run(
+            [self.shell, "-NoProfile", "-NonInteractive", "-Command", prefix + body],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip().splitlines()[-1]
+
+    def resolve_interval(self, settings_path: Path, property_path: str, default: int, requested: int = 0) -> int:
+        output = self.run_powershell(
+            ". $env:TASK_COMMON; "
+            "$value=Resolve-TaskInterval "
+            "-RequestedInterval $env:REQUESTED "
+            "-DefaultInterval $env:DEFAULT_INTERVAL "
+            "-SettingsPath $env:SETTINGS_PATH "
+            "-PropertyPath ($env:PROPERTY_PATH -split '/'); "
+            "Write-Output $value",
+            TASK_COMMON=self.common,
+            REQUESTED=requested,
+            DEFAULT_INTERVAL=default,
+            SETTINGS_PATH=settings_path,
+            PROPERTY_PATH=property_path,
+        )
+        return int(output)
+
+    def test_configured_intervals_are_read_for_both_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(
+                json.dumps({"service": {"interval_minutes": 17}, "price_scheduler": {"interval_minutes": 4}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(self.resolve_interval(path, "service/interval_minutes", 30), 17)
+            self.assertEqual(self.resolve_interval(path, "price_scheduler/interval_minutes", 5), 4)
+
+    def test_missing_or_corrupt_config_uses_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.json"
+            corrupt = Path(directory) / "corrupt.json"
+            corrupt.write_text("{", encoding="utf-8")
+            self.assertEqual(self.resolve_interval(missing, "service/interval_minutes", 30), 30)
+            self.assertEqual(self.resolve_interval(corrupt, "service/interval_minutes", 30), 30)
+
+    def test_zero_and_negative_intervals_use_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            for value in (0, -3):
+                path.write_text(json.dumps({"service": {"interval_minutes": value}}), encoding="utf-8")
+                with self.subTest(value=value):
+                    self.assertEqual(self.resolve_interval(path, "service/interval_minutes", 30), 30)
+            path.write_text(json.dumps({"service": {"interval_minutes": 12}}), encoding="utf-8")
+            self.assertEqual(self.resolve_interval(path, "service/interval_minutes", 30, requested=-1), 12)
+
+    def test_positive_explicit_interval_takes_precedence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(json.dumps({"service": {"interval_minutes": 12}}), encoding="utf-8")
+            self.assertEqual(self.resolve_interval(path, "service/interval_minutes", 30, requested=9), 9)
+
+    def test_repeated_install_forces_replacement_of_same_task(self):
+        output = self.run_powershell(
+            "$script:registry=@{}; $script:calls=@(); "
+            "function New-ScheduledTaskAction { param($Execute,$Argument,$WorkingDirectory) @{} }; "
+            "function New-ScheduledTaskTrigger { param([switch]$Once,$At,$RepetitionInterval,$RepetitionDuration) @{} }; "
+            "function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel) @{} }; "
+            "function New-ScheduledTaskSettingsSet { "
+            "param([switch]$AllowStartIfOnBatteries,[switch]$DontStopIfGoingOnBatteries,$MultipleInstances) @{} }; "
+            "function Register-ScheduledTask { "
+            "param($TaskName,$Action,$Trigger,$Principal,$Settings,[switch]$Force); "
+            "if ($script:registry.ContainsKey($TaskName) -and -not $Force) { throw 'duplicate task' }; "
+            "$script:registry[$TaskName]=$true; $script:calls += $Force.IsPresent }; "
+            ". $env:TASK_COMMON; "
+            "1..2 | ForEach-Object { Install-RepeatingTask -TaskName 'HotelOTACollector' "
+            "-ExecutablePath 'python' -Arguments 'runner.py run-once' -WorkingDirectory '.' -IntervalMinutes 30 }; "
+            "@{ registrations=$script:calls.Count; tasks=$script:registry.Count; "
+            "allForced=(@($script:calls | Where-Object { -not $_ }).Count -eq 0) } | ConvertTo-Json -Compress",
+            TASK_COMMON=self.common,
+        )
+        result = json.loads(output)
+        self.assertEqual(result, {"allForced": True, "registrations": 2, "tasks": 1})
 
 
 if __name__ == "__main__":
