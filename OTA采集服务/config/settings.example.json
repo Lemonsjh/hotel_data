@@ -24,11 +24,19 @@
   },
   "pms": {
     "enabled": true,
+    "hotel_name": "",
     "username": "",
     "password": "",
     "code_dir": "正式数据抓取-PMS（别样红）\\\\PMS登录",
     "entry_script": "fetch_main.py",
-    "timeout_seconds": 900
+    "timeout_seconds": 900,
+    "login_base_url": "https://xingfeng.beyondh.com:8101",
+    "report_base_url": "https://xingfeng.beyondh.com:8081",
+    "service_api_base_url": "https://xingfeng.beyondh.com:8077",
+    "forecast_api_base_url": "https://xingfeng.beyondh.com:8111",
+    "navigation_timeout_ms": 60000,
+    "action_timeout_ms": 15000,
+    "api_timeout_seconds": 30
   },
   "mysql": {
     "host": "127.0.0.1",

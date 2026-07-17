@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
-import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Sequence
+
+from mysql_connection import connect_mysql as connect_with_retry
 
 
 PROJECT_ROOT = Path(os.environ.get("HOTEL_OTA_PROJECT_ROOT") or Path(__file__).resolve().parent)
@@ -40,25 +41,7 @@ class MysqlSyncError(RuntimeError):
 
 
 def connect_mysql(*, autocommit: bool = False):
-    """Connect with short retries for transient network interruptions."""
-    import pymysql
-
-    for attempt in range(3):
-        try:
-            return pymysql.connect(
-                **DB_CONFIG,
-                autocommit=autocommit,
-                connect_timeout=12,
-                read_timeout=30,
-                write_timeout=30,
-            )
-        except pymysql.err.OperationalError as exc:
-            retryable = bool(exc.args) and exc.args[0] in {2003, 2006, 2013}
-            if not retryable or attempt == 2:
-                raise
-            delay = 2 * (attempt + 1)
-            print(f"MySQL connection retry in {delay}s ({attempt + 1}/3), error={exc.args[0]}")
-            time.sleep(delay)
+    return connect_with_retry(DB_CONFIG, autocommit=autocommit)
 
 
 def sync_table(table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
@@ -298,8 +281,10 @@ def sync_meituan_scan_orders(
                 )
             if hotel_id:
                 cursor.execute(
-                    f"DELETE FROM `{table_name}` WHERE hotel_id=%s AND scan_time < %s",
-                    (hotel_id, retention_start),
+                    f"""DELETE FROM `{table_name}`
+                        WHERE hotel_id=%s
+                          AND (scan_time < %s OR (scan_time IS NULL AND collected_at < %s))""",
+                    (hotel_id, retention_start, retention_start),
                 )
                 deleted = cursor.rowcount
             else:

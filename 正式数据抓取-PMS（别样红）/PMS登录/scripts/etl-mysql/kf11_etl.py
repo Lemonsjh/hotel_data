@@ -25,11 +25,11 @@ def parse_datetime(v):
     try:
         # 尝试解析带毫秒的格式
         return datetime.strptime(v, "%Y-%m-%d %H:%M:%S.%f")
-    except:
+    except (TypeError, ValueError):
         try:
             # 尝试解析不带毫秒的格式
             return datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
-        except:
+        except (TypeError, ValueError):
             return None
 
 

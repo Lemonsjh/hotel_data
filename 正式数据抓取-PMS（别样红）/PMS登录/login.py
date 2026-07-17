@@ -4,12 +4,17 @@
 PMS（别样红）登录脚本 - 只负责登录并保存会话信息
 """
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
-import json
 import time
 import os
+import sys
+from pathlib import Path
 
-SESSION_FILE = "pms_session_playwright.json"
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR / "scripts"))
+import pms_utils
+import pms_config
 
 # 关键 Cookie 列表 - 登录成功必须获取到这些
 REQUIRED_COOKIES = [
@@ -47,7 +52,7 @@ def extract_hotel_name(page):
                 if hotel_name and len(hotel_name) > 2:
                     print(f"✅ 获取酒店名称: {hotel_name}")
                     return hotel_name
-        except:
+        except (PlaywrightError, AttributeError):
             continue
     
     # 尝试通过页面标题获取
@@ -61,7 +66,7 @@ def extract_hotel_name(page):
                     hotel_name = part.strip()
                     print(f"✅ 从标题获取酒店名称: {hotel_name}")
                     return hotel_name
-    except:
+    except PlaywrightError:
         pass
     
     print("⚠️ 未能自动获取酒店名称，将使用默认值")
@@ -76,13 +81,12 @@ def login(username, password):
     
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, slow_mo=300)   #headless=True 隐藏浏览器窗口
+            browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             
             print("正在访问登录页面...")
-            page.goto("https://xingfeng.beyondh.com:8101/login", timeout=60000)
-            page.wait_for_load_state('networkidle')
-            time.sleep(2)
+            page.goto(pms_config.LOGIN_URL, timeout=pms_config.NAVIGATION_TIMEOUT_MS)
+            page.wait_for_load_state('domcontentloaded')
             
             # 检查并勾选用户协议
             print("\n检查用户协议...")
@@ -101,7 +105,7 @@ def login(username, password):
                             print(f"勾选用户协议: {selector}")
                             page.click(selector)
                         break
-                except:
+                except PlaywrightError:
                     continue
             
             print("等待输入框加载...")
@@ -179,8 +183,8 @@ def login(username, password):
             cookies = {cookie['name']: cookie['value'] for cookie in page.context.cookies()}
             print(f"\n获取到 {len(cookies)} 个 Cookie")
 
-            # 尝试获取酒店名称（从页面上提取）
-            hotel_name = extract_hotel_name(page)
+            # 优先从 PMS 登录校验接口获取组织名称，DOM 仅作为兼容回退。
+            hotel_name = pms_utils.fetch_hotel_name(cookies) or extract_hotel_name(page)
 
             # 检查关键 Cookie
             print("\n检查关键 Cookie:")
@@ -212,26 +216,23 @@ def login(username, password):
 
 def save_session(cookies, hotel_name=None):
     """保存会话信息（包含酒店名称）"""
+    hotel_name = hotel_name or os.environ.get("PMS_HOTEL_NAME", "").strip() or None
     session_info = {
-        'url': 'https://xingfeng.beyondh.com:8101',
+        'url': pms_config.LOGIN_BASE_URL,
         'cookies': cookies,
         'hotel_name': hotel_name,
         'login_time': time.strftime('%Y-%m-%d %H:%M:%S')
     }
     
-    with open(SESSION_FILE, 'w', encoding='utf-8') as f:
-        json.dump(session_info, f, indent=2, ensure_ascii=False)
-    print(f"会话信息已保存到 {SESSION_FILE}")
+    pms_utils.write_session(session_info)
+    print(f"会话信息已保存到 {pms_utils.SESSION_PATH}")
     if hotel_name:
         print(f"酒店名称: {hotel_name}")
 
 
 def load_session():
     """加载会话信息"""
-    if os.path.exists(SESSION_FILE):
-        with open(SESSION_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return None
+    return pms_utils.read_session(quiet=True)
 
 
 def main():

@@ -34,10 +34,10 @@ def parse_datetime(value):
         return None
     try:
         return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-    except:
+    except (TypeError, ValueError):
         try:
             return datetime.strptime(value, "%Y-%m-%d")
-        except:
+        except (TypeError, ValueError):
             return None
 
 

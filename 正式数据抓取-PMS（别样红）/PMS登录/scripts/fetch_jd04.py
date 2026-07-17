@@ -16,7 +16,6 @@ from pathlib import Path
 import pms_utils
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SESSION_FILE = ROOT_DIR / "pms_session_playwright.json"
 OUTPUT_DIR = ROOT_DIR / "output"
 
 
@@ -53,8 +52,7 @@ def fetch_jd04():
         print("⚠️ 未捕获到 JD04 接口地址，需要通过浏览器获取")
         capture_jd04_interface(cookies)
         
-        with open(SESSION_FILE, 'r', encoding='utf-8') as f:
-            session_info = json.load(f)
+        session_info = pms_utils.read_session(quiet=True) or {}
         jd04_api_url = session_info.get('jd04_api_url')
         jd04_payload = session_info.get('jd04_payload', {})
     
@@ -64,13 +62,7 @@ def fetch_jd04():
     
     session = requests.Session()
     session.cookies.update(cookies)
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json;charset=UTF-8",
-        "Origin": "https://xingfeng.beyondh.com:8081",
-        "Referer": "https://xingfeng.beyondh.com:8081/",
-    })
+    session.headers.update(pms_utils.request_headers(pms_utils.report_url()))
     
     if jd04_payload:
         payload = jd04_payload.copy()
@@ -97,7 +89,7 @@ def fetch_jd04():
     print(f"请求接口: {jd04_api_url}")
     
     try:
-        response = session.post(jd04_api_url, json=payload, timeout=30)
+        response = session.post(jd04_api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
         
         if response.status_code == 200:
             try:
@@ -131,24 +123,19 @@ def capture_jd04_interface(cookies):
     print("\n=== 使用浏览器捕获 JD04 接口 ===")
     
     try:
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import Error as PlaywrightError, sync_playwright
         
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, slow_mo=200)
+            browser = p.chromium.launch(headless=True)
             context = browser.new_context()
-            
-            cookie_list = []
-            for name, value in cookies.items():
-                cookie_list.append({
-                    "name": name,
-                    "value": value,
-                    "url": "https://xingfeng.beyondh.com:8101"
-                })
-            context.add_cookies(cookie_list)
+            pms_utils.add_cookies_to_context(context, cookies)
             
             page = context.new_page()
-            page.goto("https://xingfeng.beyondh.com:8081/", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(5)
+            page.goto(
+                pms_utils.report_url(),
+                wait_until="domcontentloaded",
+                timeout=pms_utils.NAVIGATION_TIMEOUT_MS,
+            )
             
             jd04_api_url = None
             captured_payload = None
@@ -161,7 +148,7 @@ def capture_jd04_interface(cookies):
                     
                     try:
                         captured_payload = request.post_data_json
-                    except:
+                    except PlaywrightError:
                         post_data = request.post_data
                         captured_payload = json.loads(post_data) if post_data else {}
             
@@ -190,22 +177,12 @@ def capture_jd04_interface(cookies):
                 print(f"⚠️ 未找到查询按钮: {e}")
             
             if jd04_api_url:
-                if os.path.exists(SESSION_FILE):
-                    with open(SESSION_FILE, 'r', encoding='utf-8') as f:
-                        session_info = json.load(f)
-                else:
-                    session_info = {}
-                
-                session_info.update({
-                    'jd04_api_url': jd04_api_url,
-                    'jd04_payload': captured_payload,
-                    'cookies': cookies,
-                    'login_time': time.strftime("%Y-%m-%d %H:%M:%S")
-                })
-                
-                with open(SESSION_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(session_info, f, indent=2, ensure_ascii=False)
-                
+                saved = pms_utils.update_session(
+                    jd04_api_url=jd04_api_url,
+                    jd04_payload=captured_payload,
+                )
+                if not saved:
+                    raise RuntimeError("PMS 会话不存在或无效，无法保存 JD04 接口")
                 print(f"✅ JD04 接口地址已保存")
             
             print("\n自动关闭浏览器...")

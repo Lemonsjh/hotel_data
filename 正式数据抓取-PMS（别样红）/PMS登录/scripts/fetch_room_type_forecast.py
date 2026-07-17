@@ -14,14 +14,15 @@ from typing import Any
 import requests
 
 import pms_utils
+import pms_config
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_FILE = ROOT_DIR / "output" / "FORECAST.json"
-BASE_URL = "https://xingfeng.beyondh.com:8111"
+BASE_URL = pms_config.FORECAST_API_BASE_URL
 ROOM_TYPES_URL = f"{BASE_URL}/API/Room/GetRoomTypesForcasting"
 FORECAST_URL = f"{BASE_URL}/API/Room/SearchBaseRoomForcasting"
-PAGE_URL = "https://xingfeng.beyondh.com:8101/newFuture"
+PAGE_URL = f"{pms_config.LOGIN_BASE_URL}/newFuture"
 
 
 def api_session() -> requests.Session | None:
@@ -37,7 +38,7 @@ def api_session() -> requests.Session | None:
 
 
 def request_json(session: requests.Session, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
-    response = session.request(method, url, timeout=30, **kwargs)
+    response = session.request(method, url, timeout=pms_config.API_TIMEOUT_SECONDS, **kwargs)
     if response.status_code != 200:
         raise RuntimeError(f"接口状态码 {response.status_code}: {response.text[:160]}")
     data = response.json()

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,6 @@ from config import DB_CONFIG, HOTEL_CONFIG
 ROOT = Path(__file__).resolve().parents[2]
 JSON_PATH = ROOT / "output" / "JL11.json"
 TABLE_NAME = "jl11_room_type_classification"
-RETENTION_DAYS = 30
 HOTEL_ID = os.environ.get("HOTEL_ID", "").strip() or str(HOTEL_CONFIG.get("id") or "").strip()
 SUMMARY_FIELDS = {
     "roomCount": ("room_count", False),
@@ -142,16 +141,16 @@ def upsert_mysql(rows: list[dict[str, Any]], conn=None) -> None:
     conn = conn or pymysql.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cursor:
+            cursor.execute(f"DELETE FROM `{TABLE_NAME}` WHERE hotel_id=%s", (HOTEL_ID,))
             cursor.executemany(sql, rows)
-            cursor.execute(
-                f"DELETE FROM `{TABLE_NAME}` WHERE hotel_id=%s AND period_end<%s",
-                (HOTEL_ID, date.today() - timedelta(days=RETENTION_DAYS)),
-            )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         if owns_connection:
             conn.close()
-    print(f"JL11 database sync completed: {len(rows)} rows")
+    print(f"JL11 database replacement completed: {len(rows)} rows")
 
 
 def main(conn=None) -> None:

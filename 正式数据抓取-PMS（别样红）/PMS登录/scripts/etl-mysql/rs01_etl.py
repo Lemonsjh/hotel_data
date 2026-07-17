@@ -20,7 +20,7 @@ def parse_datetime(v):
         return None
     try:
         return datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
-    except:
+    except (TypeError, ValueError):
         return None
 
 
@@ -29,7 +29,7 @@ def parse_date(v):
         return None
     try:
         return datetime.strptime(v, "%Y-%m-%d").date()
-    except:
+    except (TypeError, ValueError):
         return None
 
 

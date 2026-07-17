@@ -24,7 +24,7 @@ def safe_str(v):
 def safe_float(v):
     try:
         return float(v) if v is not None else 0.0
-    except:
+    except (TypeError, ValueError):
         return 0.0
 
 def parse_datetime(v):
@@ -32,10 +32,10 @@ def parse_datetime(v):
         return None
     try:
         return datetime.strptime(v, "%Y-%m-%d %H:%M")
-    except:
+    except (TypeError, ValueError):
         try:
             return datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
-        except:
+        except (TypeError, ValueError):
             return None
 
 

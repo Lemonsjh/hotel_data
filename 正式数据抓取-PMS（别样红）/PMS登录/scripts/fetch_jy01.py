@@ -11,16 +11,15 @@ import requests
 import json
 import time
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 # 导入公共工具模块
 import pms_utils
 import pms_history
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SESSION_FILE = ROOT_DIR / "pms_session_playwright.json"
 OUTPUT_DIR = ROOT_DIR / "output"
-REPORT_URL = "https://xingfeng.beyondh.com:8081/"
+REPORT_URL = pms_utils.report_url()
 
 
 # ========================
@@ -48,22 +47,20 @@ def add_cookies(context, cookies):
 def open_jy01(page):
     print("\n👉 打开报表中心...")
     # 使用 domcontentloaded 替代 networkidle，减少超时概率
-    page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
-    time.sleep(5)
+    page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=pms_utils.NAVIGATION_TIMEOUT_MS)
 
     print("👉 点击门店...")
     # 尝试多种定位方式
     try:
         page.locator("text=门店").first.click(timeout=15000)
-    except:
+    except PlaywrightError:
         print("⚠️ 使用 text=门店 定位失败，尝试其他方式")
         page.locator(".ant-menu-item", has_text="门店").first.click(timeout=15000)
-    time.sleep(3)
 
     print("👉 点击 JY01...")
     try:
         page.locator("text=JY01").first.click(timeout=15000)
-    except:
+    except PlaywrightError:
         print("⚠️ 使用 text=JY01 定位失败，尝试其他方式")
         page.locator(".ant-menu-item", has_text="JY01").first.click(timeout=15000)
     pms_utils.get_query_button(page)
@@ -89,7 +86,7 @@ def capture_jy01(page):
 
     try:
         payload = request.post_data_json
-    except:
+    except PlaywrightError:
         payload = json.loads(request.post_data or "{}")
 
     data = response.json()
@@ -117,15 +114,9 @@ def fetch_with_requests(cookies, api_url, payload):
     session = requests.Session()
     session.cookies.update(cookies)
 
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0",
-        "Content-Type": "application/json;charset=UTF-8",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://xingfeng.beyondh.com:8081",
-        "Referer": "https://xingfeng.beyondh.com:8081/"
-    })
+    session.headers.update(pms_utils.request_headers(REPORT_URL))
 
-    resp = session.post(api_url, json=payload, timeout=30)
+    resp = session.post(api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
 
     print("状态码:", resp.status_code)
 
@@ -147,19 +138,10 @@ def save_output(data):
 # 保存会话信息
 # ========================
 def save_session_info(api_url, payload):
-    if not SESSION_FILE.exists():
-        return
-
-    with SESSION_FILE.open("r", encoding="utf-8") as f:
-        session = json.load(f)
-
-    session["jy01_api_url"] = api_url
-    session["jy01_payload"] = payload
-
-    with SESSION_FILE.open("w", encoding="utf-8") as f:
-        json.dump(session, f, ensure_ascii=False, indent=2)
-
-    print("✅ JY01 接口信息已保存到会话文件")
+    if pms_utils.update_session(jy01_api_url=api_url, jy01_payload=payload):
+        print("✅ JY01 接口信息已保存到会话文件")
+    else:
+        print("⚠️ JY01 接口信息保存失败: PMS 会话不存在或无效")
 
 
 # ========================
@@ -178,8 +160,7 @@ def run(start_date=None, end_date=None):
     while retry_count <= max_retries:
         try:
             with sync_playwright() as p:
-                # 使用 headless=False 方便调试，但如果需要静默运行可以改为 True
-                browser = p.chromium.launch(headless=True, slow_mo=200)
+                browser = p.chromium.launch(headless=True)
                 context = browser.new_context(
                     viewport={"width": 1440, "height": 900},
                     user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"

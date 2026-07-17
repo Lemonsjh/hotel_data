@@ -98,7 +98,7 @@ def register(app) -> None:
   <div class="grid">{''.join(cards)}</div>
 </section>
 {refresh_script}"""
-        return page("OTA 采集控制台", body, "status")
+        return page("酒店数据采集控制台", body, "status")
 
     @app.post("/run/all")
     def run_all():

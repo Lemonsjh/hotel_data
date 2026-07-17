@@ -17,7 +17,6 @@ from pathlib import Path
 import pms_utils
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SESSION_FILE = ROOT_DIR / "pms_session_playwright.json"
 OUTPUT_DIR = ROOT_DIR / "output"
 
 
@@ -42,8 +41,7 @@ def fetch_jd01(start_date=None, end_date=None):
         capture_jd01_interface(cookies)
         
         # 重新加载会话信息
-        with open(SESSION_FILE, 'r', encoding='utf-8') as f:
-            session_info = json.load(f)
+        session_info = pms_utils.read_session(quiet=True) or {}
         jd01_api_url = session_info.get('jd01_api_url')
         jd01_payload = session_info.get('jd01_payload', {})
     
@@ -55,13 +53,7 @@ def fetch_jd01(start_date=None, end_date=None):
     session = requests.Session()
     session.trust_env = False
     session.cookies.update(cookies)
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json;charset=UTF-8",
-        "Origin": "https://xingfeng.beyondh.com:8081",
-        "Referer": "https://xingfeng.beyondh.com:8081/",
-    })
+    session.headers.update(pms_utils.request_headers(pms_utils.report_url()))
     
     # 使用捕获到的 Payload 作为基础（包含正确的 orgId）
     # 如果没有捕获到 Payload，使用默认参数
@@ -100,7 +92,7 @@ def fetch_jd01(start_date=None, end_date=None):
         response = None
         for attempt in range(2):
             try:
-                response = session.post(jd01_api_url, json=payload, timeout=30)
+                response = session.post(jd01_api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
                 break
             except requests.RequestException as exc:
                 if attempt:
@@ -212,27 +204,21 @@ def capture_jd01_interface(cookies):
     print("\n=== 使用浏览器捕获 JD01 接口 ===")
     
     try:
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import Error as PlaywrightError, sync_playwright
         
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, slow_mo=200)
+            browser = p.chromium.launch(headless=True)
             context = browser.new_context()
-            
-            # 设置 Cookie
-            cookie_list = []
-            for name, value in cookies.items():
-                cookie_list.append({
-                    "name": name,
-                    "value": value,
-                    "url": "https://xingfeng.beyondh.com:8101"
-                })
-            context.add_cookies(cookie_list)
+            pms_utils.add_cookies_to_context(context, cookies)
             
             page = context.new_page()
             
             print("正在访问报表页面...")
-            page.goto("https://xingfeng.beyondh.com:8081/", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(5)
+            page.goto(
+                pms_utils.report_url(),
+                wait_until="domcontentloaded",
+                timeout=pms_utils.NAVIGATION_TIMEOUT_MS,
+            )
             
             # 监听接口请求
             jd01_api_url = None
@@ -246,7 +232,7 @@ def capture_jd01_interface(cookies):
                     
                     try:
                         captured_payload = request.post_data_json
-                    except:
+                    except PlaywrightError:
                         post_data = request.post_data
                         captured_payload = json.loads(post_data) if post_data else {}
             
@@ -280,19 +266,13 @@ def capture_jd01_interface(cookies):
             
             # 保存接口地址到会话文件
             if jd01_api_url:
-                session_info = {
-                    'url': 'https://xingfeng.beyondh.com:8101',
-                    'report_url': 'https://xingfeng.beyondh.com:8081/',
-                    'jd01_api_url': jd01_api_url,
-                    'jd01_payload': captured_payload,
-                    'cookies': cookies,
-                    'login_time': time.strftime("%Y-%m-%d %H:%M:%S")
-                }
-                
-                with open(SESSION_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(session_info, f, indent=2, ensure_ascii=False)
-                
-                print(f"✅ JD01 接口地址已保存到 {SESSION_FILE}")
+                saved = pms_utils.update_session(
+                    jd01_api_url=jd01_api_url,
+                    jd01_payload=captured_payload,
+                )
+                if not saved:
+                    raise RuntimeError("PMS 会话不存在或无效，无法保存 JD01 接口")
+                print(f"✅ JD01 接口地址已保存到 {pms_utils.SESSION_PATH}")
                 if captured_payload:
                     print(f"✅ 捕获到 Payload: {json.dumps(captured_payload, indent=2, ensure_ascii=False)}")
             

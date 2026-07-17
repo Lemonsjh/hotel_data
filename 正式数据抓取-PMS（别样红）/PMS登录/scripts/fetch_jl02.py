@@ -18,9 +18,8 @@ from pms_daily_dates import query_dates
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SESSION_FILE = ROOT_DIR / "pms_session_playwright.json"
 OUTPUT_FILE = ROOT_DIR / "output" / "JL02.json"
-REPORT_URL = "https://xingfeng.beyondh.com:8081/report/JL02"
+REPORT_URL = pms_utils.report_url("report/JL02")
 DEFAULT_CODES = ["RoomType", "CustomerCategory", "AnalysisChannel", "CheckinType"]
 
 
@@ -38,16 +37,13 @@ def complete_payload(payload: dict[str, Any]) -> dict[str, Any]:
     result.setdefault("statisticsCodes", list(DEFAULT_CODES))
     if result.get("orgId"):
         return result
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        for key in ("jd01_payload", "jd04_payload", "kf11_payload"):
-            org_id = str((session.get(key) or {}).get("orgId") or "").strip()
-            if org_id:
-                result["orgId"] = org_id
-                print(f"✅ JL02 已补充酒店组织ID（来源: {key}）")
-                break
-    except (OSError, json.JSONDecodeError):
-        pass
+    session = pms_utils.read_session(quiet=True) or {}
+    for key in ("jd01_payload", "jd04_payload", "kf11_payload"):
+        org_id = str((session.get(key) or {}).get("orgId") or "").strip()
+        if org_id:
+            result["orgId"] = org_id
+            print(f"✅ JL02 已补充酒店组织ID（来源: {key}）")
+            break
     if not result.get("orgId"):
         raise RuntimeError("JL02 缺少 PMS 组织 ID，请重新登录 PMS 后重试")
     return result
@@ -56,17 +52,9 @@ def complete_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def fetch_requests(cookies: dict[str, str], api_url: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     session = requests.Session()
     session.cookies.update(cookies)
-    session.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json;charset=UTF-8",
-            "Origin": "https://xingfeng.beyondh.com:8081",
-            "Referer": REPORT_URL,
-        }
-    )
+    session.headers.update(pms_utils.request_headers(REPORT_URL))
     try:
-        response = session.post(api_url, json=payload, timeout=30)
+        response = session.post(api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
     except requests.RequestException as exc:
         print(f"⚠️ JL02 接口请求异常: {exc}")
         return None
@@ -104,33 +92,24 @@ def save_output(reports: list[dict[str, Any]]) -> None:
 
 
 def save_session(api_url: str, payload: dict[str, Any]) -> None:
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        session["jl02_api_url"] = api_url
-        session["jl02_payload"] = payload
-        SESSION_FILE.write_text(json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8")
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"⚠️ JL02 接口信息保存失败: {exc}")
+    if not pms_utils.update_session(jl02_api_url=api_url, jl02_payload=payload):
+        print("⚠️ JL02 接口信息保存失败: PMS 会话不存在或无效")
 
 
 def cached_request() -> tuple[str | None, dict[str, Any] | None]:
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        return session.get("jl02_api_url"), session.get("jl02_payload")
-    except (OSError, json.JSONDecodeError):
-        return None, None
+    session = pms_utils.read_session(quiet=True) or {}
+    return session.get("jl02_api_url"), session.get("jl02_payload")
 
 
 def capture_request(cookies: dict[str, str]) -> tuple[str, dict[str, Any], dict[str, Any]]:
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, slow_mo=120)
+        browser = playwright.chromium.launch(headless=True)
         try:
             context = browser.new_context()
             add_cookies(context, cookies)
             page = context.new_page()
-            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
-            query_button = pms_utils.get_query_button(page, timeout=30000)
+            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=pms_utils.NAVIGATION_TIMEOUT_MS)
+            query_button = pms_utils.get_query_button(page)
             with page.expect_response(
                 lambda response: "/dragon/api/v1/dragon/manager/jl02" in response.url
                 and response.request.method == "POST"

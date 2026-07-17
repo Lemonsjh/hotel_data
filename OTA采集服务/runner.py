@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from process_runner import ProcessTimeoutError, run_streamed
+from settings_validation import require_valid_settings
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -75,7 +77,7 @@ def save_json(path: Path, data: Any) -> None:
 def load_settings() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Missing config: {CONFIG_PATH}")
-    return load_json(CONFIG_PATH, {})
+    return require_valid_settings(load_json(CONFIG_PATH, {}), CONFIG_PATH)
 
 
 def project_path(value: Any, default: str | Path = ".") -> Path:
@@ -111,7 +113,7 @@ def enabled_tasks(settings: dict[str, Any]) -> list[str]:
     flags = settings.get("tasks") or {}
     result: list[str] = []
     for name, (platform, _script, _args) in TASKS.items():
-        if flags.get(name, True) and (settings.get(platform) or {}).get("enabled", True):
+        if flags.get(name, False) and (settings.get(platform) or {}).get("enabled", True):
             result.append(name)
     return result
 
@@ -148,6 +150,18 @@ def build_env(settings: dict[str, Any]) -> dict[str, str]:
     put_if(env, "MYSQL_DATABASE", mysql.get("database"))
     put_if(env, "PMS_USERNAME", pms.get("username"))
     put_if(env, "PMS_PASSWORD", pms.get("password"))
+    put_if(
+        env,
+        "PMS_HOTEL_NAME",
+        pms.get("hotel_name"),
+    )
+    put_if(env, "PMS_LOGIN_BASE_URL", pms.get("login_base_url"))
+    put_if(env, "PMS_REPORT_BASE_URL", pms.get("report_base_url"))
+    put_if(env, "PMS_SERVICE_API_BASE_URL", pms.get("service_api_base_url"))
+    put_if(env, "PMS_FORECAST_API_BASE_URL", pms.get("forecast_api_base_url"))
+    put_if(env, "PMS_NAVIGATION_TIMEOUT_MS", pms.get("navigation_timeout_ms"))
+    put_if(env, "PMS_ACTION_TIMEOUT_MS", pms.get("action_timeout_ms"))
+    put_if(env, "PMS_API_TIMEOUT_SECONDS", pms.get("api_timeout_seconds"))
 
     put_if(env, "MEITUAN_HOTEL_NAME", meituan.get("hotel_name"))
     put_if(env, "MEITUAN_POI_ID", meituan.get("poi_id"))
@@ -252,28 +266,23 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
     command = [py, str(script), *extra_args]
     begin = datetime.now()
     try:
-        completed = subprocess.run(
+        completed = run_streamed(
             command,
             cwd=str(script.parent if platform == "pms" else base_dir),
             env=build_env(settings),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=timeout,
+            log_path=log_path,
+            transform=lambda line: sanitize(line, settings),
         )
-        output = sanitize((completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else ""), settings)
-        log_path.write_text(output, encoding="utf-8")
-        result["return_code"] = completed.returncode
-        if completed.returncode == 0:
+        output = completed.output_tail
+        result["return_code"] = completed.return_code
+        if completed.return_code == 0:
             result["status"] = "success"
             enrich_room_type_ids(name, settings, log_path)
         else:
             result["status"] = "failed"
-            result["error_summary"] = first_error_line(output) or f"return_code={completed.returncode}"
-    except subprocess.TimeoutExpired as exc:
-        output = sanitize((exc.stdout or "") + ("\n" + exc.stderr if exc.stderr else ""), settings)
-        log_path.write_text(output, encoding="utf-8")
+            result["error_summary"] = first_error_line(output) or f"return_code={completed.return_code}"
+    except ProcessTimeoutError as exc:
         result["status"] = "failed"
         result["error_summary"] = f"timeout after {timeout}s"
     except Exception as exc:

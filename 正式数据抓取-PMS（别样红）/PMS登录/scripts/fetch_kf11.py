@@ -9,18 +9,15 @@ KF11 实时房态报表抓取（稳定版）
 
 import requests
 import json
-import os
-import time
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 # 导入公共工具模块
 import pms_utils
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SESSION_FILE = ROOT_DIR / "pms_session_playwright.json"
 OUTPUT_DIR = ROOT_DIR / "output"
-REPORT_URL = "https://xingfeng.beyondh.com:8081/"
+REPORT_URL = pms_utils.report_url()
 
 
 # =========================
@@ -44,12 +41,10 @@ def add_cookies(context, cookies):
 # =========================
 def open_kf11(page):
     print("\n👉 进入报表中心")
-    page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
-    time.sleep(3)
+    page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=pms_utils.NAVIGATION_TIMEOUT_MS)
 
     print("👉 点击门店")
     page.locator("text=门店").first.click()
-    time.sleep(2)
 
     print("👉 点击 KF11")
     page.locator("text=KF11").first.click()
@@ -82,7 +77,7 @@ def capture_kf11(page):
 
     try:
         payload = request.post_data_json
-    except:
+    except PlaywrightError:
         payload = json.loads(request.post_data or "{}")
 
     data = response.json()
@@ -98,29 +93,18 @@ def capture_kf11(page):
 # =========================
 def save_kf11_session(api_url, payload):
     """保存 KF11 接口信息到会话文件"""
-    if not os.path.exists(SESSION_FILE):
-        print("❌ 会话文件不存在")
-        return
-
-    with open(SESSION_FILE, "r", encoding="utf-8") as f:
-        session = json.load(f)
-
-    session["kf11_api_url"] = api_url
-    session["kf11_payload"] = payload
-
-    with open(SESSION_FILE, "w", encoding="utf-8") as f:
-        json.dump(session, f, ensure_ascii=False, indent=2)
-
-    print("✅ KF11 接口信息已保存到会话文件")
+    if pms_utils.update_session(kf11_api_url=api_url, kf11_payload=payload):
+        print("✅ KF11 接口信息已保存到会话文件")
+    else:
+        print("❌ PMS 会话不存在或无效，KF11 接口信息未保存")
 
 
 def complete_kf11_payload(payload):
     """页面未提供orgId时，复用本轮JD01/JD04捕获的酒店组织ID。"""
     result = dict(payload or {})
-    if result.get("orgId") or not os.path.exists(SESSION_FILE):
+    if result.get("orgId"):
         return result
-    with open(SESSION_FILE, "r", encoding="utf-8") as f:
-        session = json.load(f)
+    session = pms_utils.read_session(quiet=True) or {}
     for key in ("jd01_payload", "jd04_payload"):
         org_id = str((session.get(key) or {}).get("orgId") or "").strip()
         if org_id:
@@ -136,15 +120,9 @@ def fetch_kf11_requests(cookies, api_url, payload):
     session = requests.Session()
     session.cookies.update(cookies)
 
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0",
-        "Content-Type": "application/json;charset=UTF-8",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://xingfeng.beyondh.com:8081",
-        "Referer": "https://xingfeng.beyondh.com:8081/"
-    })
+    session.headers.update(pms_utils.request_headers(REPORT_URL))
 
-    resp = session.post(api_url, json=payload, timeout=30)
+    resp = session.post(api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
 
     print("状态码:", resp.status_code)
 
@@ -165,10 +143,9 @@ def get_data_list(data):
 
 
 def save_kf11_output(data):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    path = os.path.join(OUTPUT_DIR, "KF11.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUTPUT_DIR / "KF11.json"
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"✅ 已保存: {path}，数据条数: {len(get_data_list(data))}")
 
 
@@ -183,8 +160,7 @@ def run():
         return
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True,   # 非 headless 模式，否则会弹出浏览器窗口
-                                    slow_mo=120)
+        browser = p.chromium.launch(headless=True)
         context = browser.new_context()
 
         add_cookies(context, cookies)

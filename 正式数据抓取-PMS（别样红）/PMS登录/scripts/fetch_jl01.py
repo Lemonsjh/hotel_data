@@ -18,9 +18,8 @@ from pms_daily_dates import query_dates
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SESSION_FILE = ROOT_DIR / "pms_session_playwright.json"
 OUTPUT_FILE = ROOT_DIR / "output" / "JL01.json"
-REPORT_URL = "https://xingfeng.beyondh.com:8081/report/JL01"
+REPORT_URL = pms_utils.report_url("report/JL01")
 API_MARKER = "/lion/api/v1/lion/manager/actualManagerDailyReport"
 
 
@@ -34,15 +33,12 @@ def complete_payload(payload: dict[str, Any]) -> dict[str, Any]:
     result.setdefault("expandAgentCompany", True)
     if result.get("orgId"):
         return result
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        for key in ("jl02_payload", "jd01_payload", "jd04_payload", "kf11_payload"):
-            org_id = str((session.get(key) or {}).get("orgId") or "").strip()
-            if org_id:
-                result["orgId"] = org_id
-                break
-    except (OSError, json.JSONDecodeError):
-        pass
+    session = pms_utils.read_session(quiet=True) or {}
+    for key in ("jl02_payload", "jd01_payload", "jd04_payload", "kf11_payload"):
+        org_id = str((session.get(key) or {}).get("orgId") or "").strip()
+        if org_id:
+            result["orgId"] = org_id
+            break
     if not result.get("orgId"):
         raise RuntimeError("JL01 缺少 PMS 组织 ID，请重新登录 PMS 后重试")
     return result
@@ -51,17 +47,9 @@ def complete_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def post_report(cookies: dict[str, str], api_url: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     session = requests.Session()
     session.cookies.update(cookies)
-    session.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json;charset=UTF-8",
-            "Origin": "https://xingfeng.beyondh.com:8081",
-            "Referer": REPORT_URL,
-        }
-    )
+    session.headers.update(pms_utils.request_headers(REPORT_URL))
     try:
-        response = session.post(api_url, json=payload, timeout=30)
+        response = session.post(api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
         data = response.json() if response.status_code == 200 else None
     except (requests.RequestException, ValueError) as exc:
         print(f"⚠️ JL01 请求异常: {exc}")
@@ -84,13 +72,13 @@ def post_with_retry(cookies: dict[str, str], api_url: str, payload: dict[str, An
 
 def capture_template(cookies: dict[str, str]) -> tuple[str, dict[str, Any], dict[str, Any]]:
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, slow_mo=100)
+        browser = playwright.chromium.launch(headless=True)
         try:
             context = browser.new_context()
             pms_utils.add_cookies_to_context(context, cookies)
             page = context.new_page()
-            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
-            button = pms_utils.get_query_button(page, timeout=30000)
+            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=pms_utils.NAVIGATION_TIMEOUT_MS)
+            button = pms_utils.get_query_button(page)
             with page.expect_response(
                 lambda response: API_MARKER in response.url
                 and response.request.method == "POST"
@@ -109,21 +97,13 @@ def capture_template(cookies: dict[str, str]) -> tuple[str, dict[str, Any], dict
 
 
 def cached_template() -> tuple[str | None, dict[str, Any] | None]:
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        return session.get("jl01_api_url"), session.get("jl01_payload")
-    except (OSError, json.JSONDecodeError):
-        return None, None
+    session = pms_utils.read_session(quiet=True) or {}
+    return session.get("jl01_api_url"), session.get("jl01_payload")
 
 
 def save_template(api_url: str, payload: dict[str, Any]) -> None:
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        session["jl01_api_url"] = api_url
-        session["jl01_payload"] = payload
-        SESSION_FILE.write_text(json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8")
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"⚠️ JL01 接口信息保存失败: {exc}")
+    if not pms_utils.update_session(jl01_api_url=api_url, jl01_payload=payload):
+        print("⚠️ JL01 接口信息保存失败: PMS 会话不存在或无效")
 
 
 def request_template(cookies: dict[str, str]) -> tuple[str, dict[str, Any]]:

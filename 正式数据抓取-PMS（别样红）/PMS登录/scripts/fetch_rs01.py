@@ -26,8 +26,7 @@ import pms_utils
 import pms_history
 
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output"
-SESSION_FILE = Path(__file__).resolve().parents[1] / "pms_session_playwright.json"
-REPORT_URL = "https://xingfeng.beyondh.com:8081/"
+REPORT_URL = pms_utils.report_url()
 
 
 def get_data_count(data):
@@ -61,8 +60,7 @@ def add_cookies_to_context(context, cookies):
 def open_rs01_report(page):
     """打开 RS01 房费日报表"""
     print("\n正在访问 PMS 报表中心...")
-    page.goto(REPORT_URL.rstrip("/") + "/report/RS01", wait_until="domcontentloaded", timeout=60000)
-    time.sleep(5)
+    page.goto(pms_utils.report_url("report/RS01"), wait_until="domcontentloaded", timeout=pms_utils.NAVIGATION_TIMEOUT_MS)
     try:
         pms_utils.get_query_button(page, timeout=15000)
         print("当前页面:", page.url)
@@ -71,8 +69,7 @@ def open_rs01_report(page):
     except Exception as exc:
         print("⚠️ 直达 RS01 页面失败，尝试从菜单进入:", exc)
 
-    page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
-    time.sleep(5)
+    page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=pms_utils.NAVIGATION_TIMEOUT_MS)
     print("点击【门店】...")
     try:
         page.locator("text=门店").first.click(timeout=15000)
@@ -122,10 +119,7 @@ def click_query_and_capture_rs01(page):
 
 def load_rs01_template():
     """读取上次捕获到的 RS01 接口模板"""
-    if not SESSION_FILE.exists():
-        return None, None
-    with SESSION_FILE.open("r", encoding="utf-8") as file:
-        session = json.load(file)
+    session = pms_utils.read_session(quiet=True) or {}
     api_url = session.get("rs01_api_url")
     payload = session.get("rs01_payload")
     if api_url and isinstance(payload, dict):
@@ -135,15 +129,10 @@ def load_rs01_template():
 
 def save_rs01_template(api_url, payload):
     """保存 RS01 接口模板，页面偶发打不开时可复用"""
-    if not SESSION_FILE.exists():
-        return
-    with SESSION_FILE.open("r", encoding="utf-8") as file:
-        session = json.load(file)
-    session["rs01_api_url"] = api_url
-    session["rs01_payload"] = payload
-    with SESSION_FILE.open("w", encoding="utf-8") as file:
-        json.dump(session, file, ensure_ascii=False, indent=2)
-    print("✅ RS01 接口信息已保存到会话文件")
+    if pms_utils.update_session(rs01_api_url=api_url, rs01_payload=payload):
+        print("✅ RS01 接口信息已保存到会话文件")
+    else:
+        print("⚠️ RS01 接口信息保存失败: PMS 会话不存在或无效")
 
 
 def set_recent_30_days(payload, start_date=None, end_date=None):
@@ -195,20 +184,13 @@ def fetch_rs01_with_requests(cookies, api_url, payload):
     session.trust_env = False
     session.cookies.update(cookies)
 
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                      "AppleWebKit/537.36 Chrome/120 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json;charset=UTF-8",
-        "Origin": "https://xingfeng.beyondh.com:8081",
-        "Referer": "https://xingfeng.beyondh.com:8081/",
-    })
+    session.headers.update(pms_utils.request_headers(REPORT_URL))
 
     print("请求接口:", api_url)
     print("请求参数:")
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
-    response = session.post(api_url, json=payload, timeout=30)
+    response = session.post(api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
 
     print("状态码:", response.status_code)
 
@@ -246,10 +228,7 @@ def fetch_rs01(start_date=None, end_date=None):
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,   # 非 headless 模式，否则会弹出浏览器窗口
-                slow_mo=200
-            )
+            browser = p.chromium.launch(headless=True)
 
             context = browser.new_context()
             add_cookies_to_context(context, cookies)

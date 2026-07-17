@@ -21,6 +21,7 @@ TEXT_GROUPS = [
             ("hotel.hotel_id", "酒店 ID"),
             ("meituan.hotel_name", "美团酒店名"),
             ("ctrip.hotel_name", "携程酒店名"),
+            ("pms.hotel_name", "PMS 酒店名"),
             ("pms.username", "PMS 账号"),
         ],
     ),
@@ -61,6 +62,13 @@ ADVANCED_TEXT_GROUPS = [
             ("pms.code_dir", "PMS 代码目录"),
             ("pms.entry_script", "PMS 入口脚本"),
             ("pms.timeout_seconds", "PMS 超时（秒）"),
+            ("pms.login_base_url", "PMS 登录地址"),
+            ("pms.report_base_url", "PMS 报表地址"),
+            ("pms.service_api_base_url", "PMS 业务接口地址"),
+            ("pms.forecast_api_base_url", "PMS 房态接口地址"),
+            ("pms.navigation_timeout_ms", "页面超时（毫秒）"),
+            ("pms.action_timeout_ms", "操作超时（毫秒）"),
+            ("pms.api_timeout_seconds", "接口超时（秒）"),
         ],
     ),
 ]
@@ -180,11 +188,19 @@ CONFIG_SECTIONS = [
         "title": "PMS（别样红）",
         "hint": "登录账号、密码和采集入口放在同一处。",
         "fields": [
+            ("pms.hotel_name", "酒店名称", False, False),
             ("pms.username", "登录账号", False, False),
             ("pms.password", "登录密码", True, False),
             ("pms.code_dir", "代码目录", False, True),
             ("pms.entry_script", "入口脚本", False, True),
             ("pms.timeout_seconds", "超时（秒）", False, True),
+            ("pms.login_base_url", "登录地址", False, True),
+            ("pms.report_base_url", "报表地址", False, True),
+            ("pms.service_api_base_url", "业务接口地址", False, True),
+            ("pms.forecast_api_base_url", "房态接口地址", False, True),
+            ("pms.navigation_timeout_ms", "页面超时（毫秒）", False, True),
+            ("pms.action_timeout_ms", "操作超时（毫秒）", False, True),
+            ("pms.api_timeout_seconds", "接口超时（秒）", False, True),
         ],
     },
 ]
@@ -197,6 +213,9 @@ NUMBER_FIELDS = {
     "price_scheduler.max_tasks_per_run",
     "mysql.port",
     "pms.timeout_seconds",
+    "pms.navigation_timeout_ms",
+    "pms.action_timeout_ms",
+    "pms.api_timeout_seconds",
 }
 
 SHORT_SECRET_FIELDS = {"mysql.password", "pms.password"}

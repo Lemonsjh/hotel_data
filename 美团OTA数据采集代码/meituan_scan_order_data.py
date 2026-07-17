@@ -73,7 +73,17 @@ def fetch_orders(start_date: date, end_date: date) -> list[dict[str, Any]]:
         data = request_page(start_date, end_date, page_number)
         details = data.get("completeOrderDetailInfo") or {}
         rows = details.get("completeOrderDetailList") if isinstance(details, dict) else []
-        rows = [row for row in rows or [] if isinstance(row, dict) and row.get("orderIdStr")]
+        valid_rows = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            order_id = str(row.get("orderIdStr") or "").strip()
+            if not order_id:
+                continue
+            normalized = dict(row)
+            normalized["orderIdStr"] = order_id
+            valid_rows.append(normalized)
+        rows = valid_rows
         orders.extend(rows)
         total = int(data.get("totalNum") or 0)
         if len(orders) >= total or len(rows) < PAGE_SIZE:
@@ -103,7 +113,7 @@ def build_rows(
     return [
         [
             hotel_id,
-            item.get("orderIdStr"),
+            str(item.get("orderIdStr") or "").strip(),
             scan_datetime(item.get("scanTime")),
             item.get("scanSource"),
             item.get("userType"),

@@ -17,9 +17,8 @@ import pms_utils
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SESSION_FILE = ROOT / "pms_session_playwright.json"
 OUTPUT_FILE = ROOT / "output" / "JL11.json"
-REPORT_URL = "https://xingfeng.beyondh.com:8081/report/JL11"
+REPORT_URL = pms_utils.report_url("report/JL11")
 API_MARKER = "/dragon/api/v1/dragon/jl/jl11"
 WINDOW_DAYS = 30
 
@@ -41,10 +40,7 @@ def complete_payload(payload: dict[str, Any]) -> dict[str, Any]:
     result.setdefault("indicator", [])
     if result.get("orgId"):
         return result
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError("JL11 is missing the PMS organization ID") from exc
+    session = pms_utils.read_session(quiet=True) or {}
     for key in ("jl11_payload", "jl02_payload", "jl01_payload", "jd01_payload", "kf11_payload"):
         org_id = str((session.get(key) or {}).get("orgId") or "").strip()
         if org_id:
@@ -54,32 +50,24 @@ def complete_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_template(api_url: str, payload: dict[str, Any]) -> None:
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        session["jl11_api_url"] = api_url
-        session["jl11_payload"] = payload
-        SESSION_FILE.write_text(json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8")
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"JL11 template save warning: {exc}")
+    if not pms_utils.update_session(jl11_api_url=api_url, jl11_payload=payload):
+        print("JL11 template save warning: PMS session is missing or invalid")
 
 
 def cached_template() -> tuple[str | None, dict[str, Any] | None]:
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        return session.get("jl11_api_url"), session.get("jl11_payload")
-    except (OSError, json.JSONDecodeError):
-        return None, None
+    session = pms_utils.read_session(quiet=True) or {}
+    return session.get("jl11_api_url"), session.get("jl11_payload")
 
 
 def capture_template(cookies: dict[str, str]) -> tuple[str, dict[str, Any]]:
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, slow_mo=100)
+        browser = playwright.chromium.launch(headless=True)
         try:
             context = browser.new_context()
             pms_utils.add_cookies_to_context(context, cookies)
             page = context.new_page()
-            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60_000)
-            query_button = pms_utils.get_query_button(page, timeout=30_000)
+            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=pms_utils.NAVIGATION_TIMEOUT_MS)
+            query_button = pms_utils.get_query_button(page)
             with page.expect_response(
                 lambda response: API_MARKER in response.url
                 and response.request.method == "POST"
@@ -113,16 +101,8 @@ def fetch_report(cookies: dict[str, str], api_url: str, payload: dict[str, Any])
     session = requests.Session()
     session.trust_env = False
     session.cookies.update(cookies)
-    session.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json;charset=UTF-8",
-            "Origin": "https://xingfeng.beyondh.com:8081",
-            "Referer": REPORT_URL,
-        }
-    )
-    response = session.post(api_url, json=payload, timeout=30)
+    session.headers.update(pms_utils.request_headers(REPORT_URL))
+    response = session.post(api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
     if response.status_code != 200:
         raise RuntimeError(f"JL11 request failed: HTTP {response.status_code}")
     data = response.json()

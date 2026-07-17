@@ -20,9 +20,8 @@ import pms_utils
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SESSION_FILE = ROOT_DIR / "pms_session_playwright.json"
 OUTPUT_FILE = ROOT_DIR / "output" / "JY03.json"
-REPORT_URL = "https://xingfeng.beyondh.com:8081/"
+REPORT_URL = pms_utils.report_url()
 API_MARKER = "monthSummary"
 REQUIRED_CATEGORIES = ["Summary", "CustomerCategory", "CheckinType", "RoomType", "AnalysisChannel"]
 
@@ -41,7 +40,7 @@ def complete_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def request_data(session: requests.Session, api_url: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     try:
-        response = session.post(api_url, json=payload, timeout=30)
+        response = session.post(api_url, json=payload, timeout=pms_utils.API_TIMEOUT_SECONDS)
         data = response.json() if response.status_code == 200 else None
     except (requests.RequestException, ValueError) as exc:
         print(f"⚠️ JY03 请求异常: {exc}")
@@ -64,18 +63,16 @@ def request_with_retry(session: requests.Session, api_url: str, payload: dict[st
 
 def capture_template(cookies: dict[str, str]) -> tuple[str, dict[str, Any]]:
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, slow_mo=150)
+        browser = playwright.chromium.launch(headless=True)
         try:
             context = browser.new_context()
             pms_utils.add_cookies_to_context(context, cookies)
             page = context.new_page()
-            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
+            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=pms_utils.NAVIGATION_TIMEOUT_MS)
             try:
                 page.get_by_text("门店", exact=True).first.click(timeout=15000)
             except Exception:
                 page.locator(".ant-menu-item", has_text="门店").first.click(timeout=15000)
-            page.wait_for_timeout(1500)
             try:
                 page.get_by_text("JY03 酒店综合统计月报表(固化)", exact=True).first.click(timeout=15000)
             except Exception:
@@ -99,21 +96,13 @@ def capture_template(cookies: dict[str, str]) -> tuple[str, dict[str, Any]]:
 
 
 def load_template() -> tuple[str | None, dict[str, Any] | None]:
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        return session.get("jy03_api_url"), session.get("jy03_payload")
-    except (OSError, json.JSONDecodeError):
-        return None, None
+    session = pms_utils.read_session(quiet=True) or {}
+    return session.get("jy03_api_url"), session.get("jy03_payload")
 
 
 def save_template(api_url: str, payload: dict[str, Any]) -> None:
-    try:
-        session = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
-        session["jy03_api_url"] = api_url
-        session["jy03_payload"] = payload
-        SESSION_FILE.write_text(json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8")
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"⚠️ JY03 接口信息保存失败: {exc}")
+    if not pms_utils.update_session(jy03_api_url=api_url, jy03_payload=payload):
+        print("⚠️ JY03 接口信息保存失败: PMS 会话不存在或无效")
 
 
 def request_template(cookies: dict[str, str]) -> tuple[str, dict[str, Any]]:
@@ -172,15 +161,7 @@ def fetch_jy03(backfill: bool = False) -> bool:
     allowed_months = [] if backfill else [f"{now:%Y-%m}"]
     session = requests.Session()
     session.cookies.update(cookies)
-    session.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json;charset=UTF-8",
-            "Origin": "https://xingfeng.beyondh.com:8081",
-            "Referer": REPORT_URL,
-        }
-    )
+    session.headers.update(pms_utils.request_headers(REPORT_URL))
     try:
         api_url, template = request_template(cookies)
         reports = []

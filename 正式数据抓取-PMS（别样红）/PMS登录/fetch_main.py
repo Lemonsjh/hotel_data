@@ -7,33 +7,24 @@ PMS（别样红）主脚本 - 自动判断登录状态并抓取所有报表
 
 import sys
 import os
-import json
 import argparse
-import time
 import pymysql
 from datetime import datetime, timedelta
+from pathlib import Path
 
 sys.stdout.reconfigure(encoding='utf-8')
 
 # 添加当前目录和 scripts 文件夹到 Python 路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(project_root))
 sys.path.insert(0, current_dir)
 sys.path.insert(0, os.path.join(current_dir, "scripts"))
 
-SESSION_FILE = "pms_session_playwright.json"
+import pms_utils
+from mysql_connection import connect_mysql
+
 OUTPUT_DIR = os.path.join(current_dir, "output")
-
-
-def connect_mysql(config, attempts=3):
-    """连接远程数据库；临时网络抖动时自动重试。"""
-    for attempt in range(1, attempts + 1):
-        try:
-            return pymysql.connect(**config)
-        except pymysql.MySQLError:
-            if attempt == attempts:
-                raise
-            print(f"⚠️ 数据库连接失败，2秒后重试（{attempt}/{attempts}）")
-            time.sleep(2)
 
 
 def run_fetch(code, label, fetcher):
@@ -57,20 +48,19 @@ def need_login(hours=12, force=False):
     """判断是否需要重新登录"""
     if force:
         print("🔄 强制重新登录")
-        # 删除旧会话文件
-        if os.path.exists(SESSION_FILE):
-            os.remove(SESSION_FILE)
+        if pms_utils.delete_session():
             print("已删除旧会话文件")
         return True
-    
-    if not os.path.exists(SESSION_FILE):
-        print("🔄 会话文件不存在，需要登录")
+
+    info = pms_utils.read_session(require_cookies=True, quiet=True)
+    if not info:
+        print("🔄 会话不存在或无效，需要登录")
         return True
-    
-    with open(SESSION_FILE, 'r', encoding='utf-8') as f:
-        info = json.load(f)
-    
-    login_time = datetime.strptime(info['login_time'], "%Y-%m-%d %H:%M:%S")
+    try:
+        login_time = datetime.strptime(info["login_time"], "%Y-%m-%d %H:%M:%S")
+    except (KeyError, TypeError, ValueError):
+        print("🔄 会话登录时间无效，需要重新登录")
+        return True
     elapsed = datetime.now() - login_time
     
     if elapsed > timedelta(hours=hours):
@@ -110,6 +100,12 @@ def main() -> int:
         if not success:
             print("❌ 登录失败，无法继续")
             return 1
+
+    hotel_name = pms_utils.ensure_hotel_name()
+    if not hotel_name:
+        print("❌ 无法从 PMS 获取酒店名称，请检查 pms.hotel_name 配置")
+        return 1
+    os.environ["PMS_HOTEL_NAME"] = hotel_name
     
     # 抓取所有报表（调用修复版脚本）
     print("\n📊 开始抓取报表数据...")
