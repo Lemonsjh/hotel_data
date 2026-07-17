@@ -142,12 +142,19 @@ def build_rows(plans: list[dict[str, Any]], period_start: date, period_end: date
     return rows
 
 
-def save_rows(rows: list[tuple[Any, ...]]) -> None:
+def save_rows(hotel_id: str, rows: list[tuple[Any, ...]]) -> None:
     import pymysql
 
-    connection = pymysql.connect(**DB_CONFIG)
+    hotel_id = hotel_id.strip()
+    if not hotel_id:
+        raise RuntimeError("HOTEL_ID is required for promotion performance sync")
+    if any(str(row[0] or "").strip() != hotel_id for row in rows):
+        raise RuntimeError("Promotion performance rows contain a different hotel_id")
+
+    connection = pymysql.connect(**DB_CONFIG, autocommit=False)
     try:
         with connection.cursor() as cursor:
+            cursor.execute(f"DELETE FROM `{TABLE_NAME}` WHERE hotel_id=%s", (hotel_id,))
             placeholders = ", ".join(["%s"] * len(COLUMNS))
             updates = ", ".join(
                 f"`{column}`=VALUES(`{column}`)" for column in COLUMNS if column not in {
@@ -155,10 +162,11 @@ def save_rows(rows: list[tuple[Any, ...]]) -> None:
                 }
             )
             columns = ", ".join(f"`{column}`" for column in COLUMNS)
-            cursor.executemany(
-                f"INSERT INTO `{TABLE_NAME}` ({columns}) VALUES ({placeholders}) "
-                f"ON DUPLICATE KEY UPDATE {updates}", rows,
-            )
+            if rows:
+                cursor.executemany(
+                    f"INSERT INTO `{TABLE_NAME}` ({columns}) VALUES ({placeholders}) "
+                    f"ON DUPLICATE KEY UPDATE {updates}", rows,
+                )
         connection.commit()
     except Exception:
         connection.rollback()
@@ -168,14 +176,14 @@ def save_rows(rows: list[tuple[Any, ...]]) -> None:
 
 
 def main() -> int:
+    hotel_id = os.environ.get("HOTEL_ID", "").strip()
     period_end = date.today() - timedelta(days=1)
     period_start = period_end - timedelta(days=PERIOD_DAYS - 1)
     plans = fetch_plans(
         os.environ.get("MEITUAN_PROMOTION_PERFORMANCE_URL", "").strip(), period_start, period_end
     )
     rows = build_rows(plans, period_start, period_end)
-    if rows:
-        save_rows(rows)
+    save_rows(hotel_id, rows)
     print(f"promotion performance plans={len(plans)} launches={len(rows)}")
     return 0
 
