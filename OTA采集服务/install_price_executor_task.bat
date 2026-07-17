@@ -12,9 +12,8 @@ set TASK_NAME=HotelOTAPriceExecutor
 set PYTHON_PATH=%~dp0..\runtime\python.exe
 if not exist "%PYTHON_PATH%" for %%I in (python.exe) do set PYTHON_PATH=%%~$PATH:I
 set EXECUTOR_PATH=%~dp0price_executor.py
-set INTERVAL_MINUTES=5
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0price_scheduler_task.ps1" -TaskName "%TASK_NAME%" -PythonPath "%PYTHON_PATH%" -ExecutorPath "%EXECUTOR_PATH%" -IntervalMinutes %INTERVAL_MINUTES%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0price_scheduler_task.ps1" -TaskName "%TASK_NAME%" -PythonPath "%PYTHON_PATH%" -ExecutorPath "%EXECUTOR_PATH%"
 if errorlevel 1 (
   echo Failed to install price executor scheduled task.
   exit /b 1

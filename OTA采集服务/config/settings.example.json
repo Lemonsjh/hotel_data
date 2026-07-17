@@ -2,7 +2,7 @@
   "python_path": "runtime\\python.exe",
   "service": {
     "task_name": "HotelOTACollector",
-    "interval_minutes": 60,
+    "interval_minutes": 30,
     "timeout_seconds": 300,
     "panel_host": "127.0.0.1",
     "panel_port": 8765

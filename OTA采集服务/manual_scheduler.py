@@ -31,7 +31,7 @@ def load_settings() -> dict[str, Any]:
 
 
 def interval_minutes() -> int:
-    value = (load_settings().get("service") or {}).get("interval_minutes", 60)
+    value = (load_settings().get("service") or {}).get("interval_minutes", 30)
     return max(1, int(value))
 
 

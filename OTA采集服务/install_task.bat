@@ -12,9 +12,7 @@ set TASK_NAME=HotelOTACollector
 set PYTHON_PATH=%~dp0..\runtime\python.exe
 if not exist "%PYTHON_PATH%" for %%I in (python.exe) do set PYTHON_PATH=%%~$PATH:I
 set RUNNER_PATH=%~dp0runner.py
-set INTERVAL_MINUTES=60
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scheduler_task.ps1" -TaskName "%TASK_NAME%" -PythonPath "%PYTHON_PATH%" -RunnerPath "%RUNNER_PATH%" -IntervalMinutes %INTERVAL_MINUTES%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scheduler_task.ps1" -TaskName "%TASK_NAME%" -PythonPath "%PYTHON_PATH%" -RunnerPath "%RUNNER_PATH%"
 if errorlevel 1 (
   echo Failed to install scheduled task.
   exit /b 1

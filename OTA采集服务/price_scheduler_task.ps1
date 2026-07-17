@@ -2,7 +2,7 @@ param(
     [string]$TaskName = "HotelOTAPriceExecutor",
     [string]$PythonPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "runtime\python.exe"),
     [string]$ExecutorPath = (Join-Path $PSScriptRoot "price_executor.py"),
-    [int]$IntervalMinutes = 5
+    [int]$IntervalMinutes = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +12,17 @@ if (-not (Test-Path -LiteralPath $PythonPath)) {
 }
 if (-not (Test-Path -LiteralPath $ExecutorPath)) {
     throw "Price executor not found: $ExecutorPath"
+}
+if ($IntervalMinutes -le 0) {
+    $IntervalMinutes = 5
+    $settingsPath = Join-Path $PSScriptRoot "config\settings.json"
+    if (Test-Path -LiteralPath $settingsPath) {
+        $settings = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $configuredInterval = [int]$settings.price_scheduler.interval_minutes
+        if ($configuredInterval -gt 0) {
+            $IntervalMinutes = $configuredInterval
+        }
+    }
 }
 
 $action = New-ScheduledTaskAction `
