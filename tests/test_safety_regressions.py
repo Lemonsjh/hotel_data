@@ -4,6 +4,7 @@ import importlib.util
 import os
 import sys
 import tempfile
+import types
 import unittest
 from datetime import date, datetime
 from pathlib import Path
@@ -202,6 +203,74 @@ class ReplacementSafetyTests(unittest.TestCase):
         self.assertEqual(connection.rollbacks, 1)
         self.assertIn("DELETE FROM", connection.db_cursor.calls[0][0])
         self.assertNotIn("TRUNCATE", " ".join(call[0] for call in connection.db_cursor.calls))
+
+
+class Jl02FilteringTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        config = types.ModuleType("config")
+        config.DB_CONFIG = {}
+        config.HOTEL_CONFIG = {"id": "H1", "name": "Hotel", "source_platform": "PMS"}
+        previous = sys.modules.get("config")
+        sys.modules["config"] = config
+        try:
+            cls.module = load_module(
+                "test_jl02_etl",
+                PMS_SCRIPTS / "etl-mysql" / "jl02_etl.py",
+            )
+        finally:
+            if previous is None:
+                sys.modules.pop("config", None)
+            else:
+                sys.modules["config"] = previous
+
+    def test_only_total_business_metrics_are_transformed(self):
+        payload = {
+            "_query": {"businessDate": "2026-07-16"},
+            "data": {
+                "data": {
+                    "summaryList": [
+                        {"category": "总营业指标", "groupName": "出租率", "currentDay": "91.8%"},
+                        {"category": "门店收入", "groupName": "房费", "currentDay": "100"},
+                    ],
+                    "detailList": [
+                        {"category": "房型", "groupName": "出租率", "statistics": "大床房"}
+                    ],
+                }
+            },
+        }
+        rows = self.module.transform(payload)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["category"], "总营业指标")
+        self.assertEqual(rows[0]["metric_name"], "出租率")
+        self.assertEqual(rows[0]["value_day"], 91.8)
+        self.assertNotIn("room_type_name", rows[0])
+        self.assertNotIn("room_type_id", rows[0])
+
+
+class Jl02CollectionDateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(PMS_SCRIPTS))
+        cls.module = load_module("test_fetch_jl02", PMS_SCRIPTS / "fetch_jl02.py")
+
+    def test_default_collection_includes_two_recent_month_ends(self):
+        dates = self.module.collection_dates(today=date(2026, 7, 17))
+        self.assertEqual(
+            dates,
+            [
+                "2026-07-16",
+                "2025-07-16",
+                "2026-06-30",
+                "2025-06-30",
+                "2026-05-31",
+                "2025-05-31",
+            ],
+        )
+
+    def test_duplicate_month_end_is_removed(self):
+        dates = self.module.collection_dates("2026-06-30", "2026-06-30", today=date(2026, 7, 17))
+        self.assertEqual(dates.count("2026-06-30"), 1)
 
 
 class TaskDefaultTests(unittest.TestCase):

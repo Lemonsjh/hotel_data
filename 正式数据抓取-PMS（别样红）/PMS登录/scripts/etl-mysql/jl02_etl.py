@@ -15,6 +15,7 @@ from config import DB_CONFIG, HOTEL_CONFIG
 ROOT = Path(__file__).resolve().parents[2]
 JSON_PATH = ROOT / "output" / "JL02.json"
 TABLE_NAME = "jl02_hotel_performance_daily"
+TARGET_CATEGORY = "总营业指标"
 HOTEL_ID = os.environ.get("HOTEL_ID", "").strip() or str(HOTEL_CONFIG.get("id") or "").strip()
 
 
@@ -35,9 +36,8 @@ def business_date(payload: dict[str, Any]) -> str:
 
 
 def make_row(
-    item: dict[str, Any], report_date: str, snapshot_time: datetime, detail: bool = False
+    item: dict[str, Any], report_date: str, snapshot_time: datetime
 ) -> dict[str, Any]:
-    room_type_name = str(item.get("statistics") or "").strip() if detail else ""
     metric_name = str(item.get("groupName") or item.get("statistics") or "").strip()
     return {
         "hotel_name": HOTEL_CONFIG["name"],
@@ -45,7 +45,6 @@ def make_row(
         "source_platform": HOTEL_CONFIG.get("source_platform") or "PMS（别样红）",
         "business_date": report_date,
         "category": str(item.get("category") or "").strip(),
-        "room_type_name": room_type_name,
         "metric_name": metric_name,
         "value_day": to_number(item.get("currentDay")),
         "value_month": to_number(item.get("currentMonth")),
@@ -66,8 +65,8 @@ def transform_one(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for item in data.get("detailList", []):
         if str(item.get("statistics") or "").strip() == "小计":
             continue
-        rows.append(make_row(item, report_date, snapshot_time, detail=True))
-    return [row for row in rows if row["category"] and row["metric_name"]]
+        rows.append(make_row(item, report_date, snapshot_time))
+    return [row for row in rows if row["category"] == TARGET_CATEGORY and row["metric_name"]]
 
 
 def transform(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -79,15 +78,14 @@ def transform(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def upsert_mysql(rows: list[dict[str, Any]], conn=None) -> None:
     if not rows:
-        print("JL02 无可入库数据")
-        return
+        raise RuntimeError(f"JL02 没有 {TARGET_CATEGORY} 数据，拒绝修改数据库")
     sql = f"""
     INSERT INTO {TABLE_NAME} (
         hotel_name, hotel_id, source_platform, business_date, category,
-        room_type_name, metric_name, value_day, value_month, value_year, snapshot_time
+        metric_name, value_day, value_month, value_year, snapshot_time
     ) VALUES (
         %(hotel_name)s, %(hotel_id)s, %(source_platform)s, %(business_date)s, %(category)s,
-        %(room_type_name)s, %(metric_name)s, %(value_day)s, %(value_month)s, %(value_year)s,
+        %(metric_name)s, %(value_day)s, %(value_month)s, %(value_year)s,
         %(snapshot_time)s
     ) ON DUPLICATE KEY UPDATE
         hotel_name=VALUES(hotel_name), source_platform=VALUES(source_platform),
@@ -98,8 +96,22 @@ def upsert_mysql(rows: list[dict[str, Any]], conn=None) -> None:
     conn = conn or pymysql.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cursor:
+            cursor.execute(
+                f"DELETE FROM {TABLE_NAME} WHERE hotel_id=%s AND category<>%s",
+                (HOTEL_ID, TARGET_CATEGORY),
+            )
+            business_dates = sorted({row["business_date"] for row in rows})
+            placeholders = ", ".join(["%s"] * len(business_dates))
+            cursor.execute(
+                f"DELETE FROM {TABLE_NAME} "
+                f"WHERE hotel_id=%s AND category=%s AND business_date IN ({placeholders})",
+                (HOTEL_ID, TARGET_CATEGORY, *business_dates),
+            )
             cursor.executemany(sql, rows)
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         if owns_connection:
             conn.close()

@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,13 +15,28 @@ import requests
 from playwright.sync_api import sync_playwright
 
 import pms_utils
-from pms_daily_dates import query_dates
+from pms_daily_dates import query_dates, same_day_last_year
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_FILE = ROOT_DIR / "output" / "JL02.json"
 REPORT_URL = pms_utils.report_url("report/JL02")
 DEFAULT_CODES = ["RoomType", "CustomerCategory", "AnalysisChannel", "CheckinType"]
+
+
+def collection_dates(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    *,
+    today: date | None = None,
+) -> list[str]:
+    current = today or date.today()
+    previous_month_end = current.replace(day=1) - timedelta(days=1)
+    two_months_ago_end = previous_month_end.replace(day=1) - timedelta(days=1)
+    dates = query_dates(start_date, end_date, today=current)
+    for month_end in (previous_month_end, two_months_ago_end):
+        dates.extend((month_end.isoformat(), same_day_last_year(month_end).isoformat()))
+    return list(dict.fromkeys(dates))
 
 
 def load_session() -> dict[str, str] | None:
@@ -148,7 +164,7 @@ def fetch_jl02(start_date: str | None = None, end_date: str | None = None) -> bo
         print("❌ PMS 登录态不存在，请重新登录")
         return False
     try:
-        dates = query_dates(start_date, end_date)
+        dates = collection_dates(start_date, end_date)
         api_url, template = request_template(cookies)
         reports: list[dict[str, Any]] = []
         for index, business_date in enumerate(dates, start=1):

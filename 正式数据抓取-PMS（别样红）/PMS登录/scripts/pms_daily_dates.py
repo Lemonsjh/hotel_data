@@ -14,9 +14,14 @@ def same_day_last_year(value: date) -> date:
         return value.replace(year=value.year - 1, day=monthrange(value.year - 1, value.month)[1])
 
 
-def query_dates(start_date: str | None = None, end_date: str | None = None) -> list[str]:
+def query_dates(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    *,
+    today: date | None = None,
+) -> list[str]:
     """返回指定日期及其去年同期；PMS 日报页面一次仅支持一个营业日。"""
-    latest = date.today() - timedelta(days=1)
+    latest = (today or date.today()) - timedelta(days=1)
     try:
         start = date.fromisoformat(start_date or end_date or latest.isoformat())
         end = date.fromisoformat(end_date or start_date or latest.isoformat())
