@@ -16,7 +16,6 @@ TABLES = {
     "jy01_hotel_statistics_daily": ("pms_byh", "exact"),
     "jy03_hotel_statistics_month": ("pms_byh", "exact"),
     "jl01_room_type_performance_daily": ("pms_byh", "exact"),
-    "jl02_hotel_performance_daily": ("pms_byh", "exact"),
     "jl11_room_type_classification": ("pms_byh", "exact"),
     "pms_room_type_forecast": ("pms_byh", "exact"),
     "pms_room_type_hourly_status": ("pms_byh", "exact"),
@@ -36,7 +35,6 @@ TASK_TABLES = {
         "jy01_hotel_statistics_daily",
         "jy03_hotel_statistics_month",
         "jl01_room_type_performance_daily",
-        "jl02_hotel_performance_daily",
         "jl11_room_type_classification",
         "pms_room_type_forecast",
         "pms_room_type_hourly_status",
@@ -172,8 +170,8 @@ def _update_alias(
     room_rows = _room_rows(table)
     if platform == "pms_byh":
         mapping_name = "pms_room_type_name"
-        mapping_filter = "source_product_id='' AND source_platform IN (%s,%s,%s,%s)"
-        mapping_params = (*PRODUCT_PLATFORMS["meituan"], *PRODUCT_PLATFORMS["ctrip"])
+        mapping_filter = "1=1"
+        mapping_params = ()
     else:
         mapping_name = "source_room_type_name"
         product_labels = PRODUCT_PLATFORMS[platform]
