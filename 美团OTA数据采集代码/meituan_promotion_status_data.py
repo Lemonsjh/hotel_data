@@ -38,7 +38,10 @@ WORKBENCH_URL = "https://eb.meituan.com/ebooking/new-workbench/index.html"
 HIGHLIGHTS_EMPTY_TEXT = "\u5f53\u524d\u9152\u5e97\u6682\u65e0\u7279\u8272\u4eae\u70b9\u6570\u636e"
 AUTO_ORDER_CODE = "auto_order_acceptance"
 AUTO_ORDER_NAME = "\u81ea\u52a8\u63a5\u5355"
-ORDER_MENU = "\u8ba2\u5355\u7ba1\u7406"
+AUTO_ORDER_URL = (
+    "https://me.meituan.com/ebooking/merchant/ebIframe?"
+    "iUrl=%2Febooking%2Forder%2Findex.html%23%2Fauto"
+)
 PUBLIC_WELFARE_CODE = "public_welfare_traffic"
 PUBLIC_WELFARE_NAME = "\u516c\u76ca\u6d41\u91cf"
 PUBLIC_WELFARE_ACTIVE = "\u751f\u6548\u4e2d"
@@ -206,19 +209,16 @@ def fetch_auto_order_status() -> str:
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
-            menu = page.get_by_text(ORDER_MENU, exact=True).nth(1)
-            menu.wait_for(state="visible", timeout=20_000)
-            page.wait_for_timeout(3_000)
-            menu.click(force=True)
-            page.wait_for_timeout(500)
-            page.get_by_text(AUTO_ORDER_NAME, exact=True).first.dispatch_event("click")
-            for _ in range(20):
+            page.goto(AUTO_ORDER_URL, wait_until="domcontentloaded", timeout=60_000)
+            for _ in range(60):
                 for frame in page.frames:
                     try:
-                        locator = frame.locator('input#status-open[value="1"]')
-                        if locator.count():
-                            return "OPEN" if locator.first.is_checked(timeout=2_000) else "CLOSED"
+                        open_radio = frame.locator('input#status-open[value="1"]')
+                        closed_radio = frame.locator('input#status-shut[value="0"]')
+                        if open_radio.count() and open_radio.first.is_checked(timeout=1_000):
+                            return "OPEN"
+                        if closed_radio.count() and closed_radio.first.is_checked(timeout=1_000):
+                            return "CLOSED"
                     except Exception:
                         continue
                 page.wait_for_timeout(500)
