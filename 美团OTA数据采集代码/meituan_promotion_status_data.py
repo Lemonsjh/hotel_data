@@ -270,11 +270,34 @@ def fetch_scheduled_invoice_status() -> str:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
-            for _ in range(40):
+            maintenance_clicked = False
+            for _ in range(60):
                 for frame in page.frames:
                     try:
-                        text = frame.locator("span.no-join-title").all_inner_texts()
-                        if any("\u5f53\u524d\u95e8\u5e97\u6682\u672a\u5f00\u901a" in value and SCHEDULED_INVOICE_NAME in value for value in text):
+                        links = frame.locator("a", has_text="\u9152\u5e97\u53d1\u7968\u4fe1\u606f\u7ef4\u62a4")
+                        for index in range(links.count()):
+                            link = links.nth(index)
+                            if link.is_visible():
+                                link.click(force=True)
+                                maintenance_clicked = True
+                                break
+                    except Exception:
+                        continue
+                    if maintenance_clicked:
+                        break
+                if maintenance_clicked:
+                    break
+                page.wait_for_timeout(500)
+            if not maintenance_clicked:
+                raise RuntimeError("Hotel invoice maintenance link was not found")
+
+            page.wait_for_timeout(1_500)
+            page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
+            for _ in range(120):
+                for frame in page.frames:
+                    try:
+                        texts = frame.locator("span.no-join-title").all_inner_texts()
+                        if any("\u5f53\u524d\u95e8\u5e97\u6682\u672a\u5f00\u901a" in value and SCHEDULED_INVOICE_NAME in value for value in texts):
                             return "CLOSED"
                     except Exception:
                         continue
