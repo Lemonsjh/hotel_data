@@ -12,7 +12,7 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from ctrip_config import COOKIE, EXTRA_HEADERS, USER_AGENT
+from ctrip_config import COOKIE, EXTRA_HEADERS, PLATFORM_SCOPE, USER_AGENT
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import OUTPUT_DIR, sync_table
@@ -341,10 +341,10 @@ def write_standard_json(output_path: Path, headers: list[str], rows: list[list[A
 
 
 def save_outputs(summary_rows: list[list[Any]], detail_rows: list[list[Any]], sync_db: bool = False) -> tuple[Path, Path]:
-    summary_headers = [*SUMMARY_HEADERS, "hotel_id"]
-    detail_headers = [*DETAIL_HEADERS, "hotel_id"]
-    summary_rows = [list(row) + [HOTEL_ID] for row in summary_rows]
-    detail_rows = [list(row) + [HOTEL_ID] for row in detail_rows]
+    summary_headers = [*SUMMARY_HEADERS, "platform_scope", "hotel_id"]
+    detail_headers = [*DETAIL_HEADERS, "platform_scope", "hotel_id"]
+    summary_rows = [list(row) + [PLATFORM_SCOPE, HOTEL_ID] for row in summary_rows]
+    detail_rows = [list(row) + [PLATFORM_SCOPE, HOTEL_ID] for row in detail_rows]
     summary_path = write_single_sheet(PROMOTION_OUTPUT, SUMMARY_SHEET, summary_headers, summary_rows, [20, 10, 18, 28, 14, 24, 60, 60, 16])
     detail_path = write_single_sheet(DETAIL_OUTPUT, DETAIL_SHEET, detail_headers, detail_rows, [20, 10, 18, 28, 18, 60, 14, 16])
     write_standard_json(summary_path, summary_headers, summary_rows)

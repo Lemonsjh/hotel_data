@@ -212,7 +212,7 @@ def create_task(
 
     platform_cfg = settings.get(platform) or {}
     hotel_name = str(platform_cfg.get("hotel_name") or "").strip()
-    hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
+    hotel_id = runner.internal_hotel_id(settings, platform)
     if not hotel_name:
         raise ValueError("请先在配置页填写酒店名称")
     room_name = str(product.get("display_name") or product_id)[:200]
@@ -336,7 +336,7 @@ def launch_task(settings: dict[str, Any], platform: str, task_id: int, dry_run: 
     if dry_run:
         command.append("--dry-run")
 
-    env = runner.build_env(settings)
+    env = runner.build_env(settings, platform)
     env["PYTHONIOENCODING"] = "utf-8"
     if platform == "meituan":
         env["MEITUAN_COOKIE"] = str((settings.get("meituan") or {}).get("me_cookie") or "")

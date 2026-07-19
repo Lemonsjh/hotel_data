@@ -12,18 +12,20 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from ctrip_config import COOKIE, EXTRA_HEADERS, USER_AGENT
-from ctrip_review_dom_counts import (
-    collect_review_counts,
-    load_existing_counts,
-    merge_counts,
-)
+from ctrip_config import COOKIE, EXTRA_HEADERS, PLATFORM_SCOPE, USER_AGENT
+from ctrip_review_channels import collect_review_channels
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ota_mysql_writer import DB_CONFIG, OUTPUT_DIR, sync_table
+from ota_mysql_writer import OUTPUT_DIR, sync_table
 
 
 CHANNEL_SOURCE = "\u643a\u7a0b"
+CHANNEL_PLATFORM_SCOPES = {
+    "\u643a\u7a0b": "ctrip",
+    "\u53bb\u54ea\u513f": "qunar",
+    "\u540c\u7a0b\u65c5\u884c": "tongcheng",
+    "\u667a\u884c": "zhixing",
+}
 GET_HOTEL_RATING_URL = os.environ.get(
     "CTRIP_GET_HOTEL_RATING_URL",
     "https://ebooking.ctrip.com/restapi/soa2/26353/getHotelRating"
@@ -465,7 +467,9 @@ def score_from_sub_scores(info: dict[str, Any], scalar_key: str, sub_type: str) 
     return ""
 
 
-def normalize_rating_overview_rows(payload: dict[str, Any], captured_at: datetime) -> list[list[Any]]:
+def normalize_rating_overview_rows(
+    payload: dict[str, Any], captured_at: datetime, channel_source: str = CHANNEL_SOURCE
+) -> list[list[Any]]:
     info = rating_info(payload)
     score_info = info.get("scoreInfo") or {}
     if not isinstance(score_info, dict):
@@ -473,7 +477,7 @@ def normalize_rating_overview_rows(payload: dict[str, Any], captured_at: datetim
     return [
         [
             captured_at,
-            CHANNEL_SOURCE,
+            channel_source,
             parse_number(info.get("ratingAll") or score_info.get("avgScoreSimple") or score_info.get("avgScore")),
             parse_number(score_info.get("maxScore") or 5),
             score_from_sub_scores(info, "ratingLocation", "ratingLocation"),
@@ -487,7 +491,9 @@ def normalize_rating_overview_rows(payload: dict[str, Any], captured_at: datetim
     ]
 
 
-def normalize_rating_ranking_rows(payload: dict[str, Any], captured_at: datetime) -> list[list[Any]]:
+def normalize_rating_ranking_rows(
+    payload: dict[str, Any], captured_at: datetime, channel_source: str = CHANNEL_SOURCE
+) -> list[list[Any]]:
     info = rating_info(payload)
     rows: list[list[Any]] = []
     for key, label in (("goodCommentTags", "positive_impression"), ("poorCommentTags", "negative_impression")):
@@ -500,7 +506,7 @@ def normalize_rating_ranking_rows(payload: dict[str, Any], captured_at: datetime
             rows.append(
                 [
                     captured_at,
-                    CHANNEL_SOURCE,
+                    channel_source,
                     label,
                     index,
                     item.get("tagName") or item.get("name") or "",
@@ -508,6 +514,10 @@ def normalize_rating_ranking_rows(payload: dict[str, Any], captured_at: datetime
                 ]
             )
     return rows
+
+
+def platform_scope_for_channel(channel_source: Any) -> str:
+    return CHANNEL_PLATFORM_SCOPES.get(str(channel_source or "").strip(), PLATFORM_SCOPE)
 
 
 def sample_capture() -> dict[str, Any]:
@@ -549,16 +559,16 @@ def sample_ranking() -> dict[str, Any]:
 
 
 def save_outputs(overview_rows: list[list[Any]], ranking_rows: list[list[Any]], sync_db: bool = False) -> tuple[Path, Path]:
-    overview_headers = [*OVERVIEW_HEADERS, "hotel_id"]
-    ranking_headers = [*RANKING_HEADERS, "hotel_id"]
-    overview_rows = [list(row) + [HOTEL_ID] for row in overview_rows]
-    ranking_rows = [list(row) + [HOTEL_ID] for row in ranking_rows]
+    overview_headers = [*OVERVIEW_HEADERS, "platform_scope", "hotel_id"]
+    ranking_headers = [*RANKING_HEADERS, "platform_scope", "hotel_id"]
+    overview_rows = [list(row) + [platform_scope_for_channel(row[1]), HOTEL_ID] for row in overview_rows]
+    ranking_rows = [list(row) + [platform_scope_for_channel(row[1]), HOTEL_ID] for row in ranking_rows]
     overview = write_single_sheet(
         OVERVIEW_OUTPUT,
         OVERVIEW_SHEET,
         overview_headers,
         overview_rows,
-        widths=[20, 12, 14, 14, 16, 16, 16, 16, 18, 18, 16, 16],
+        widths=[20, 12, 14, 14, 16, 16, 16, 16, 18, 18, 16, 16, 16],
         datetime_columns={1},
     )
     ranking = write_single_sheet(
@@ -590,25 +600,14 @@ def main() -> None:
         overview_rows = normalize_capture_overview_rows(capture, captured_at)
         ranking_rows = normalize_capture_ranking_rows(capture, captured_at)
     else:
-        payload = CtripReviewClient(args.cookie).query_hotel_rating(args.rating_url)
-        overview_rows = normalize_rating_overview_rows(payload, captured_at)
-        ranking_rows = normalize_rating_ranking_rows(payload, captured_at)
-        try:
-            counts = collect_review_counts(
-                args.cookie,
-                expected_hotel_name=os.environ.get("CTRIP_HOTEL_NAME", ""),
-                expected_hotel_id=os.environ.get("CTRIP_HOTEL_ID", ""),
-            )
-            print(
-                "DOM review counts: "
-                f"total={counts['total_review_count']} "
-                f"unreplied={counts['unreplied_review_count']} "
-                f"negative={counts['negative_review_count']}"
-            )
-        except Exception as exc:
-            print(f"DOM review counts warning: {exc}")
-            counts = load_existing_counts(DB_CONFIG, HOTEL_ID)
-        merge_counts(overview_rows, counts)
+        overview_rows = []
+        ranking_rows = []
+        for channel_source, payload, counts in collect_review_channels():
+            channel_overview = normalize_rating_overview_rows(payload, captured_at, channel_source)
+            for name in ("total_review_count", "unreplied_review_count", "negative_review_count"):
+                channel_overview[0][OVERVIEW_HEADERS.index(name)] = counts[name]
+            overview_rows.extend(channel_overview)
+            ranking_rows.extend(normalize_rating_ranking_rows(payload, captured_at, channel_source))
     overview, ranking = save_outputs(overview_rows, ranking_rows, sync_db=args.sync_db)
     print(f"OK 携程评价概览行数={len(overview_rows)} 输出={overview}")
     print(f"OK 携程评价排行行数={len(ranking_rows)} 输出={ranking}")

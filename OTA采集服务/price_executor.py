@@ -110,7 +110,7 @@ def task_command(settings: dict[str, Any], platform: str, task: dict[str, Any]) 
         "--check-seconds",
         "10",
     ]
-    env = runner.build_env(settings)
+    env = runner.build_env(settings, platform)
     env["PYTHONIOENCODING"] = "utf-8"
     browser_dir = runner.PROJECT_ROOT / "runtime" / "playwright-browsers"
     if browser_dir.exists():

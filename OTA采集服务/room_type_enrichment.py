@@ -24,7 +24,7 @@ TABLES = {
     "meituan_ota_goods_price_mapping": ("meituan", "product"),
     "ctrip_ota_goods_price_mapping": ("ctrip", "product"),
     "meituan_ota_activity_product_detail": ("meituan", "product"),
-    "ctrip_ota_activity_product_detail": ("ctrip", "exact"),
+    "ctrip_ota_activity_product_detail": ("ctrip", "product"),
     "meituan_ota_review_detail": ("meituan", "prefix"),
     "ctrip_ota_review_detail": ("ctrip", "prefix"),
 }
@@ -52,6 +52,9 @@ PRODUCT_PLATFORMS = {
     "meituan": ("美团", "meituan"),
     "ctrip": ("携程", "ctrip"),
 }
+PRODUCT_ID_COLUMNS = {
+    "ctrip_ota_activity_product_detail": "ota_room_type_id",
+}
 INDEX_NAME = "idx_hotel_room_type_id"
 DIMENSION_TABLES = {"jy01_hotel_statistics_daily", "jy03_hotel_statistics_month"}
 
@@ -73,6 +76,17 @@ def _table_exists(cur, table: str) -> bool:
         WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND TABLE_TYPE='BASE TABLE'
         """,
         (table,),
+    )
+    return bool(cur.fetchone()["count"])
+
+
+def _column_exists(cur, table: str, column: str) -> bool:
+    cur.execute(
+        """
+        SELECT COUNT(*) AS count FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME=%s
+        """,
+        (table, column),
     )
     return bool(cur.fetchone()["count"])
 
@@ -145,12 +159,15 @@ def _clear_ids(cur, table: str, hotel_id: str) -> int:
 def _update_products(cur, table: str, platform: str, hotel_id: str) -> int:
     labels = PRODUCT_PLATFORMS[platform]
     scope, scope_params = _scope_sql(hotel_id)
+    product_column = PRODUCT_ID_COLUMNS.get(table, "ota_product_id")
+    if not _column_exists(cur, table, product_column):
+        return 0
     cur.execute(
         f"""
         UPDATE `{table}` t
         JOIN hotel_room_type_mapping m
           ON BINARY t.hotel_id=BINARY m.hotel_id
-         AND BINARY t.ota_product_id=BINARY m.source_product_id
+         AND BINARY t.`{product_column}`=BINARY m.source_product_id
          AND m.source_product_id<>''
          AND m.source_platform IN (%s,%s)
          AND m.is_active=1

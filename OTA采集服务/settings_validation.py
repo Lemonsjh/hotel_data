@@ -88,6 +88,7 @@ def validate_settings(settings: Any) -> list[str]:
         enabled = get_path(settings, f"{platform}.enabled")
         if enabled is not None and not isinstance(enabled, bool):
             errors.append(f"{platform}.enabled 必须是布尔值")
+
     return errors
 
 

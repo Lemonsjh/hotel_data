@@ -83,7 +83,7 @@ def collect_review_counts(
 
 
 def load_existing_counts(
-    db_config: dict[str, Any], hotel_id: str
+    db_config: dict[str, Any], hotel_id: str, platform_scope: str = "ctrip"
 ) -> dict[str, int]:
     import pymysql
 
@@ -93,8 +93,8 @@ def load_existing_counts(
         return {}
     try:
         with connection.cursor() as cursor:
-            where = "WHERE hotel_id=%s" if hotel_id else ""
-            params = (hotel_id,) if hotel_id else ()
+            where = "WHERE hotel_id=%s AND platform_scope=%s" if hotel_id else ""
+            params = (hotel_id, platform_scope) if hotel_id else ()
             cursor.execute(
                 f"""
                 SELECT total_review_count, unreplied_review_count,

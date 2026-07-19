@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS `ctrip_ota_psi_score` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `hotel_id` VARCHAR(64) NOT NULL,
+    `hotel_name` VARCHAR(255) NOT NULL,
+    `platform_scope` VARCHAR(20) NOT NULL,
+    `business_date` DATE NOT NULL,
+    `snapshot_time` DATETIME NOT NULL,
+    `psi_total_score` DECIMAL(8,2) NULL,
+    `psi_basic_score` DECIMAL(8,2) NULL,
+    `psi_basic_score_max` DECIMAL(8,2) NULL,
+    `psi_reward_score` DECIMAL(8,2) NULL,
+    `psi_reward_score_max` DECIMAL(8,2) NULL,
+    `psi_deduction_score` DECIMAL(8,2) NULL,
+    `score_psi` DECIMAL(8,2) NULL,
+    `psi_room_status_score` DECIMAL(8,2) NULL,
+    `psi_information_completeness_score` DECIMAL(8,2) NULL,
+    `psi_consumer_value_score` DECIMAL(8,2) NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ctrip_psi_score_daily` (`hotel_id`, `platform_scope`, `business_date`),
+    KEY `idx_ctrip_psi_score_date` (`business_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

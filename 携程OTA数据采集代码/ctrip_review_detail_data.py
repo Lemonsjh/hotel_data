@@ -13,7 +13,7 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, EXTRA_HEADERS, USER_AGENT
+from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, EXTRA_HEADERS, PLATFORM_SCOPE, USER_AGENT
 
 import sys
 
@@ -403,8 +403,8 @@ def main() -> None:
         if not COOKIE:
             raise CtripReviewDetailError("CTRIP_COOKIE is empty")
         rows = collect_online(max(1, args.page_size), max(1, args.max_pages), args.full_history)
-    headers = [*HEADERS, "hotel_id"]
-    rows = [list(row) + [INTERNAL_HOTEL_ID] for row in rows]
+    headers = [*HEADERS, "platform_scope", "hotel_id"]
+    rows = [list(row) + [PLATFORM_SCOPE, INTERNAL_HOTEL_ID] for row in rows]
     save_outputs(headers, rows)
     if args.sync_db:
         upsert_mysql(headers, rows)

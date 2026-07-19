@@ -12,7 +12,7 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, EXTRA_HEADERS, USER_AGENT
+from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, EXTRA_HEADERS, PLATFORM_SCOPE, USER_AGENT
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import OUTPUT_DIR, sync_ctrip_metric_history
@@ -48,18 +48,16 @@ HEADERS = [
 METRIC_LABELS = {
     "booking_order_count": ("\u7ecf\u8425\u5bf9\u6bd4", "\u9884\u8ba2\u8ba2\u5355\u91cf"),
     "booking_sales_amount": ("\u7ecf\u8425\u5bf9\u6bd4", "\u9884\u8ba2\u9500\u552e\u989d"),
-    "booking_room_night": ("\u7ecf\u8425\u5bf9\u6bd4", "\u9884\u8ba2\u95f4\u591c\u91cf"),
     "inhouse_room_night": ("\u7ecf\u8425\u5bf9\u6bd4", "\u5728\u5e97\u95f4\u591c"),
     "occupancy_rate": ("\u7ecf\u8425\u5bf9\u6bd4", "\u51fa\u79df\u7387"),
     "ctrip_app_visitor_count": ("\u7ecf\u8425\u5bf9\u6bd4", "\u643a\u7a0bAPP\u8bbf\u5ba2"),
     "ctrip_app_conversion_rate": ("\u7ecf\u8425\u5bf9\u6bd4", "\u643a\u7a0bAPP\u8f6c\u5316\u7387"),
-    "management_order_conversion_rate": ("\u7ecf\u8425\u5bf9\u6bd4", "\u8ba2\u5355\u8f6c\u5316\u7387"),
     "realtime_booking_sales_amount": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u9884\u8ba2\u9500\u552e\u989d"),
-    "realtime_booking_room_night": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u9884\u8ba2\u95f4\u591c\u91cf"),
-    "realtime_order_conversion_rate": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u8ba2\u5355\u8f6c\u5316\u7387"),
     "realtime_occupancy_rate": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u51fa\u79df\u7387"),
     "realtime_booking_order_count": ("实时经营", "实时预订订单"),
     "realtime_inhouse_room_night": ("实时经营", "实时在店间夜"),
+    "realtime_ctrip_app_visitor_count": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u643a\u7a0bAPP\u8bbf\u5ba2"),
+    "realtime_ctrip_app_conversion_rate": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u643a\u7a0bAPP\u8f6c\u5316\u7387"),
     "list_page_exposure_count": ("流量漏斗", "列表页曝光量"),
     "detail_page_visitor_count": ("流量漏斗", "详情页访客量"),
     "order_submit_count": ("流量漏斗", "订单量"),
@@ -371,7 +369,7 @@ def normalize_compare_text(text: Any) -> tuple[str, Any]:
     value = str(text).strip()
     for label in ("\u8f83\u4e0a\u5468\u540c\u671f", "\u8f83\u53bb\u5e74\u540c\u671f", "\u8f83\u6628\u65e5"):
         if value.startswith(label):
-            return "same_period_last_week" if label == "\u8f83\u4e0a\u5468\u540c\u671f" else label, value[len(label) :].strip()
+            return label, value[len(label) :].strip()
     return "", value
 
 
@@ -473,8 +471,8 @@ MANAGEMENT_DATA_METRICS = {
     1: ("booking_sales_amount", "CNY"),
     2: ("inhouse_room_night", "room_night"),
     3: ("occupancy_rate", "%"),
-    4: ("booking_room_night", "room_night"),
-    5: ("management_order_conversion_rate", "%"),
+    4: ("ctrip_app_visitor_count", "person"),
+    5: ("ctrip_app_conversion_rate", "%"),
 }
 
 REALTIME_MANAGEMENT_DATA_METRICS = {
@@ -482,8 +480,8 @@ REALTIME_MANAGEMENT_DATA_METRICS = {
     1: ("realtime_booking_sales_amount", "CNY"),
     2: ("realtime_inhouse_room_night", "room_night"),
     3: ("realtime_occupancy_rate", "%"),
-    4: ("realtime_booking_room_night", "room_night"),
-    5: ("realtime_order_conversion_rate", "%"),
+    4: ("realtime_ctrip_app_visitor_count", "person"),
+    5: ("realtime_ctrip_app_conversion_rate", "%"),
 }
 
 
@@ -549,7 +547,7 @@ def flow_data_rows(data: dict[str, Any], captured_at: datetime, business_date: A
                 metric_code,
                 percent_points(item.get("val")) if is_percentage else item.get("val"),
                 metric_unit,
-                "previous_period",
+                "较前日",
                 percent_points(item.get("lastVal")) if is_percentage else item.get("lastVal"),
                 item.get("rankComp", ""),
                 percent_points(item.get("avgComp")) if is_percentage else item.get("avgComp"),
@@ -599,8 +597,8 @@ def save_rows(rows: list[list[Any]], output: Path = DEFAULT_OUTPUT) -> Path:
     rows = deduplicate_rows(rows)
     if not rows:
         raise CtripApiError("携程经营接口未生成有效指标，保留数据库原有数据")
-    headers = [*HEADERS[:4], "hotel_id", *HEADERS[4:]]
-    rows = [list(item[:4]) + [HOTEL_ID] + list(item[4:]) for item in rows]
+    headers = [*HEADERS[:4], "hotel_id", "platform_scope", *HEADERS[4:]]
+    rows = [list(item[:4]) + [HOTEL_ID, PLATFORM_SCOPE] + list(item[4:]) for item in rows]
     output_path = write_single_sheet(
         output,
         SHEET_NAME,
@@ -628,9 +626,6 @@ def main() -> None:
         payload = sample_payload()
     else:
         payload = CtripBusinessClient(args.cookie).query_all()
-        competition_profiles = load_competition_captures()
-        if competition_profiles:
-            payload["competition_profiles"] = competition_profiles
     rows = normalize_rows(payload, captured_at, hotel_name=args.hotel_name or None)
     output = save_rows(rows, Path(args.output))
     print(f"OK 携程经营指标行数={len(rows)} 输出={output}")

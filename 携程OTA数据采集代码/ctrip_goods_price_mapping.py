@@ -13,7 +13,7 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from ctrip_config import COOKIE, EXTRA_HEADERS, USER_AGENT
+from ctrip_config import COOKIE, EXTRA_HEADERS, PLATFORM_SCOPE, USER_AGENT
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import OUTPUT_DIR, sync_table
@@ -215,8 +215,8 @@ def write_json(path: Path, headers: list[str], rows: list[list[Any]]) -> Path:
 
 
 def save_excel(rows: list[list[Any]]) -> Path:
-    headers = [*HEADERS, "hotel_id"]
-    rows = [list(row) + [HOTEL_ID] for row in rows]
+    headers = [*HEADERS, "platform_scope", "hotel_id"]
+    rows = [list(row) + [PLATFORM_SCOPE, HOTEL_ID] for row in rows]
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUTPUT_DIR / f"{TABLE_NAME}.xlsx"
     wb = Workbook()

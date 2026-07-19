@@ -319,10 +319,17 @@ def main() -> int:
         (AUTO_ORDER_CODE, AUTO_ORDER_NAME, fetch_auto_order_status),
     ]
     results = []
+    failures = []
     with browser_profile_lock():
         for code, name, check in checks:
-            status = check()
-            save_status(hotel_id, code, name, status)
+            try:
+                status = check()
+                save_status(hotel_id, code, name, status)
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')[:300]}"
+                failures.append((code, name, message))
+                print(f"{code} check failed; previous database status retained: {message}")
+                continue
             results.append((code, name, status))
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "meituan_ota_promotion_status.json").write_text(
@@ -331,6 +338,10 @@ def main() -> int:
                 "hotel_id": hotel_id,
                 "checked_at": datetime.now(),
                 "items": [{"promotion_code": code, "status": status} for code, _name, status in results],
+                "failures": [
+                    {"promotion_code": code, "promotion_name": name, "error": error}
+                    for code, name, error in failures
+                ],
             },
             ensure_ascii=False,
             default=str,
@@ -339,6 +350,9 @@ def main() -> int:
         encoding="utf-8",
     )
     print(", ".join(f"{code} status={status}" for code, _name, status in results))
+    if failures:
+        summary = "; ".join(f"{code}: {error}" for code, _name, error in failures)
+        raise RuntimeError(f"Promotion status partial failure; previous values retained: {summary}")
     return 0
 
 

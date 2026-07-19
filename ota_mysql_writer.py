@@ -44,6 +44,33 @@ def connect_mysql(*, autocommit: bool = False):
     return connect_with_retry(DB_CONFIG, autocommit=autocommit)
 
 
+def delete_scope(cursor, table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
+    """Replace only the affected hotel/platform snapshot, preserving other scopes."""
+    if not rows or "hotel_id" not in headers:
+        cursor.execute(f"DELETE FROM `{table_name}`")
+        return
+
+    hotel_index = headers.index("hotel_id")
+    if "platform_scope" not in headers:
+        hotel_ids = sorted({str(row[hotel_index] or "").strip() for row in rows if row[hotel_index]})
+        marks = ", ".join(["%s"] * len(hotel_ids))
+        cursor.execute(f"DELETE FROM `{table_name}` WHERE hotel_id IN ({marks})", hotel_ids)
+        return
+
+    scope_index = headers.index("platform_scope")
+    scopes = sorted(
+        {
+            (str(row[hotel_index] or "").strip(), str(row[scope_index] or "").strip())
+            for row in rows
+            if row[hotel_index] and row[scope_index]
+        }
+    )
+    if not scopes:
+        raise MysqlSyncError(f"Table {table_name} requires non-empty hotel_id and platform_scope")
+    conditions = " OR ".join("(hotel_id=%s AND platform_scope=%s)" for _ in scopes)
+    cursor.execute(f"DELETE FROM `{table_name}` WHERE {conditions}", [value for scope in scopes for value in scope])
+
+
 def sync_table(
     table_name: str,
     headers: Sequence[str],
@@ -78,7 +105,7 @@ def sync_table(
             if missing:
                 raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
 
-            cursor.execute(f"DELETE FROM `{table_name}`")
+            delete_scope(cursor, table_name, headers, rows)
             if rows:
                 placeholders = ", ".join(["%s"] * len(insert_headers))
                 columns = ", ".join(f"`{header}`" for header in insert_headers)
@@ -110,7 +137,7 @@ def sync_metric_history_table(
     headers: Sequence[str],
     rows: Sequence[Sequence[Any]],
     key_columns: set[str],
-    retention_days: int,
+    retention_days: int | None,
 ) -> None:
     if not rows:
         raise MysqlSyncError(f"Refusing to sync empty metric history: {table_name}")
@@ -137,7 +164,7 @@ def sync_metric_history_table(
                 [tuple(convert_value(value, column_types[column]) for column, value in zip(columns, row)) for row in rows],
             )
             hotel_ids = sorted({str(row[columns.index("hotel_id")]) for row in rows if row[columns.index("hotel_id")]})
-            if hotel_ids:
+            if retention_days is not None and hotel_ids:
                 marks = ", ".join(["%s"] * len(hotel_ids))
                 cursor.execute(
                     f"DELETE FROM `{table_name}` WHERE hotel_id IN ({marks}) AND business_date<%s",
@@ -174,7 +201,7 @@ def sync_ctrip_metric_history(
         "ctrip_ota_business_metrics",
         headers,
         rows,
-        {"hotel_id", "business_date", "metric_code"},
+        {"hotel_id", "platform_scope", "business_date", "metric_code"},
         retention_days,
     )
 

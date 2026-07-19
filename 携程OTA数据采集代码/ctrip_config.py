@@ -14,5 +14,7 @@ DEFAULT_HOTEL_NAME = os.environ.get(
     "",
 ).strip()
 
+PLATFORM_SCOPE = "ctrip"
+
 # 如后续抓包发现携程接口需要额外公共 header，可统一加到这里。
 EXTRA_HEADERS = {}

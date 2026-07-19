@@ -42,6 +42,9 @@ TASKS = {
     "meituan_goods_price": ("meituan", "meituan_goods_price_mapping.py", []),
     "meituan_nearby_event": ("meituan", "meituan_nearby_event_data.py", []),
     "ctrip_business": ("ctrip", "ctrip_business_data.py", []),
+    "ctrip_flow_conversion": ("ctrip", "ctrip_flow_conversion_data.py", []),
+    "ctrip_psi_score": ("ctrip", "ctrip_psi_score_data.py", []),
+    "ctrip_promotion_performance": ("ctrip", "ctrip_promotion_performance_data.py", []),
     "ctrip_review": ("ctrip", "ctrip_review_data.py", ["--sync-db"]),
     "ctrip_review_detail": ("ctrip", "ctrip_review_detail_data.py", ["--sync-db"]),
     "ctrip_promotion": ("ctrip", "ctrip_promotion_data.py", ["--sync-db"]),
@@ -132,7 +135,16 @@ def put_if(env: dict[str, str], key: str, value: Any) -> None:
         env[key] = str(value).strip()
 
 
-def build_env(settings: dict[str, Any]) -> dict[str, str]:
+def internal_hotel_id(settings: dict[str, Any], platform: str | None = None) -> str:
+    hotel = settings.get("hotel") or {}
+    if platform == "ctrip":
+        ctrip_id = (settings.get("ctrip") or {}).get("internal_hotel_id")
+        if ctrip_id:
+            return str(ctrip_id).strip()
+    return str(hotel.get("hotel_id") or "").strip()
+
+
+def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     hotel = settings.get("hotel") or {}
@@ -146,7 +158,7 @@ def build_env(settings: dict[str, Any]) -> dict[str, str]:
     browser_dir = PROJECT_ROOT / "runtime" / "playwright-browsers"
     if browser_dir.exists():
         put_if(env, "PLAYWRIGHT_BROWSERS_PATH", browser_dir)
-    put_if(env, "HOTEL_ID", hotel.get("hotel_id"))
+    put_if(env, "HOTEL_ID", internal_hotel_id(settings, platform))
     put_if(env, "HOTEL_OTA_MYSQL_HOST", mysql.get("host"))
     put_if(env, "HOTEL_OTA_MYSQL_PORT", mysql.get("port"))
     put_if(env, "HOTEL_OTA_MYSQL_USER", mysql.get("user"))
@@ -278,7 +290,7 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
         completed = run_streamed(
             command,
             cwd=str(script.parent if platform == "pms" else base_dir),
-            env=build_env(settings),
+            env=build_env(settings, platform),
             timeout=timeout,
             log_path=log_path,
             transform=lambda line: sanitize(line, settings),
