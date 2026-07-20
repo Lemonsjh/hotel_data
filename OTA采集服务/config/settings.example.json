@@ -92,6 +92,7 @@
     "meituan_nearby_event": true,
     "ctrip_business": true,
     "ctrip_flow_conversion": true,
+    "ctrip_user_profile": false,
     "ctrip_psi_score": false,
     "ctrip_promotion_performance": false,
     "ctrip_review": true,

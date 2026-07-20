@@ -43,7 +43,8 @@ function Install-RepeatingTask {
         [string]$ExecutablePath,
         [string]$Arguments,
         [string]$WorkingDirectory,
-        [int]$IntervalMinutes
+        [int]$IntervalMinutes,
+        [System.Management.Automation.PSCredential]$Credential
     )
 
     if ($IntervalMinutes -le 0) {
@@ -54,23 +55,44 @@ function Install-RepeatingTask {
         -Execute $ExecutablePath `
         -Argument $Arguments `
         -WorkingDirectory $WorkingDirectory
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+    $startupTrigger = New-ScheduledTaskTrigger -AtStartup `
+        -RandomDelay (New-TimeSpan -Minutes 1)
+    $repeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
         -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
         -RepetitionDuration (New-TimeSpan -Days 3650)
-    $principal = New-ScheduledTaskPrincipal `
-        -UserId $env:USERNAME `
-        -LogonType Interactive `
-        -RunLevel Limited
     $taskSettings = New-ScheduledTaskSettingsSet `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
-        -MultipleInstances IgnoreNew
+        -MultipleInstances IgnoreNew `
+        -StartWhenAvailable `
+        -RestartCount 3 `
+        -RestartInterval (New-TimeSpan -Minutes 2)
 
-    Register-ScheduledTask `
-        -TaskName $TaskName `
-        -Action $action `
-        -Trigger $trigger `
-        -Principal $principal `
-        -Settings $taskSettings `
-        -Force | Out-Null
+    if ($null -eq $Credential) {
+        $defaultUser = "$env:USERDOMAIN\$env:USERNAME"
+        $Credential = Get-Credential `
+            -UserName $defaultUser `
+            -Message "Enter the Windows password used to run $TaskName when nobody is logged on."
+    }
+    if ($null -eq $Credential) {
+        throw "Windows credentials are required to install $TaskName"
+    }
+
+    $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Credential.Password)
+    try {
+        $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
+        Register-ScheduledTask `
+            -TaskName $TaskName `
+            -Action $action `
+            -Trigger @($startupTrigger, $repeatTrigger) `
+            -Settings $taskSettings `
+            -User $Credential.UserName `
+            -Password $plainPassword `
+            -RunLevel Highest `
+            -Force | Out-Null
+    }
+    finally {
+        $plainPassword = $null
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
+    }
 }
