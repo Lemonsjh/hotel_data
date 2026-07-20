@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -84,10 +85,12 @@ def activity_enabled(page: Any, menu_point: tuple[int, int], markers: tuple[str,
     open_promotion_page(page, menu_point)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
+        button_texts = page.locator(selector).all_inner_texts()
+        if any(apply_text in text for text in button_texts):
+            return 0
         body = page.locator("body").inner_text(timeout=1_000)
         if any(marker in body for marker in markers):
-            button_texts = page.locator(selector).all_inner_texts()
-            return 0 if any(apply_text in text for text in button_texts) or apply_text in body else 1
+            return 1
         page.wait_for_timeout(500)
     raise RuntimeError(f"Ctrip promotion page did not return a recognized status: {markers[0]}")
 
@@ -108,6 +111,21 @@ def hourly_room_status() -> tuple[int, int]:
         if enabled_flag(product.get("is_hour_room")) and product.get("ota_room_type_id") not in (None, "")
     }
     return int(bool(room_types)), len(room_types)
+
+
+def information_completeness_score(page: Any) -> float:
+    page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
+    page.wait_for_timeout(4_000)
+    dismiss_overlays(page)
+    page.mouse.click(*INFORMATION_MENU_POINT)
+    deadline = time.monotonic() + 20
+    pattern = re.compile(r"\u4fe1\u606f\u5206\s*([0-9]+(?:\.[0-9]+)?)\s*%?")
+    while time.monotonic() < deadline:
+        match = pattern.search(page.locator("body").inner_text(timeout=1_000))
+        if match:
+            return float(match.group(1))
+        page.wait_for_timeout(500)
+    raise RuntimeError("Ctrip information page did not return an information score")
 
 
 def homepage_video_status(page: Any) -> int:
@@ -149,7 +167,7 @@ def travel_photo_status(page: Any) -> int:
     raise RuntimeError("Ctrip travel-photo tab did not return a recognized status")
 
 
-def collect_statuses() -> tuple[int, int, int, int, int, int, int]:
+def collect_statuses() -> tuple[int, int, int, int, int, int, int, float]:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, chromium_sandbox=True)
         try:
@@ -160,9 +178,10 @@ def collect_statuses() -> tuple[int, int, int, int, int, int, int]:
             preferred = activity_enabled(page, PREFERRED_CLUB_MENU_POINT, PREFERRED_CLUB_PAGE_MARKERS, 'button[he-click="join_tplus"]', "立即报名")
             business = activity_enabled(page, BUSINESS_TRAVEL_MENU_POINT, BUSINESS_TRAVEL_PAGE_MARKERS, 'button[he-click="businesstravel_join"]', "立即加入")
             hourly_enabled, hourly_room_count = hourly_room_status()
+            information_score = information_completeness_score(page)
             homepage_video = homepage_video_status(page)
             travel_photo = travel_photo_status(page)
-            return points, preferred, business, hourly_enabled, hourly_room_count, homepage_video, travel_photo
+            return points, preferred, business, hourly_enabled, hourly_room_count, homepage_video, travel_photo, information_score
         finally:
             browser.close()
 
@@ -170,9 +189,10 @@ def collect_statuses() -> tuple[int, int, int, int, int, int, int]:
 def status_rows(
     hotel_id: str, captured_at: datetime, points: int, preferred: int, business: int,
     hourly_enabled: int, hourly_room_count: int, homepage_video: int, travel_photo: int,
+    information_score: float,
 ) -> list[list[Any]]:
     hotel_name = DEFAULT_HOTEL_NAME
-    return [
+    rows = [
         [hotel_id, hotel_name, "ctrip", "points_alliance", "\u79ef\u5206\u8054\u76df", points,
          "JOINED" if points else "NOT_JOINED", None, None, None, captured_at],
         [hotel_id, hotel_name, "ctrip", "preferred_club", "\u4f18\u4eab\u4f1a", preferred,
@@ -186,6 +206,13 @@ def status_rows(
         [hotel_id, hotel_name, "ctrip", "homepage_video", "\u9996\u9875\u89c6\u9891", homepage_video,
          "UPLOADED" if homepage_video else "NOT_UPLOADED", None, None, None, captured_at],
     ]
+    return [row + [None, None] for row in rows] + [
+        [
+            hotel_id, hotel_name, "ctrip", "information_completeness", "\u4fe1\u606f\u5b8c\u6574\u5ea6",
+            int(information_score >= 100), "COMPLETE" if information_score >= 100 else "INCOMPLETE",
+            None, None, None, captured_at, information_score, "%",
+        ]
+    ]
 
 
 def write_output(headers: list[str], rows: list[list[Any]]) -> None:
@@ -198,14 +225,14 @@ def write_output(headers: list[str], rows: list[list[Any]]) -> None:
 
 def main() -> int:
     captured_at = datetime.now()
-    points, preferred, business, hourly_enabled, hourly_room_count, homepage_video, travel_photo = collect_statuses()
+    points, preferred, business, hourly_enabled, hourly_room_count, homepage_video, travel_photo, information_score = collect_statuses()
     headers = [
         "hotel_id", "hotel_name", "platform_scope", "activity_code", "activity_name", "enabled",
-        "status", "status_detail", "room_type_count", "orders_30d", "snapshot_time",
+        "status", "status_detail", "room_type_count", "orders_30d", "snapshot_time", "metric_value", "metric_unit",
     ]
     rows = status_rows(
         require_hotel_id(), captured_at, points, preferred, business, hourly_enabled,
-        hourly_room_count, homepage_video, travel_photo,
+        hourly_room_count, homepage_video, travel_photo, information_score,
     )
     sync_metric_history_table(
         TABLE_NAME, headers, rows,
@@ -215,7 +242,7 @@ def main() -> int:
     print(
         "Ctrip promotion status sync completed: "
         f"points={points} preferred={preferred} business={business} hourly={hourly_enabled}/{hourly_room_count} "
-        f"homepage_video={homepage_video} travel_photo={travel_photo}"
+        f"homepage_video={homepage_video} travel_photo={travel_photo} information_score={information_score}"
     )
     return 0
 

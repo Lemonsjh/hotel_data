@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_status` (
     `activity_code` VARCHAR(64) NOT NULL,
     `activity_name` VARCHAR(64) NOT NULL,
     `enabled` TINYINT NOT NULL,
+    `metric_value` DECIMAL(10,2) NULL,
+    `metric_unit` VARCHAR(20) NULL,
     `status` VARCHAR(32) NOT NULL,
     `status_detail` VARCHAR(64) NULL,
     `room_type_count` INT UNSIGNED NULL,
