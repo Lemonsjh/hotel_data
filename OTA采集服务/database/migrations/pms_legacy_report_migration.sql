@@ -1,0 +1,63 @@
+CREATE TABLE IF NOT EXISTS `rs01_room_revenue_daily` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `hotel_name` VARCHAR(150) NOT NULL,
+    `hotel_id` VARCHAR(100) NOT NULL DEFAULT '',
+    `source_platform` VARCHAR(64) NOT NULL DEFAULT 'PMS',
+    `business_date` DATE NOT NULL,
+    `room_no` VARCHAR(50) NOT NULL,
+    `room_type_name` VARCHAR(120) NULL,
+    `room_type_id` VARCHAR(50) NULL,
+    `guest_name` VARCHAR(100) NULL,
+    `customer_source` VARCHAR(100) NULL,
+    `checkin_time` DATETIME NULL,
+    `checkout_time` DATETIME NULL,
+    `rack_rate` DECIMAL(12,2) NULL,
+    `price_type` VARCHAR(100) NULL,
+    `room_daily_price` DECIMAL(12,2) NULL,
+    `stay_type` VARCHAR(50) NULL,
+    `charge_subject` VARCHAR(100) NOT NULL DEFAULT '',
+    `room_nights` DECIMAL(8,2) NULL,
+    `room_fee` DECIMAL(12,2) NULL,
+    `operator_name` VARCHAR(100) NULL,
+    `order_id` VARCHAR(100) NOT NULL DEFAULT '',
+    `snapshot_time` DATETIME NOT NULL,
+    `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_room_fee_daily` (
+        `hotel_id`, `order_id`, `business_date`, `room_no`, `charge_subject`
+    ),
+    KEY `idx_rs01_hotel_id` (`hotel_id`),
+    KEY `idx_rs01_business_date` (`business_date`),
+    KEY `idx_rs01_room_no` (`room_no`),
+    KEY `idx_rs01_order_id` (`order_id`),
+    KEY `idx_rs01_snapshot_time` (`snapshot_time`),
+    KEY `idx_rs01_room_type` (`hotel_id`, `room_type_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `kf11_room_status_snapshot` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `hotel_name` VARCHAR(150) NOT NULL,
+    `hotel_id` VARCHAR(100) NOT NULL DEFAULT '',
+    `source_platform` VARCHAR(64) NOT NULL DEFAULT 'PMS',
+    `business_date` DATE NOT NULL,
+    `room_no` VARCHAR(50) NOT NULL,
+    `room_type_name` VARCHAR(120) NOT NULL,
+    `room_type_id` VARCHAR(50) NULL,
+    `room_status` VARCHAR(50) NOT NULL,
+    `guest_name` VARCHAR(100) NULL,
+    `checkin_time` DATETIME NULL,
+    `checkout_time` DATETIME NULL,
+    `snapshot_time` DATETIME NOT NULL,
+    `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_kf11_daily_room` (
+        `hotel_id`, `source_platform`, `business_date`, `room_no`
+    ),
+    KEY `idx_kf11_hotel_id` (`hotel_id`),
+    KEY `idx_kf11_business_date` (`business_date`),
+    KEY `idx_kf11_room_status` (`room_status`),
+    KEY `idx_kf11_snapshot_time` (`snapshot_time`),
+    KEY `idx_kf11_room_type` (`hotel_id`, `room_type_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

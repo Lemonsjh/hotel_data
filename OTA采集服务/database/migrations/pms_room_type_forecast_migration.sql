@@ -1,5 +1,4 @@
 CREATE TABLE IF NOT EXISTS `pms_room_type_forecast` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '内部主键',
     `hotel_id` VARCHAR(64) NOT NULL COMMENT '酒店内部 ID',
     `hotel_name` VARCHAR(255) NOT NULL COMMENT '酒店名称',
     `source_platform` VARCHAR(32) NOT NULL DEFAULT 'PMS（别样红）' COMMENT '数据来源',
@@ -15,8 +14,7 @@ CREATE TABLE IF NOT EXISTS `pms_room_type_forecast` (
     `room_revenue` DECIMAL(18,4) NULL COMMENT '预测房费',
     `adr` DECIMAL(18,4) NULL COMMENT '平均房价',
     `revpar` DECIMAL(18,4) NULL COMMENT 'RevPar',
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_forecast_current` (`hotel_id`, `stay_date`, `pms_room_type_id`),
+    PRIMARY KEY (`hotel_id`, `stay_date`, `pms_room_type_id`),
     KEY `idx_forecast_stay_date` (`hotel_id`, `stay_date`),
     KEY `idx_forecast_room_type_id` (`hotel_id`, `room_type_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

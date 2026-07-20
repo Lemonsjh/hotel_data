@@ -1,5 +1,4 @@
 CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_performance_30d` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `hotel_id` VARCHAR(64) NOT NULL,
     `hotel_name` VARCHAR(255) NOT NULL,
     `platform_scope` VARCHAR(20) NOT NULL,
@@ -23,6 +22,5 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_performance_30d` (
     `ebk_order_count` BIGINT NULL,
     `other_order_count` BIGINT NULL,
     `data_delayed` TINYINT(1) NOT NULL DEFAULT 0,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_ctrip_promotion_performance_latest` (`hotel_id`, `platform_scope`)
+    PRIMARY KEY (`hotel_id`, `platform_scope`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

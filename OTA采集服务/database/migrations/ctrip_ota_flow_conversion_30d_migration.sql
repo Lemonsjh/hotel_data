@@ -1,5 +1,4 @@
 CREATE TABLE IF NOT EXISTS `ctrip_ota_flow_conversion_30d` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `hotel_id` VARCHAR(64) NOT NULL COMMENT '内部酒店 ID',
     `hotel_name` VARCHAR(255) NOT NULL,
     `platform_scope` VARCHAR(20) NOT NULL COMMENT 'ctrip 或 qunar',
@@ -29,9 +28,6 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_flow_conversion_30d` (
     `order_filling_peer_rank` INT NULL COMMENT '订单页访客量竞争圈排名',
     `exposure_to_detail_rate_peer_rank` INT NULL COMMENT '曝光到详情转化率竞争圈排名',
     `detail_to_order_rate_peer_rank` INT NULL COMMENT '详情到订单页转化率竞争圈排名',
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_ctrip_flow_conversion_daily` (
-        `hotel_id`, `platform_scope`
-    ),
+    PRIMARY KEY (`hotel_id`, `platform_scope`),
     KEY `idx_ctrip_flow_period_end` (`hotel_id`, `period_end_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

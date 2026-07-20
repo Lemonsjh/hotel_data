@@ -10,10 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-
 from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, EXTRA_HEADERS, PLATFORM_SCOPE, USER_AGENT
+from ctrip_review_detail_storage import save_outputs, upsert_mysql
 
 import sys
 
@@ -203,7 +201,7 @@ def find_comment_items(payload: Any) -> list[dict[str, Any]]:
 
 
 def image_urls(item: dict[str, Any]) -> list[str]:
-    images = nested(item, "imageList", "images", "pictures", "picList", "picUrls", default=[])
+    images = nested(item, "pictureList", "imageList", "images", "pictures", "picList", "picUrls", default=[])
     if isinstance(images, str):
         return [images] if images else []
     result: list[str] = []
@@ -219,7 +217,7 @@ def image_urls(item: dict[str, Any]) -> list[str]:
 
 def dimension_scores(item: dict[str, Any]) -> dict[str, float | None]:
     result: dict[str, float | None] = {}
-    values = nested(item, "scoreList", "subScores", "dimensionScores", "ratings", default=[])
+    values = nested(item, "score.subScores", "scoreList", "subScores", "dimensionScores", "ratings", default=[])
     for score in values if isinstance(values, list) else []:
         if not isinstance(score, dict):
             continue
@@ -230,11 +228,19 @@ def dimension_scores(item: dict[str, Any]) -> dict[str, float | None]:
                                ("\u4f4d\u7f6e", "location"), ("\u670d\u52a1", "service")):
             if keyword in name:
                 result[field] = value
+    for field, key in (
+        ("hygiene", "healthScore"),
+        ("facility", "facilityScore"),
+        ("location", "locationScore"),
+        ("service", "serviceScore"),
+    ):
+        result.setdefault(field, normalize_score(nested(item, key, default=None)))
     return result
 
 
 def normalize_rows(payload: dict[str, Any], captured_at: datetime | None = None) -> list[list[Any]]:
     captured_at = captured_at or datetime.now()
+    payload_hotel_id = str(nested(payload, "masterHotelId", default=HOTEL_ID)).strip()
     rows: list[list[Any]] = []
     for item in find_comment_items(payload):
         review_id = str(nested(item, "reviewId", "commentId", "id", "commentID")).strip()
@@ -242,10 +248,10 @@ def normalize_rows(payload: dict[str, Any], captured_at: datetime | None = None)
             continue
         images = image_urls(item)
         scores = dimension_scores(item)
-        reply = str(nested(item, "replyContent", "hotelReply", "merchantReply",
+        reply = str(nested(item, "replyDetail.replyContent", "replyContent", "hotelReply", "merchantReply",
                            "replyInfo.content", "reply.content")).strip()
-        hotel_id = str(nested(item, "hotelId", "hotelID", default=HOTEL_ID)).strip()
-        rating = normalize_score(nested(item, "reviewScore", "score", "rating", "totalScore"))
+        hotel_id = str(nested(item, "hotelId", "hotelID", default=payload_hotel_id)).strip()
+        rating = normalize_score(nested(item, "avgScore", "score.avgScoreSimple", "reviewScore", "rating", "totalScore"))
         negative = nested(item, "isNegative", "isBadComment", "badComment", default=None)
         rows.append([
             captured_at, "\u643a\u7a0b",
@@ -254,12 +260,12 @@ def normalize_rows(payload: dict[str, Any], captured_at: datetime | None = None)
             str(nested(item, "userName", "userNickName", "nickName", "userInfo.nickName")).strip(),
             rating,
             str(nested(item, "content", "commentContent", "comment", "reviewContent")).strip(),
-            to_datetime(nested(item, "commentTime", "commentDate", "createTime", "reviewTime")),
-            to_date(nested(item, "checkInDate", "consumeTime", "stayDate", "orderInfo.checkInDate")),
+            to_datetime(nested(item, "addtime", "commentTime", "commentDate", "createTime", "reviewTime")),
+            to_date(nested(item, "checkinTimeStr", "checkInDate", "consumeTime", "stayDate", "orderInfo.checkInDate")),
             reply,
-            to_datetime(nested(item, "replyTime", "replyDate", "replyInfo.replyTime", "reply.createTime")),
+            to_datetime(nested(item, "replyDetail.replyTime", "replyTime", "replyDate", "replyInfo.replyTime", "reply.createTime")),
             bool(reply),
-            str(nested(item, "roomName", "roomTypeName", "orderInfo.roomName")).strip(),
+            str(nested(item, "hotelRoomInfo", "roomName", "roomTypeName", "orderInfo.roomName")).strip(),
             str(nested(item, "productName", "ratePlanName", "orderName", "orderInfo.productName")).strip(),
             bool(images), len(images), json.dumps(images, ensure_ascii=False),
             bool(nested(item, "anonymous", "isAnonymous", default=False)),
@@ -306,72 +312,6 @@ def collect_online(page_size: int, max_pages: int, full_history: bool) -> list[l
     return sorted(rows_by_id.values(), key=lambda row: row[8] or datetime.min, reverse=True)
 
 
-def save_outputs(headers: list[str], rows: list[list[Any]]) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "\u8bc4\u4ef7\u660e\u7ec6"
-    sheet.append(headers)
-    for cell in sheet[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="1F4E78")
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    for row in rows:
-        sheet.append(row)
-    sheet.freeze_panes = "A2"
-    widths = [20, 18, 35, 14, 18, 24, 14, 45, 20, 14, 32, 22, 14,
-              28, 28, 14, 14, 40, 16, 20, 14, 16, 16, 16, 16]
-    for index, width in enumerate(widths, 1):
-        sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
-    for row in sheet.iter_rows(min_row=2):
-        for index in (1, 9, 12):
-            row[index - 1].number_format = "yyyy-mm-dd hh:mm:ss"
-        row[9].number_format = "yyyy-mm-dd"
-    sheet.row_dimensions[1].height = 32
-    workbook.save(OUTPUT_PATH)
-    payload = {
-        "table_name": OUTPUT_PATH.stem,
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "row_count": len(rows),
-        "rows": [{key: json_value(row[index]) for index, key in enumerate(headers)} for row in rows],
-    }
-    OUTPUT_PATH.with_suffix(".json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def json_value(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-    if isinstance(value, date):
-        return value.isoformat()
-    return value
-
-
-def upsert_mysql(headers: list[str], rows: list[list[Any]]) -> None:
-    if not rows:
-        print("DB sync skipped: no review detail rows")
-        return
-    import pymysql
-    columns = ", ".join(f"`{name}`" for name in headers)
-    placeholders = ", ".join(["%s"] * len(headers))
-    updates = ", ".join(
-        f"`{name}`=VALUES(`{name}`)" for name in headers
-        if name not in {"channel_source", "poi_id", "review_id"})
-    sql = (f"INSERT INTO `{TABLE_NAME}` ({columns}) VALUES ({placeholders}) "
-           f"ON DUPLICATE KEY UPDATE {updates}")
-    connection = pymysql.connect(**DB_CONFIG, autocommit=False)
-    try:
-        with connection.cursor() as cursor:
-            cursor.executemany(sql, rows)
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
-    print(f"DB upserted: {TABLE_NAME} rows={len(rows)}")
-
-
 def sample_payload() -> dict[str, Any]:
     return {"result": {"totalCount": 1, "commentList": [{
         "commentId": "ctrip-demo-1", "userNickName": "\u533f***", "score": 4.5,
@@ -405,9 +345,9 @@ def main() -> None:
         rows = collect_online(max(1, args.page_size), max(1, args.max_pages), args.full_history)
     headers = [*HEADERS, "platform_scope", "hotel_id"]
     rows = [list(row) + [PLATFORM_SCOPE, INTERNAL_HOTEL_ID] for row in rows]
-    save_outputs(headers, rows)
+    save_outputs(OUTPUT_PATH, headers, rows)
     if args.sync_db:
-        upsert_mysql(headers, rows)
+        upsert_mysql(TABLE_NAME, DB_CONFIG, headers, rows)
     print(f"review_detail rows={len(rows)}")
     print(f"Excel saved: {OUTPUT_PATH}")
 

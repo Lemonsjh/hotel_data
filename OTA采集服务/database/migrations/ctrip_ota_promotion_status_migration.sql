@@ -1,5 +1,4 @@
 CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_status` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `hotel_id` VARCHAR(64) NOT NULL,
     `hotel_name` VARCHAR(255) NOT NULL,
     `platform_scope` VARCHAR(20) NOT NULL,
@@ -13,8 +12,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_status` (
     `snapshot_time` DATETIME NOT NULL,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_ctrip_promotion_status` (`hotel_id`, `platform_scope`, `activity_code`),
+    PRIMARY KEY (`hotel_id`, `platform_scope`, `activity_code`),
     KEY `idx_ctrip_promotion_status_snapshot` (`hotel_id`, `snapshot_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Ctrip current promotion and service participation status by activity';

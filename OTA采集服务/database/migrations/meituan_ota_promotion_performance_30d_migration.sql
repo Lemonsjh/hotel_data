@@ -1,5 +1,4 @@
 CREATE TABLE IF NOT EXISTS meituan_ota_promotion_performance_30d (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     hotel_id VARCHAR(64) NOT NULL,
     period_start_date DATE NOT NULL,
     period_end_date DATE NOT NULL,
@@ -22,7 +21,6 @@ CREATE TABLE IF NOT EXISTS meituan_ota_promotion_performance_30d (
     click_rate_pct DECIMAL(10,4) NULL,
     merchant_view_count INT NULL,
     cash_spend_amount DECIMAL(14,2) NULL,
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_meituan_promotion_performance_day (hotel_id, period_end_date, plan_id, launch_id),
+    PRIMARY KEY (hotel_id, plan_id, launch_id),
     KEY idx_meituan_promotion_performance_period (hotel_id, period_start_date, period_end_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

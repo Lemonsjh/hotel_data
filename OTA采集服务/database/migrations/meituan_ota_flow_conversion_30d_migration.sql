@@ -1,5 +1,4 @@
 CREATE TABLE IF NOT EXISTS `meituan_ota_flow_conversion_30d` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `hotel_id` VARCHAR(64) NOT NULL,
     `hotel_name` VARCHAR(255) NOT NULL,
     `business_date` DATE NOT NULL,
@@ -22,7 +21,6 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_flow_conversion_30d` (
     `pay_order_peer_rank` VARCHAR(32) NULL,
     `exposure_to_browse_peer_rank` VARCHAR(32) NULL,
     `browse_to_pay_peer_rank` VARCHAR(32) NULL,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_meituan_flow_conversion_30d` (`hotel_id`, `business_date`),
+    PRIMARY KEY (`hotel_id`),
     KEY `idx_meituan_flow_period_end` (`hotel_id`, `period_end_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
