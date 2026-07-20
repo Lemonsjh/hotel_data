@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS `ctrip_ota_joined_rights` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `hotel_id` VARCHAR(64) NOT NULL,
+    `hotel_name` VARCHAR(255) NOT NULL,
+    `platform_scope` VARCHAR(20) NOT NULL,
+    `right_type_id` BIGINT NULL,
+    `right_type` VARCHAR(40) NOT NULL,
+    `right_name` VARCHAR(150) NOT NULL,
+    `applicable_room_types` TEXT NULL,
+    `invalid_dates` TEXT NULL,
+    `rights_rules` TEXT NULL,
+    `stock_use_conditions` TEXT NULL,
+    `right_status` VARCHAR(40) NULL,
+    `snapshot_time` DATETIME NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ctrip_joined_right` (`hotel_id`, `platform_scope`, `right_type`),
+    KEY `idx_ctrip_joined_right_snapshot` (`hotel_id`, `platform_scope`, `snapshot_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

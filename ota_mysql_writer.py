@@ -273,6 +273,41 @@ def sync_latest_row(table_name: str, headers: Sequence[str], row: Sequence[Any])
         connection.close()
 
 
+def upsert_snapshot_fields(
+    table_name: str, headers: Sequence[str], row: Sequence[Any], key_columns: Sequence[str]
+) -> None:
+    """Upsert selected fields without clearing other status fields in the same snapshot row."""
+    if not table_name.replace("_", "").isalnum() or not key_columns:
+        raise MysqlSyncError("Invalid snapshot table or key columns")
+    missing_keys = set(key_columns).difference(headers)
+    if missing_keys:
+        raise MysqlSyncError(f"Snapshot keys missing: {', '.join(sorted(missing_keys))}")
+    connection = connect_mysql(autocommit=False)
+    try:
+        with connection.cursor() as cursor:
+            column_types = load_column_types(cursor, table_name)
+            missing = [header for header in headers if header not in column_types]
+            if missing:
+                raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
+            columns = ", ".join(f"`{header}`" for header in headers)
+            placeholders = ", ".join(["%s"] * len(headers))
+            updates = ", ".join(
+                f"`{header}`=VALUES(`{header}`)" for header in headers if header not in key_columns
+            )
+            cursor.execute(
+                f"INSERT INTO `{table_name}` ({columns}) VALUES ({placeholders}) "
+                f"ON DUPLICATE KEY UPDATE {updates}",
+                tuple(convert_value(value, column_types[header]) for header, value in zip(headers, row)),
+            )
+        connection.commit()
+        print(f"DB snapshot fields upserted: {table_name}")
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def sync_user_source_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 30) -> None:
     sync_monthly_history("meituan_ota_user_source_monthly", headers, rows, retention_days)
 
