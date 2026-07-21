@@ -25,6 +25,7 @@ ENDPOINTS = {
     "consumption": "queryUserPrice",
     "stay_days": "queryUserStayDays",
     "star_preference": "queryUserStar",
+    "order_peak_time": "getOrderDistribution",
 }
 TABLE_NAME = "ctrip_ota_userprofile_distribution"
 DISTRIBUTION_HEADERS = [
@@ -104,6 +105,7 @@ def build_rows(payloads: dict[str, dict[str, Any]], captured_at: datetime) -> li
     consumption = object_values(payloads["consumption"], ENDPOINTS["consumption"])
     stay_days = object_values(payloads["stay_days"], ENDPOINTS["stay_days"])
     star_preference = object_values(payloads["star_preference"], ENDPOINTS["star_preference"])
+    order_peak_time = object_values(payloads["order_peak_time"], ENDPOINTS["order_peak_time"])
     origin = object_values(payloads["origin"], ENDPOINTS["origin"])
     dimensions = {
         "gender": [(item["name"], item.get("value")) for item in list_values(payloads["gender"], ENDPOINTS["gender"])],
@@ -118,6 +120,11 @@ def build_rows(payloads: dict[str, dict[str, Any]], captured_at: datetime) -> li
             ("\u672c\u5730", origin.get("localCityRate")),
             ("\u5f02\u5730", origin.get("otherCityRate")),
         ],
+        "city_origin_top5": [
+            (item.get("name"), item.get("value"))
+            for item in origin.get("cities", [])[:5]
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ],
     }
     rows = [row for dimension, values in dimensions.items() for row in distribution_rows(hotel_id, captured_at, dimension, values)]
     average_stay_nights = number(stay_days.get("avg"))
@@ -131,6 +138,13 @@ def build_rows(payloads: dict[str, dict[str, Any]], captured_at: datetime) -> li
         rows.append([
             hotel_id, DEFAULT_HOTEL_NAME, "ctrip", captured_at, "booking_advance_days",
             "avg_advance_booking_days", None, average_advance_booking_days, "days", 0,
+        ])
+    peak_hour = str(order_peak_time.get("maxProportionHour") or "").strip()
+    peak_rate = number(order_peak_time.get("maxProportion"))
+    if peak_hour and peak_rate is not None:
+        rows.append([
+            hotel_id, DEFAULT_HOTEL_NAME, "ctrip", captured_at, "order_peak_time",
+            peak_hour, peak_rate, None, None, 0,
         ])
     if not rows:
         raise RuntimeError("Ctrip user-profile distribution is empty")
