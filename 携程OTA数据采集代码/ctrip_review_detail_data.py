@@ -29,6 +29,12 @@ API_URL = os.environ.get(
 HOTEL_NAME = os.environ.get("CTRIP_HOTEL_NAME", DEFAULT_HOTEL_NAME).strip()
 HOTEL_ID = os.environ.get("CTRIP_HOTEL_ID", "").strip()
 INTERNAL_HOTEL_ID = os.environ.get("HOTEL_ID", "").strip()
+CHANNELS = {
+    "ctrip": ("1", "\u643a\u7a0b"),
+    "zhixing": ("7", "\u667a\u884c"),
+    "qunar": ("9", "\u53bb\u54ea\u513f"),
+    "tongcheng": ("8", "\u540c\u7a0b\u65c5\u884c"),
+}
 
 HEADERS = [
     "snapshot_time", "channel_source", "hotel_name", "poi_id", "review_id",
@@ -59,10 +65,10 @@ class CtripReviewDetailClient:
         if EXTRA_HEADERS:
             self.session.headers.update(EXTRA_HEADERS)
 
-    def fetch_page(self, page_index: int, page_size: int) -> dict[str, Any]:
+    def fetch_page(self, page_index: int, page_size: int, channel_source: str) -> dict[str, Any]:
         response = self.session.post(
             API_URL,
-            json=build_payload(page_index, page_size),
+            json=build_payload(page_index, page_size, channel_source),
             timeout=30,
         )
         response.raise_for_status()
@@ -82,7 +88,7 @@ class CtripReviewDetailClient:
         return payload
 
 
-def build_payload(page_index: int, page_size: int) -> dict[str, Any]:
+def build_payload(page_index: int, page_size: int, channel_source: str) -> dict[str, Any]:
     return {
         "reqHead": {
             "host": "ebooking.ctrip.com",
@@ -107,7 +113,7 @@ def build_payload(page_index: int, page_size: int) -> dict[str, Any]:
         "isNeedTranslate": False, "sortType": 0, "catalogTab": "all",
         "catalogName": "\u5168\u90e8\u70b9\u8bc4", "pageSize": page_size,
         "needOrder": True, "endDate": "", "startDate": "",
-        "channelSource": "1", "header": {"platform": "WEB"},
+        "channelSource": channel_source, "header": {"platform": "WEB"},
     }
 
 
@@ -238,7 +244,9 @@ def dimension_scores(item: dict[str, Any]) -> dict[str, float | None]:
     return result
 
 
-def normalize_rows(payload: dict[str, Any], captured_at: datetime | None = None) -> list[list[Any]]:
+def normalize_rows(
+    payload: dict[str, Any], channel_name: str, captured_at: datetime | None = None
+) -> list[list[Any]]:
     captured_at = captured_at or datetime.now()
     payload_hotel_id = str(nested(payload, "masterHotelId", default=HOTEL_ID)).strip()
     rows: list[list[Any]] = []
@@ -254,7 +262,7 @@ def normalize_rows(payload: dict[str, Any], captured_at: datetime | None = None)
         rating = normalize_score(nested(item, "avgScore", "score.avgScoreSimple", "reviewScore", "rating", "totalScore"))
         negative = nested(item, "isNegative", "isBadComment", "badComment", default=None)
         rows.append([
-            captured_at, "\u643a\u7a0b",
+            captured_at, channel_name,
             str(nested(item, "hotelName", default=HOTEL_NAME)).strip(),
             hotel_id, review_id,
             str(nested(item, "userName", "userNickName", "nickName", "userInfo.nickName")).strip(),
@@ -291,25 +299,31 @@ def find_total(payload: Any) -> int:
     return 0
 
 
-def collect_online(page_size: int, max_pages: int, full_history: bool) -> list[list[Any]]:
+def collect_online(page_size: int, max_pages: int, full_history: bool) -> list[tuple[str, list[Any]]]:
     client = CtripReviewDetailClient(COOKIE)
     captured_at = datetime.now()
-    rows_by_id: dict[str, list[Any]] = {}
-    previous_ids: set[str] = set()
-    page = 1
-    while full_history or page <= max_pages:
-        payload = client.fetch_page(page, page_size)
-        page_rows = normalize_rows(payload, captured_at)
-        page_ids = {str(row[4]) for row in page_rows}
-        if not page_rows or page_ids == previous_ids:
-            break
-        rows_by_id.update({str(row[4]): row for row in page_rows})
-        if find_total(payload) and len(rows_by_id) >= find_total(payload):
-            break
-        previous_ids = page_ids
-        page += 1
-        time.sleep(0.15)
-    return sorted(rows_by_id.values(), key=lambda row: row[8] or datetime.min, reverse=True)
+    rows_by_key: dict[tuple[str, str], list[Any]] = {}
+    for platform_scope, (channel_source, channel_name) in CHANNELS.items():
+        previous_ids: set[str] = set()
+        page = 1
+        while full_history or page <= max_pages:
+            payload = client.fetch_page(page, page_size, channel_source)
+            page_rows = normalize_rows(payload, channel_name, captured_at)
+            page_ids = {str(row[4]) for row in page_rows}
+            if not page_rows or page_ids == previous_ids:
+                break
+            rows_by_key.update({(platform_scope, str(row[4])): row for row in page_rows})
+            channel_row_count = sum(1 for scope, _ in rows_by_key if scope == platform_scope)
+            if find_total(payload) and channel_row_count >= find_total(payload):
+                break
+            previous_ids = page_ids
+            page += 1
+            time.sleep(0.15)
+    return sorted(
+        ((platform_scope, row) for (platform_scope, _), row in rows_by_key.items()),
+        key=lambda item: item[1][8] or datetime.min,
+        reverse=True,
+    )
 
 
 def sample_payload() -> dict[str, Any]:
@@ -335,16 +349,16 @@ def main() -> None:
     parser.add_argument("--sync-db", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        rows = normalize_rows(sample_payload())
+        scoped_rows = [(PLATFORM_SCOPE, row) for row in normalize_rows(sample_payload(), "\u643a\u7a0b")]
     elif args.input_json:
         payload = json.loads(Path(args.input_json).read_text(encoding="utf-8-sig"))
-        rows = normalize_rows(payload)
+        scoped_rows = [(PLATFORM_SCOPE, row) for row in normalize_rows(payload, "\u643a\u7a0b")]
     else:
         if not COOKIE:
             raise CtripReviewDetailError("CTRIP_COOKIE is empty")
-        rows = collect_online(max(1, args.page_size), max(1, args.max_pages), args.full_history)
+        scoped_rows = collect_online(max(1, args.page_size), max(1, args.max_pages), args.full_history)
     headers = [*HEADERS, "platform_scope", "hotel_id"]
-    rows = [list(row) + [PLATFORM_SCOPE, INTERNAL_HOTEL_ID] for row in rows]
+    rows = [list(row) + [platform_scope, INTERNAL_HOTEL_ID] for platform_scope, row in scoped_rows]
     save_outputs(OUTPUT_PATH, headers, rows)
     if args.sync_db:
         upsert_mysql(TABLE_NAME, DB_CONFIG, headers, rows)

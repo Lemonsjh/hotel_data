@@ -89,6 +89,25 @@ def chart_values(values: dict[str, Any], endpoint: str) -> list[tuple[str, int |
     return [(str(title).strip(), number(rate)) for title, rate in zip(titles, rates) if str(title).strip()]
 
 
+def hourly_order_values(values: dict[str, Any]) -> list[tuple[str, int | float | None, int]]:
+    entries = values.get("orderDistributionEntities")
+    if not isinstance(entries, list):
+        raise RuntimeError("Ctrip user-profile order-hour distribution is invalid")
+    rows = []
+    for item in entries:
+        hour = str(item.get("hour") or "").strip() if isinstance(item, dict) else ""
+        if not hour or ":" not in hour:
+            continue
+        try:
+            position = int(hour.split(":", 1)[0])
+        except ValueError:
+            continue
+        rows.append((hour, number(item.get("proportion")), position))
+    if len(rows) != 24 or {position for _, _, position in rows} != set(range(24)):
+        raise RuntimeError("Ctrip user-profile order-hour distribution is incomplete")
+    return sorted(rows, key=lambda row: row[2])
+
+
 def distribution_rows(
     hotel_id: str, captured_at: datetime, dimension: str, values: list[tuple[str, Any]]
 ) -> list[list[Any]]:
@@ -146,6 +165,11 @@ def build_rows(payloads: dict[str, dict[str, Any]], captured_at: datetime) -> li
             hotel_id, DEFAULT_HOTEL_NAME, "ctrip", captured_at, "order_peak_time",
             peak_hour, peak_rate, None, None, 0,
         ])
+    rows.extend([
+        [hotel_id, DEFAULT_HOTEL_NAME, "ctrip", captured_at, "order_hourly_distribution",
+         hour, rate, None, None, position]
+        for hour, rate, position in hourly_order_values(order_peak_time)
+    ])
     if not rows:
         raise RuntimeError("Ctrip user-profile distribution is empty")
     return rows

@@ -93,6 +93,7 @@
     "ctrip_business": true,
     "ctrip_competition_metrics_30d": false,
     "ctrip_flow_conversion": true,
+    "ctrip_order_detail": false,
     "ctrip_order_loss": false,
     "ctrip_joined_rights": false,
     "ctrip_promotion_status": false,

@@ -362,6 +362,43 @@ def sync_meituan_scan_orders(
         connection.close()
 
 
+def sync_order_detail_history(
+    table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]], hotel_id: str, retention_start: date
+) -> None:
+    if not rows:
+        raise MysqlSyncError(f"Refusing to sync empty order details: {table_name}")
+    connection = connect_mysql(autocommit=False)
+    try:
+        with connection.cursor() as cursor:
+            column_types = load_column_types(cursor, table_name)
+            missing = [header for header in headers if header not in column_types]
+            if missing:
+                raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
+            quote = chr(96)
+            columns = ", ".join(f"{quote}{column}{quote}" for column in headers)
+            values = ", ".join(["%s"] * len(headers))
+            updates = ", ".join(
+                f"{quote}{column}{quote}=VALUES({quote}{column}{quote})"
+                for column in headers if column not in {"hotel_id", "form_id"}
+            )
+            cursor.executemany(
+                f"INSERT INTO {quote}{table_name}{quote} ({columns}) VALUES ({values}) ON DUPLICATE KEY UPDATE {updates}",
+                [tuple(convert_value(value, column_types[column]) for column, value in zip(headers, row)) for row in rows],
+            )
+            cursor.execute(
+                f"DELETE FROM {quote}{table_name}{quote} WHERE hotel_id=%s AND arrival_date < %s",
+                (hotel_id, retention_start),
+            )
+            deleted = cursor.rowcount
+        connection.commit()
+        print(f"DB synced: {table_name} rows={len(rows)} retention_deleted={deleted}")
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def sync_order_loss_snapshot(
     headers: Sequence[str], rows: Sequence[Sequence[Any]], *, allow_empty_replace: bool = False
 ) -> None:

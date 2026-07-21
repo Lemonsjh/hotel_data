@@ -44,6 +44,7 @@ TASKS = {
     "ctrip_business": ("ctrip", "ctrip_business_data.py", []),
     "ctrip_competition_metrics_30d": ("ctrip", "ctrip_competition_metrics_30d_data.py", []),
     "ctrip_flow_conversion": ("ctrip", "ctrip_flow_conversion_data.py", []),
+    "ctrip_order_detail": ("ctrip", "ctrip_order_detail_data.py", []),
     "ctrip_order_loss": ("ctrip", "ctrip_order_loss_data.py", []),
     "ctrip_joined_rights": ("ctrip", "ctrip_joined_rights_data.py", []),
     "ctrip_promotion_status": ("ctrip", "ctrip_promotion_status_data.py", []),

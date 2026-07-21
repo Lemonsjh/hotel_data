@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_review_overview` (
     `review_score_max` DECIMAL(10,2) NULL,
     `environment_score` DECIMAL(10,2) NULL,
     `facility_score` DECIMAL(10,2) NULL,
+    `style_score` DECIMAL(10,2) NULL,
+    `safety_score` DECIMAL(10,2) NULL,
     `service_score` DECIMAL(10,2) NULL,
     `hygiene_score` DECIMAL(10,2) NULL,
     `total_review_count` INT NULL,
