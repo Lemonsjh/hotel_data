@@ -195,54 +195,65 @@ def listing_pass_status(page: Any) -> int:
     raise RuntimeError("Ctrip listing-pass page did not return a recognized status")
 
 
-def collect_statuses() -> tuple[int, int, int, int, int, int, int, int, float]:
+def collect_one(name: str, func: Any) -> tuple[Any | None, str | None]:
+    try:
+        return func(), None
+    except Exception as exc:
+        message = str(exc).replace("\n", " ").strip()[:64]
+        print(f"Ctrip promotion status item failed: {name}: {message}")
+        return None, message or exc.__class__.__name__
+
+
+def collect_statuses() -> dict[str, tuple[Any | None, str | None]]:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, chromium_sandbox=True)
         try:
             context = browser.new_context(locale="zh-CN", viewport={"width": 1920, "height": 1080})
             context.add_cookies(ctrip_cookies())
             page = context.new_page()
-            points = activity_enabled(page, POINTS_ALLIANCE_MENU_POINT, POINTS_PAGE_MARKERS, APPLY_SELECTOR, "立即报名")
-            preferred = activity_enabled(page, PREFERRED_CLUB_MENU_POINT, PREFERRED_CLUB_PAGE_MARKERS, 'button[he-click="join_tplus"]', "立即报名")
-            business = activity_enabled(page, BUSINESS_TRAVEL_MENU_POINT, BUSINESS_TRAVEL_PAGE_MARKERS, 'button[he-click="businesstravel_join"]', "立即加入")
-            hourly_enabled, hourly_room_count = hourly_room_status()
-            information_score = information_completeness_score(page)
-            homepage_video = homepage_video_status(page)
-            travel_photo = travel_photo_status(page)
-            listing_pass = listing_pass_status(page)
-            return points, preferred, business, hourly_enabled, hourly_room_count, homepage_video, travel_photo, listing_pass, information_score
+            return {
+                "points_alliance": collect_one("points_alliance", lambda: activity_enabled(page, POINTS_ALLIANCE_MENU_POINT, POINTS_PAGE_MARKERS, APPLY_SELECTOR, "立即报名")),
+                "preferred_club": collect_one("preferred_club", lambda: activity_enabled(page, PREFERRED_CLUB_MENU_POINT, PREFERRED_CLUB_PAGE_MARKERS, 'button[he-click="join_tplus"]', "立即报名")),
+                "business_travel": collect_one("business_travel", lambda: activity_enabled(page, BUSINESS_TRAVEL_MENU_POINT, BUSINESS_TRAVEL_PAGE_MARKERS, 'button[he-click="businesstravel_join"]', "立即加入")),
+                "hourly_room": collect_one("hourly_room", hourly_room_status),
+                "information": collect_one("information_completeness", lambda: information_completeness_score(page)),
+                "homepage_video": collect_one("homepage_video", lambda: homepage_video_status(page)),
+                "travel_photo": collect_one("travel_photo", lambda: travel_photo_status(page)),
+                "listing_pass": collect_one("listing_pass", lambda: listing_pass_status(page)),
+            }
         finally:
             browser.close()
 
 
-def status_rows(
-    hotel_id: str, captured_at: datetime, points: int, preferred: int, business: int,
-    hourly_enabled: int, hourly_room_count: int, homepage_video: int, travel_photo: int,
-    listing_pass: int, information_score: float,
-) -> list[list[Any]]:
-    hotel_name = DEFAULT_HOTEL_NAME
-    rows = [
-        [hotel_id, hotel_name, "ctrip", "points_alliance", "\u79ef\u5206\u8054\u76df", points,
-         "JOINED" if points else "NOT_JOINED", None, None, None, captured_at],
-        [hotel_id, hotel_name, "ctrip", "preferred_club", "\u4f18\u4eab\u4f1a", preferred,
-         "JOINED" if preferred else "NOT_JOINED", "UNKNOWN" if preferred else None, None, None, captured_at],
-        [hotel_id, hotel_name, "ctrip", "business_travel_price", "\u5546\u65c5\u4e13\u4eab\u4ef7", business,
-         "JOINED" if business else "NOT_JOINED", None, None, None, captured_at],
-        [hotel_id, hotel_name, "ctrip", "hourly_room", "\u949f\u70b9\u623f", hourly_enabled,
-         "ENABLED" if hourly_enabled else "DISABLED", None, hourly_room_count, None, captured_at],
-        [hotel_id, hotel_name, "ctrip", "travel_photo", TRAVEL_PHOTO_TAB_TEXT, travel_photo,
-         "UPLOADED" if travel_photo else "NOT_UPLOADED", None, None, None, captured_at],
-        [hotel_id, hotel_name, "ctrip", "homepage_video", "\u9996\u9875\u89c6\u9891", homepage_video,
-         "UPLOADED" if homepage_video else "NOT_UPLOADED", None, None, None, captured_at],
-        [hotel_id, hotel_name, "ctrip", "listing_pass", LISTING_PASS_TEXT, listing_pass,
-         "JOINED" if listing_pass else "NOT_JOINED", None, None, None, captured_at],
+def status_row(
+    hotel_id: str, captured_at: datetime, code: str, name: str, result: tuple[Any | None, str | None],
+    active_status: str, inactive_status: str, status_detail: str | None = None,
+    room_type_count: int | None = None, metric_value: float | None = None, metric_unit: str | None = None,
+) -> list[Any]:
+    value, error = result
+    if error:
+        return [hotel_id, DEFAULT_HOTEL_NAME, "ctrip", code, name, None, "ERROR", error, None, None, captured_at, None, None]
+    return [
+        hotel_id, DEFAULT_HOTEL_NAME, "ctrip", code, name, int(bool(value)),
+        active_status if value else inactive_status, status_detail, room_type_count, None,
+        captured_at, metric_value, metric_unit,
     ]
-    return [row + [None, None] for row in rows] + [
-        [
-            hotel_id, hotel_name, "ctrip", "information_completeness", "\u4fe1\u606f\u5b8c\u6574\u5ea6",
-            int(information_score >= 100), "COMPLETE" if information_score >= 100 else "INCOMPLETE",
-            None, None, None, captured_at, information_score, "%",
-        ]
+
+
+def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[Any | None, str | None]]) -> list[list[Any]]:
+    hourly_value, hourly_error = results["hourly_room"]
+    hourly_enabled, hourly_room_count = (hourly_value or (None, None)) if not hourly_error else (None, None)
+    information_score, information_error = results["information"]
+    information_enabled = None if information_error else int(float(information_score) >= 100)
+    return [
+        status_row(hotel_id, captured_at, "points_alliance", "\u79ef\u5206\u8054\u76df", results["points_alliance"], "JOINED", "NOT_JOINED"),
+        status_row(hotel_id, captured_at, "preferred_club", "\u4f18\u4eab\u4f1a", results["preferred_club"], "JOINED", "NOT_JOINED", "UNKNOWN" if results["preferred_club"][0] else None),
+        status_row(hotel_id, captured_at, "business_travel_price", "\u5546\u65c5\u4e13\u4eab\u4ef7", results["business_travel"], "JOINED", "NOT_JOINED"),
+        status_row(hotel_id, captured_at, "hourly_room", "\u949f\u70b9\u623f", (hourly_enabled, hourly_error), "ENABLED", "DISABLED", room_type_count=hourly_room_count),
+        status_row(hotel_id, captured_at, "travel_photo", TRAVEL_PHOTO_TAB_TEXT, results["travel_photo"], "UPLOADED", "NOT_UPLOADED"),
+        status_row(hotel_id, captured_at, "homepage_video", "\u9996\u9875\u89c6\u9891", results["homepage_video"], "UPLOADED", "NOT_UPLOADED"),
+        status_row(hotel_id, captured_at, "listing_pass", LISTING_PASS_TEXT, results["listing_pass"], "JOINED", "NOT_JOINED"),
+        status_row(hotel_id, captured_at, "information_completeness", "\u4fe1\u606f\u5b8c\u6574\u5ea6", (information_enabled, information_error), "COMPLETE", "INCOMPLETE", metric_value=information_score, metric_unit="%"),
     ]
 
 
@@ -256,15 +267,12 @@ def write_output(headers: list[str], rows: list[list[Any]]) -> None:
 
 def main() -> int:
     captured_at = datetime.now()
-    points, preferred, business, hourly_enabled, hourly_room_count, homepage_video, travel_photo, listing_pass, information_score = collect_statuses()
+    results = collect_statuses()
     headers = [
         "hotel_id", "hotel_name", "platform_scope", "activity_code", "activity_name", "enabled",
         "status", "status_detail", "room_type_count", "orders_30d", "snapshot_time", "metric_value", "metric_unit",
     ]
-    rows = status_rows(
-        require_hotel_id(), captured_at, points, preferred, business, hourly_enabled,
-        hourly_room_count, homepage_video, travel_photo, listing_pass, information_score,
-    )
+    rows = status_rows(require_hotel_id(), captured_at, results)
     sync_metric_history_table(
         TABLE_NAME, headers, rows,
         {"hotel_id", "platform_scope", "activity_code"}, retention_days=None,
@@ -272,8 +280,7 @@ def main() -> int:
     write_output(headers, rows)
     print(
         "Ctrip promotion status sync completed: "
-        f"points={points} preferred={preferred} business={business} hourly={hourly_enabled}/{hourly_room_count} "
-        f"homepage_video={homepage_video} travel_photo={travel_photo} listing_pass={listing_pass} information_score={information_score}"
+        f"success={sum(error is None for _, error in results.values())}/{len(results)}"
     )
     return 0
 

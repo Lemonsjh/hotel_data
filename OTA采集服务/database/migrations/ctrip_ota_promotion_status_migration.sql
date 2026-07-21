@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_status` (
     `platform_scope` VARCHAR(20) NOT NULL,
     `activity_code` VARCHAR(64) NOT NULL,
     `activity_name` VARCHAR(64) NOT NULL,
-    `enabled` TINYINT NOT NULL,
+    `enabled` TINYINT NULL,
     `metric_value` DECIMAL(10,2) NULL,
     `metric_unit` VARCHAR(20) NULL,
     `status` VARCHAR(32) NOT NULL,
