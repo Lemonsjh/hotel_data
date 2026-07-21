@@ -12,9 +12,9 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_psi_score` (
     `psi_reward_score_max` DECIMAL(8,2) NULL,
     `psi_deduction_score` DECIMAL(8,2) NULL,
     `score_psi` DECIMAL(8,2) NULL,
-    `psi_room_status_score` DECIMAL(8,2) NULL,
-    `psi_information_completeness_score` DECIMAL(8,2) NULL,
-    `psi_consumer_value_score` DECIMAL(8,2) NULL,
+    `service_deduction_score` DECIMAL(8,2) NULL,
+    `integrity_deduction_score` DECIMAL(8,2) NULL,
+    `financial_deduction_score` DECIMAL(8,2) NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_ctrip_psi_score_daily` (`hotel_id`, `platform_scope`, `business_date`),
     KEY `idx_ctrip_psi_score_date` (`business_date`)

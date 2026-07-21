@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS `ctrip_ota_psi_metric` (
+    `hotel_id` VARCHAR(64) NOT NULL,
+    `hotel_name` VARCHAR(255) NOT NULL,
+    `platform_scope` VARCHAR(20) NOT NULL DEFAULT 'ctrip',
+    `business_date` DATE NOT NULL,
+    `metric_code` VARCHAR(64) NOT NULL,
+    `metric_name` VARCHAR(100) NOT NULL,
+    `metric_value` DECIMAL(18,4) NULL,
+    `metric_unit` VARCHAR(20) NULL,
+    `psi_score` DECIMAL(8,2) NULL,
+    `weight_pct` DECIMAL(6,2) NULL,
+    `competition_rank` VARCHAR(100) NULL,
+    `score_gap` DECIMAL(18,4) NULL,
+    `score_gap_unit` VARCHAR(100) NULL,
+    `period_start_date` DATE NULL,
+    `period_end_date` DATE NULL,
+    `snapshot_time` DATETIME NOT NULL,
+    PRIMARY KEY (`hotel_id`, `platform_scope`, `business_date`, `metric_code`),
+    KEY `idx_ctrip_psi_metric_date` (`hotel_id`, `business_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
