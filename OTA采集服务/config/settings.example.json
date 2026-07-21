@@ -91,6 +91,7 @@
     "meituan_goods_price": true,
     "meituan_nearby_event": true,
     "ctrip_business": true,
+    "ctrip_competition_metrics_30d": false,
     "ctrip_flow_conversion": true,
     "ctrip_order_loss": false,
     "ctrip_joined_rights": false,

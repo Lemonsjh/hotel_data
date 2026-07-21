@@ -36,6 +36,7 @@ TASK_LABELS = {
     "meituan_goods_price": "美团调价商品",
     "meituan_nearby_event": "美团周边事件",
     "ctrip_business": "携程经营",
+    "ctrip_competition_metrics_30d": "携程近30天竞对经营",
     "ctrip_flow_conversion": "携程近30天流量",
     "ctrip_order_loss": "携程流失订单",
     "ctrip_joined_rights": "携程已报名权益",
