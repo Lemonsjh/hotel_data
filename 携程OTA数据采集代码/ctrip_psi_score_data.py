@@ -10,7 +10,7 @@ from ctrip_config import DEFAULT_HOTEL_NAME
 from ctrip_flow_conversion_data import FlowBrowserClient, number
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ota_mysql_writer import sync_metric_history_table
+from ota_mysql_writer import sync_metric_history_table, sync_table
 
 
 API_URL = "https://ebooking.ctrip.com/toolcenter/api/psiV2/getHotelPsiV2?hostType=HE"
@@ -111,10 +111,7 @@ def main() -> int:
     sync_metric_history_table(
         SUMMARY_TABLE, SUMMARY_HEADERS, [summary_row], {"hotel_id", "platform_scope", "business_date"}, 30
     )
-    sync_metric_history_table(
-        METRIC_TABLE, METRIC_HEADERS, metric_rows,
-        {"hotel_id", "platform_scope", "business_date", "metric_code"}, 30,
-    )
+    sync_table(METRIC_TABLE, METRIC_HEADERS, metric_rows)
     print(f"Ctrip PSI sync completed: diagnostic_metrics={len(metric_rows)}")
     return 0
 

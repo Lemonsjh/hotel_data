@@ -15,6 +15,6 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_psi_metric` (
     `period_start_date` DATE NULL,
     `period_end_date` DATE NULL,
     `snapshot_time` DATETIME NOT NULL,
-    PRIMARY KEY (`hotel_id`, `platform_scope`, `business_date`, `metric_code`),
+    PRIMARY KEY (`hotel_id`, `platform_scope`, `metric_code`),
     KEY `idx_ctrip_psi_metric_date` (`hotel_id`, `business_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
