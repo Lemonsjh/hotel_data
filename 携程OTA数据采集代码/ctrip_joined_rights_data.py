@@ -18,6 +18,7 @@ from ota_mysql_writer import OUTPUT_DIR, sync_table
 
 API_URL = "https://ebooking.ctrip.com/restapi/soa2/24267/getInlandRightsRegistered"
 TABLE_NAME = "ctrip_ota_joined_rights"
+ALL_ROOM_TYPE_RIGHTS = {"FCN", "TQB", "YCT"}
 HEADERS = [
     "hotel_id", "hotel_name", "platform_scope", "right_type_id", "right_type", "right_name",
     "applicable_room_types", "invalid_dates", "rights_rules", "stock_use_conditions", "right_status",
@@ -93,6 +94,8 @@ def build_rows(payload: dict[str, Any], captured_at: datetime) -> list[list[Any]
         room_types = text_list(item.get("roomTypes"))
         room_extras = text_list(item.get("roomTypeExtras"))
         scope = "; ".join(value for value in (room_types, room_extras) if value)
+        if not scope and right_type in ALL_ROOM_TYPE_RIGHTS:
+            scope = "全房型参与"
         rows.append([
             hotel_id, DEFAULT_HOTEL_NAME, "ctrip", item.get("rightTypeId"), right_type, right_name,
             scope, str(item.get("invalidDates") or "").strip(), str(item.get("rightsRules") or "").strip(),
