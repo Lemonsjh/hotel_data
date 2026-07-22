@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_competition_metrics_30d` (
     `competitor_avg` DECIMAL(18,4) NULL,
     `competitor_rank` INT NULL,
     `previous_rank` INT NULL,
+    `competition_circle_hotel_count` INT NULL,
     PRIMARY KEY (`hotel_id`, `platform_scope`, `metric_code`),
     KEY `idx_ctrip_competition_period_end` (`hotel_id`, `period_end_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

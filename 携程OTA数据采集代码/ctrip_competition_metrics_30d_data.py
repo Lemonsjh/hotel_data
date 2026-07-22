@@ -16,10 +16,11 @@ from ota_mysql_writer import OUTPUT_DIR, sync_metric_history_table
 
 TABLE_NAME = "ctrip_ota_competition_metrics_30d"
 ENDPOINT = "/restapi/soa2/24588/getManagementData"
+COMPETING_RANK_ENDPOINT = "/restapi/soa2/24588/getCompetingRank"
 HEADERS = [
     "hotel_id", "hotel_name", "platform_scope", "metric_code", "metric_name", "metric_unit",
     "period_start_date", "period_end_date", "snapshot_time", "hotel_value", "previous_value",
-    "competitor_avg", "competitor_rank", "previous_rank",
+    "competitor_avg", "competitor_rank", "previous_rank", "competition_circle_hotel_count",
 ]
 METRICS = {
     0: ("booking_order_count", "\u9884\u8ba2\u8ba2\u5355\u91cf", "order"),
@@ -72,8 +73,39 @@ def query_metrics(client: CtripClient, period_start: date, period_end: date) -> 
     return [item for item in items if isinstance(item, dict)]
 
 
+def query_competition_circle_hotel_count(
+    client: CtripClient, period_start: date, period_end: date,
+) -> int:
+    response = client.post_json(
+        COMPETING_RANK_ENDPOINT,
+        {
+            "dateType": 5,
+            "beginDate": period_start.isoformat(),
+            "endDate": period_end.isoformat(),
+            "type": 1,
+            "cipher": {},
+            "header": {"platform": "WEB"},
+        },
+    )
+    if not isinstance(response, dict) or response.get("isNotReady"):
+        raise RuntimeError("Ctrip competing-rank response is not ready")
+    status = response.get("resStatus")
+    if isinstance(status, dict) and status.get("rcode") not in (None, 0, 200, "0", "200"):
+        raise RuntimeError(f"Ctrip competing-rank request failed: {status.get('rmsg') or status.get('rcode')}")
+    hotels = response.get("sellRanksBO")
+    if not isinstance(hotels, list):
+        raise RuntimeError("Ctrip competing-rank response is missing sellRanksBO")
+    hotel_ids = {
+        str(item.get("masterHotelId") or "").strip()
+        for item in hotels
+        if isinstance(item, dict) and str(item.get("masterHotelId") or "").strip()
+    }
+    return len(hotel_ids)
+
+
 def build_rows(
     items: list[dict[str, Any]], hotel_id: str, captured_at: datetime, period_start: date, period_end: date,
+    competition_circle_hotel_count: int,
 ) -> list[list[Any]]:
     rows = []
     for item in items:
@@ -86,6 +118,7 @@ def build_rows(
             period_start, period_end, captured_at, metric_value(item.get("val"), metric_unit),
             metric_value(item.get("lastVal"), metric_unit), metric_value(item.get("avgComp"), metric_unit),
             metric_value(item.get("rankComp"), "rank"), metric_value(item.get("lastRank"), "rank"),
+            competition_circle_hotel_count,
         ])
     if not rows:
         raise RuntimeError("Ctrip competition response has no recognized metrics")
@@ -103,14 +136,19 @@ def write_output(rows: list[list[Any]]) -> None:
 def main() -> int:
     period_start, period_end = latest_period()
     captured_at = datetime.now()
-    items = query_metrics(CtripClient(COOKIE), period_start, period_end)
-    rows = build_rows(items, require_hotel_id(), captured_at, period_start, period_end)
+    client = CtripClient(COOKIE)
+    items = query_metrics(client, period_start, period_end)
+    competition_circle_hotel_count = query_competition_circle_hotel_count(client, period_start, period_end)
+    rows = build_rows(items, require_hotel_id(), captured_at, period_start, period_end, competition_circle_hotel_count)
     sync_metric_history_table(
         TABLE_NAME, HEADERS, rows,
         {"hotel_id", "platform_scope", "metric_code"}, retention_days=None,
     )
     write_output(rows)
-    print(f"Ctrip 30-day competition metrics sync completed: rows={len(rows)} period={period_start}~{period_end}")
+    print(
+        "Ctrip 30-day competition metrics sync completed: "
+        f"rows={len(rows)} hotels={competition_circle_hotel_count} period={period_start}~{period_end}"
+    )
     return 0
 
 
