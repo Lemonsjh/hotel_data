@@ -246,9 +246,9 @@ def fetch_public_welfare_status() -> str:
                         continue
                     try:
                         states = frame.locator("span.benefits-color-desc").all_text_contents()
-                        if PUBLIC_WELFARE_ACTIVE in states:
-                            return "OPEN"
                         body = frame.locator("body").inner_text(timeout=1_000)
+                        if PUBLIC_WELFARE_ACTIVE in states or "权益生效中" in body:
+                            return "OPEN"
                         if "\u672a\u751f\u6548" in body or "\u5df2\u5931\u6548" in body:
                             return "CLOSED"
                     except Exception:
