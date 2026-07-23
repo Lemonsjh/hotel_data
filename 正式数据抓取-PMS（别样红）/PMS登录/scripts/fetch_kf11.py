@@ -133,6 +133,27 @@ def fetch_kf11_requests(cookies, api_url, payload):
     return resp.json()
 
 
+def fetch_cached_kf11(cookies):
+    """优先复用最近一次已验证的 KF11 接口，避免页面按钮变化影响采集。"""
+    session = pms_utils.read_session(quiet=True) or {}
+    api_url = str(session.get("kf11_api_url") or "").strip()
+    payload = complete_kf11_payload(session.get("kf11_payload") or {})
+    if not api_url or not payload:
+        return None
+
+    try:
+        data = fetch_kf11_requests(cookies, api_url, payload)
+    except requests.RequestException as exc:
+        print(f"⚠️ 缓存 KF11 接口请求失败，改为重新捕获: {exc}")
+        return None
+    if not get_data_list(data):
+        print("⚠️ 缓存 KF11 接口未返回房态数据，改为重新捕获")
+        return None
+
+    print("✅ 已复用缓存的 KF11 接口")
+    return api_url, payload, data
+
+
 def get_data_list(data):
     """兼容KF11响应结构并返回房间列表。"""
     if not isinstance(data, dict):
@@ -159,19 +180,23 @@ def run():
     if not cookies:
         return
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
+    cached = fetch_cached_kf11(cookies)
+    if cached:
+        api_url, payload, data = cached
+    else:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context()
 
-        add_cookies(context, cookies)
+            add_cookies(context, cookies)
 
-        page = context.new_page()
+            page = context.new_page()
 
-        open_kf11(page)
+            open_kf11(page)
 
-        api_url, payload, data = capture_kf11(page)
+            api_url, payload, data = capture_kf11(page)
 
-        browser.close()
+            browser.close()
 
     payload = complete_kf11_payload(payload)
 
