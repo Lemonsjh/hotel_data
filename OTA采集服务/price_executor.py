@@ -11,6 +11,7 @@ from typing import Any
 
 import price_tasks
 import runner
+from data_retention import cleanup_price_tasks
 
 
 LOCK_NAME = "hotel_ota_price_executor"
@@ -171,6 +172,10 @@ def run_once(platforms: list[str], max_tasks: int) -> int:
     processed = 0
     failed = 0
     try:
+        try:
+            cleanup_price_tasks(lock_conn, settings, lambda message: log(message, log_path))
+        except Exception as exc:
+            log(f"Price-task retention cleanup failed: {exc}", log_path)
         for platform in platforms:
             while processed < max_tasks:
                 task = claim_next(settings, platform, lock_conn)

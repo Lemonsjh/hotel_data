@@ -13,6 +13,13 @@
     "startup_delay_seconds": 60,
     "max_tasks_per_run": 20
   },
+  "data_retention": {
+    "pms_hourly_days": 180,
+    "pms_daily_days": 400,
+    "jl02_daily_days": 450,
+    "pms_monthly_months": 36,
+    "price_task_days": 90
+  },
   "hotel": {
     "hotel_id": ""
   },

@@ -20,8 +20,12 @@ project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, current_dir)
 sys.path.insert(0, os.path.join(current_dir, "scripts"))
+ota_service_dir = next(path for path in project_root.iterdir() if (path / "runner.py").is_file())
+sys.path.insert(0, str(ota_service_dir))
 
 import pms_utils
+import runner
+from data_retention import cleanup_pms_history
 from mysql_connection import connect_mysql
 
 OUTPUT_DIR = os.path.join(current_dir, "output")
@@ -197,6 +201,10 @@ def main() -> int:
             except Exception:
                 db_conn.rollback()
                 raise
+        try:
+            cleanup_pms_history(db_conn, runner.load_settings())
+        except Exception as exc:
+            print(f"Warning: PMS retention cleanup failed: {exc}")
     finally:
         db_conn.close()
 

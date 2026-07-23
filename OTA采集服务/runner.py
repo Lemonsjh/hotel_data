@@ -11,6 +11,7 @@ from typing import Any
 
 from process_runner import ProcessTimeoutError, run_streamed
 from settings_validation import require_valid_settings
+from data_retention import DEFAULT_RETENTION
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -92,6 +93,11 @@ def load_settings() -> dict[str, Any]:
     for name in TASKS:
         if name not in tasks:
             tasks[name] = False
+            changed = True
+    retention = settings.setdefault("data_retention", {})
+    for name, value in DEFAULT_RETENTION.items():
+        if name not in retention:
+            retention[name] = value
             changed = True
     if changed:
         save_json(CONFIG_PATH, settings)

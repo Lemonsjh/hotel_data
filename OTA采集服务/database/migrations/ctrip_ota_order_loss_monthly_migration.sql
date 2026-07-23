@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_order_loss_monthly` (
     `loss_order_count` INT NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_ctrip_order_loss_monthly` (
-        `hotel_id`, `platform_scope`, `period_end_date`, `ranking_position`
+        `hotel_id`, `platform_scope`, `ranking_position`
     ),
     KEY `idx_ctrip_order_loss_period` (`hotel_id`, `period_end_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

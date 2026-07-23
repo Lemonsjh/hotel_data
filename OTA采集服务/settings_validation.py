@@ -15,6 +15,11 @@ POSITIVE_NUMBERS = (
     "pms.navigation_timeout_ms",
     "pms.action_timeout_ms",
     "pms.api_timeout_seconds",
+    "data_retention.pms_hourly_days",
+    "data_retention.pms_daily_days",
+    "data_retention.jl02_daily_days",
+    "data_retention.pms_monthly_months",
+    "data_retention.price_task_days",
 )
 URL_FIELDS = (
     "pms.login_base_url",
@@ -47,7 +52,7 @@ def validate_settings(settings: Any) -> list[str]:
     if not isinstance(settings, dict):
         return ["配置根节点必须是 JSON 对象"]
 
-    for section in ("service", "price_scheduler", "hotel", "paths", "pms", "mysql", "meituan", "ctrip", "tasks"):
+    for section in ("service", "price_scheduler", "data_retention", "hotel", "paths", "pms", "mysql", "meituan", "ctrip", "tasks"):
         value = settings.get(section)
         if value is not None and not isinstance(value, dict):
             errors.append(f"{section} 必须是 JSON 对象")

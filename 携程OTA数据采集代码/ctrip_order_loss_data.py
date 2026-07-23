@@ -11,7 +11,7 @@ from ctrip_config import DEFAULT_HOTEL_NAME
 from ctrip_flow_conversion_data import FlowBrowserClient, number
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ota_mysql_writer import OUTPUT_DIR, sync_metric_history_table
+from ota_mysql_writer import OUTPUT_DIR, sync_table
 
 
 API_URL = "https://ebooking.ctrip.com/restapi/soa2/24588/getTripartiteOrderLoss"
@@ -154,10 +154,7 @@ def main() -> int:
         for scope in PLATFORM_SCOPES:
             rows.extend(build_rows(request_payload(client, scope, start, end), scope, start, end, captured_at))
     write_output(rows, start, end, captured_at)
-    sync_metric_history_table(
-        TABLE_NAME, HEADERS, rows,
-        {"hotel_id", "platform_scope", "period_end_date", "ranking_position"}, None,
-    )
+    sync_table(TABLE_NAME, HEADERS, rows)
     print(f"Ctrip order-loss sync completed: rows={len(rows)}")
     return 0
 
