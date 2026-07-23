@@ -48,7 +48,7 @@ def run_fetch(code, label, fetcher):
     return True
 
 
-def need_login(hours=12, force=False):
+def need_login(hours=12, force=False, username=""):
     """判断是否需要重新登录"""
     if force:
         print("🔄 强制重新登录")
@@ -59,6 +59,9 @@ def need_login(hours=12, force=False):
     info = pms_utils.read_session(require_cookies=True, quiet=True)
     if not info:
         print("🔄 会话不存在或无效，需要登录")
+        return True
+    if username and info.get("account_fingerprint") != pms_utils.account_fingerprint(username):
+        print("🔄 PMS 配置账号已变化，需要重新登录")
         return True
     try:
         login_time = datetime.strptime(info["login_time"], "%Y-%m-%d %H:%M:%S")
@@ -92,10 +95,10 @@ def main() -> int:
     print("=" * 60)
     
     # 判断是否需要登录
-    if need_login(hours=12, force=args.login):
+    username = os.environ.get("PMS_USERNAME", "").strip()
+    password = os.environ.get("PMS_PASSWORD", "").strip()
+    if need_login(hours=12, force=args.login, username=username):
         print("\n🔐 正在登录...")
-        username = os.environ.get("PMS_USERNAME", "").strip()
-        password = os.environ.get("PMS_PASSWORD", "").strip()
         if not username or not password:
             print("❌ PMS_USERNAME 或 PMS_PASSWORD 未配置")
             return 1

@@ -206,7 +206,7 @@ def login(username, password):
                 return False
 
             print("\n✅ 登录成功!")
-            save_session(cookies, hotel_name)
+            save_session(cookies, hotel_name, username)
             return True
                 
     except Exception as e:
@@ -216,13 +216,14 @@ def login(username, password):
         return False
 
 
-def save_session(cookies, hotel_name=None):
+def save_session(cookies, hotel_name=None, username=None):
     """保存会话信息（包含酒店名称）"""
     hotel_name = hotel_name or os.environ.get("PMS_HOTEL_NAME", "").strip() or None
     session_info = {
         'url': pms_config.LOGIN_BASE_URL,
         'cookies': cookies,
         'hotel_name': hotel_name,
+        'account_fingerprint': pms_utils.account_fingerprint(username),
         'login_time': time.strftime('%Y-%m-%d %H:%M:%S')
     }
     

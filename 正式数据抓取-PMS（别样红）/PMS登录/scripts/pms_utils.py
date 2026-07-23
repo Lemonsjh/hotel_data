@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import tempfile
@@ -26,6 +27,11 @@ SESSION_PATH = Path(__file__).resolve().parents[1] / "pms_session_playwright.jso
 # 保留旧名称，便于尚未迁移的调用方继续使用同一个绝对路径。
 SESSION_FILE = SESSION_PATH
 REQUIRED_COOKIES = ("SessionId", "Token", "OwnerId", "LoginOrgId")
+
+
+def account_fingerprint(username: str) -> str:
+    normalized = str(username or "").strip().lower().encode("utf-8")
+    return hashlib.sha256(normalized).hexdigest() if normalized else ""
 
 
 def _backup_invalid_session(reason: Exception) -> None:
