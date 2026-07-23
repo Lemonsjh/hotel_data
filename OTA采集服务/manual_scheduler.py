@@ -118,6 +118,7 @@ def run_scheduler() -> int:
 
     try:
         while not STOP_PATH.exists():
+            run_started = datetime.now()
             save_status(
                 scheduler_status="collecting",
                 current_run_started_at=now_text(),
@@ -135,7 +136,8 @@ def run_scheduler() -> int:
             if STOP_PATH.exists():
                 break
 
-            next_run = datetime.now() + timedelta(minutes=interval_minutes())
+            # Keep a stable cadence from the start of each collection run.
+            next_run = run_started + timedelta(minutes=interval_minutes())
             save_status(
                 scheduler_status="waiting",
                 next_run_at=next_run.strftime("%Y-%m-%d %H:%M:%S"),
