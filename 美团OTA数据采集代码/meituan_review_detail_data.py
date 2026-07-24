@@ -30,6 +30,10 @@ DIANPING_API_URL = os.environ.get("MEITUAN_DIANPING_REVIEW_DETAIL_URL", "").stri
 OUTPUT_PATH = OUTPUT_DIR / "ota_review_detail.xlsx"
 TABLE_NAME = "meituan_ota_review_detail"
 HOTEL_ID = os.environ.get("HOTEL_ID", "").strip()
+REVIEW_CHANNELS = (
+    ("美团", "meituan", 1, API_URL),
+    ("大众点评", "dianping", 0, DIANPING_API_URL or API_URL),
+)
 HEADERS = [
     "snapshot_time",
     "channel_source",
@@ -157,7 +161,9 @@ def score_map(items: Any) -> dict[str, float | None]:
     return result
 
 
-def normalize_rows(payload: dict[str, Any], captured_at: datetime | None = None) -> list[list[Any]]:
+def normalize_rows(
+    payload: dict[str, Any], channel_source: str, captured_at: datetime | None = None
+) -> list[list[Any]]:
     captured_at = captured_at or datetime.now()
     rows: list[list[Any]] = []
     for item in payload.get("data", {}).get("commentList") or []:
@@ -172,7 +178,7 @@ def normalize_rows(payload: dict[str, Any], captured_at: datetime | None = None)
         rows.append(
             [
                 captured_at,
-                "美团",
+                channel_source,
                 hotel_name,
                 POI_ID,
                 review_id,
@@ -202,12 +208,15 @@ def normalize_rows(payload: dict[str, Any], captured_at: datetime | None = None)
 
 
 def collect_online(
+    api_url: str,
+    platform: int,
+    channel_source: str,
     limit: int,
     max_pages: int,
     full_history: bool,
     existing_ids: set[str] | None = None,
 ) -> tuple[list[list[Any]], dict[str, int]]:
-    client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE)
+    client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE, api_url, platform)
     existing_ids = existing_ids or set()
     captured_at = datetime.now()
     rows_by_id: dict[str, list[Any]] = {}
@@ -221,7 +230,7 @@ def collect_online(
                 print(f"review_detail browser restart before page={offset}")
                 client.close()
                 time.sleep(1)
-                client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE)
+                client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE, api_url, platform)
             for attempt in range(1, 4):
                 try:
                     payload = client.fetch_page(offset, limit)
@@ -232,12 +241,12 @@ def collect_online(
                         raise
                     print(f"review_detail page={offset} retry={attempt}/3 error={exc}")
                     time.sleep(attempt * 2)
-                    client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE)
+                    client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE, api_url, platform)
             data = payload.get("data") or {}
             if offset == 1:
                 overview_counts = extract_overview_counts(payload)
             total = int(data.get("total") or 0)
-            page_rows = normalize_rows(payload, captured_at)
+            page_rows = normalize_rows(payload, channel_source, captured_at)
             page_ids = {str(row[4]) for row in page_rows}
             print(f"review_detail page={offset} rows={len(page_rows)} total={total}")
             if not page_rows or page_ids == previous_ids:
@@ -258,26 +267,21 @@ def collect_online(
     return rows, overview_counts
 
 
-def collect_overview_counts(api_url: str, platform: int) -> dict[str, int]:
-    if not api_url:
-        print(f"review_detail platform={platform} overview sync skipped: URL is empty")
-        return {}
-    client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE, api_url, platform)
-    try:
-        return extract_overview_counts(client.fetch_page(1, 10))
-    finally:
-        client.close()
-
-
-def load_existing_review_ids() -> set[str]:
+def load_existing_review_ids() -> dict[str, set[str]]:
     connection = pymysql.connect(**DB_CONFIG)
     try:
         with connection.cursor() as cursor:
             if HOTEL_ID:
-                cursor.execute(f"SELECT review_id FROM {TABLE_NAME} WHERE hotel_id=%s", (HOTEL_ID,))
+                cursor.execute(
+                    f"SELECT channel_source, review_id FROM {TABLE_NAME} WHERE hotel_id=%s", (HOTEL_ID,)
+                )
             else:
-                cursor.execute(f"SELECT review_id FROM {TABLE_NAME}")
-            return {str(row[0]) for row in cursor.fetchall() if row[0] is not None}
+                cursor.execute(f"SELECT channel_source, review_id FROM {TABLE_NAME}")
+            result: dict[str, set[str]] = {}
+            for channel_source, review_id in cursor.fetchall():
+                if review_id is not None:
+                    result.setdefault(str(channel_source or ""), set()).add(str(review_id))
+            return result
     finally:
         connection.close()
 
@@ -356,28 +360,37 @@ def main() -> None:
 
     if args.input_json:
         payload = json.loads(Path(args.input_json).read_text(encoding="utf-8-sig"))
-        rows = normalize_rows(payload)
-        overview_counts = extract_overview_counts(payload)
+        rows = normalize_rows(payload, "美团")
+        overview_counts = {"meituan": extract_overview_counts(payload)}
     else:
         if not MEITUAN_ME_COOKIE:
             raise RuntimeError("MEITUAN_ME_COOKIE is empty")
-        existing_ids = set() if args.no_db else load_existing_review_ids()
-        full_history = args.full_history or (not args.no_db and not existing_ids)
-        if full_history:
-            print("review_detail mode=full_history")
-        else:
-            print(f"review_detail mode=incremental existing={len(existing_ids)}")
-        rows, overview_counts = collect_online(
-            max(1, args.limit), max(1, args.max_pages), full_history, existing_ids
-        )
-    dianping_counts = collect_overview_counts(DIANPING_API_URL, 0) if not args.input_json else {}
+        existing_by_channel = {} if args.no_db else load_existing_review_ids()
+        rows = []
+        overview_counts = {}
+        for channel_source, review_platform, platform, api_url in REVIEW_CHANNELS:
+            existing_ids = existing_by_channel.get(channel_source, set())
+            full_history = args.full_history or (not args.no_db and not existing_ids)
+            mode = "full_history" if full_history else f"incremental existing={len(existing_ids)}"
+            print(f"review_detail channel={channel_source} mode={mode}")
+            channel_rows, counts = collect_online(
+                api_url,
+                platform,
+                channel_source,
+                max(1, args.limit),
+                max(1, args.max_pages),
+                full_history,
+                existing_ids,
+            )
+            rows.extend(channel_rows)
+            overview_counts[review_platform] = counts
     headers = [*HEADERS, "hotel_id"]
     rows = [list(row) + [HOTEL_ID] for row in rows]
     save_outputs(headers, rows)
     if not args.no_db:
         upsert_mysql(headers, rows)
-        sync_overview_counts(overview_counts, HOTEL_ID)
-        sync_overview_counts(dianping_counts, HOTEL_ID, "dianping")
+        for review_platform, counts in overview_counts.items():
+            sync_overview_counts(counts, HOTEL_ID, review_platform)
     print(f"review_detail rows={len(rows)}")
     print(f"Excel saved: {OUTPUT_PATH}")
 
