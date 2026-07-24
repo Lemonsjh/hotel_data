@@ -88,8 +88,8 @@ def activity_enabled(page: Any, menu_point: tuple[int, int], markers: tuple[str,
     open_promotion_page(page, menu_point)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
-        button_texts = page.locator(selector).all_inner_texts()
-        if any(apply_text in text for text in button_texts):
+        apply_buttons = page.locator(selector)
+        if any(button.is_visible() for button in apply_buttons.all()):
             return 0
         body = page.locator("body").inner_text(timeout=1_000)
         if any(marker in body for marker in markers):
@@ -229,10 +229,11 @@ def status_row(
     hotel_id: str, captured_at: datetime, code: str, name: str, result: tuple[Any | None, str | None],
     active_status: str, inactive_status: str, status_detail: str | None = None,
     room_type_count: int | None = None, metric_value: float | None = None, metric_unit: str | None = None,
-) -> list[Any]:
+) -> list[Any] | None:
     value, error = result
     if error:
-        return [hotel_id, DEFAULT_HOTEL_NAME, "ctrip", code, name, None, "ERROR", error, None, None, captured_at, None, None]
+        print(f"{name} status unavailable; previous value retained: {error}")
+        return None
     return [
         hotel_id, DEFAULT_HOTEL_NAME, "ctrip", code, name, int(bool(value)),
         active_status if value else inactive_status, status_detail, room_type_count, None,
@@ -245,7 +246,7 @@ def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[A
     hourly_enabled, hourly_room_count = (hourly_value or (None, None)) if not hourly_error else (None, None)
     information_score, information_error = results["information"]
     information_enabled = None if information_error else int(float(information_score) >= 100)
-    return [
+    candidates = [
         status_row(hotel_id, captured_at, "points_alliance", "\u79ef\u5206\u8054\u76df", results["points_alliance"], "JOINED", "NOT_JOINED"),
         status_row(hotel_id, captured_at, "preferred_club", "\u4f18\u4eab\u4f1a", results["preferred_club"], "JOINED", "NOT_JOINED", "UNKNOWN" if results["preferred_club"][0] else None),
         status_row(hotel_id, captured_at, "business_travel_price", "\u5546\u65c5\u4e13\u4eab\u4ef7", results["business_travel"], "JOINED", "NOT_JOINED"),
@@ -255,6 +256,7 @@ def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[A
         status_row(hotel_id, captured_at, "listing_pass", LISTING_PASS_TEXT, results["listing_pass"], "JOINED", "NOT_JOINED"),
         status_row(hotel_id, captured_at, "information_completeness", "\u4fe1\u606f\u5b8c\u6574\u5ea6", (information_enabled, information_error), "COMPLETE", "INCOMPLETE", metric_value=information_score, metric_unit="%"),
     ]
+    return [row for row in candidates if row is not None]
 
 
 def write_output(headers: list[str], rows: list[list[Any]]) -> None:
@@ -273,6 +275,8 @@ def main() -> int:
         "status", "status_detail", "room_type_count", "orders_30d", "snapshot_time", "metric_value", "metric_unit",
     ]
     rows = status_rows(require_hotel_id(), captured_at, results)
+    if not rows:
+        raise RuntimeError("Ctrip promotion status did not return any recognizable result")
     sync_metric_history_table(
         TABLE_NAME, headers, rows,
         {"hotel_id", "platform_scope", "activity_code"}, retention_days=None,
