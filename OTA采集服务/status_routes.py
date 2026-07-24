@@ -31,7 +31,7 @@ def register(app) -> None:
         completed_count = success_count + failed_count
         total = len(run_names)
         current_status = status.get("last_run_status", "never_run")
-        is_running = current_status == "running"
+        is_running = current_status in {"starting", "running"}
         warnings = runner.config_warnings(settings)
         warning_html = "".join(f"<div class='warning'>{esc(w)}</div>" for w in warnings)
         cards = []

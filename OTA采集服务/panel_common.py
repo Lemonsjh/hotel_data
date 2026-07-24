@@ -4,6 +4,7 @@ import ctypes
 import html
 import subprocess
 import sys
+from datetime import datetime
 from typing import Any
 
 from flask import render_template
@@ -57,6 +58,7 @@ STATUS_LABELS = {
     "failed": "失败",
     "pending": "待执行",
     "running": "运行中",
+    "starting": "正在启动",
     "partial_failed": "部分失败",
     "never_run": "未运行",
 }
@@ -71,7 +73,7 @@ def status_class(value: str) -> str:
         return "good"
     if value in ("failed", "partial_failed"):
         return "danger"
-    if value == "running":
+    if value in ("starting", "running"):
         return "warn"
     return "idle"
 
@@ -132,14 +134,41 @@ def manual_scheduler_status() -> dict[str, Any]:
     return data
 
 
-def run_background(args: list[str]) -> None:
-    subprocess.Popen(
-        [sys.executable, str(runner.ROOT / "runner.py"), *args],
-        cwd=str(runner.ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+def run_background(args: list[str]) -> bool:
+    status = runner.load_status()
+    if status.get("last_run_status") in {"starting", "running"}:
+        return False
+
+    settings = runner.load_settings()
+    task_names = runner.enabled_tasks(settings) if args == ["run-once"] else args[1:]
+    status.update(
+        last_run_started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        last_run_finished_at="",
+        last_run_status="starting",
+        last_run_tasks=task_names,
     )
+    for name in task_names:
+        status.setdefault("tasks", {})[name] = runner.pending_result(name)
+    runner.save_json(runner.STATUS_PATH, status)
+    try:
+        subprocess.Popen(
+            [sys.executable, str(runner.ROOT / "runner.py"), *args],
+            cwd=str(runner.ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as exc:
+        status.update(last_run_status="failed", last_run_finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        for name in task_names:
+            status.setdefault("tasks", {})[name] = {
+                **runner.pending_result(name),
+                "status": "failed",
+                "error_summary": str(exc),
+            }
+        runner.save_json(runner.STATUS_PATH, status)
+        return False
+    return True
 
 
 def ota_scope_panel(settings: dict[str, Any], return_to: str) -> str:
