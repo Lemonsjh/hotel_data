@@ -1,70 +1,133 @@
 from __future__ import annotations
 
 import os
-import re
-from pathlib import Path
+import time
 from typing import Any
 
-from playwright.sync_api import sync_playwright
+import requests
+
+from ctrip_config import COOKIE, EXTRA_HEADERS, USER_AGENT
 
 
-PAGE_URL = "https://ebooking.ctrip.com/comment/commentList?microJump=true"
+RATING_URL = os.environ.get(
+    "CTRIP_GET_HOTEL_RATING_URL",
+    "https://ebooking.ctrip.com/restapi/soa2/26353/getHotelRating",
+).strip()
+COUNT_URL = os.environ.get(
+    "CTRIP_GET_COMMENT_NUM_URL",
+    "https://ebooking.ctrip.com/restapi/soa2/26353/getCommentNumV2",
+).strip()
 CHANNELS = (
-    ("\u643a\u7a0b", "\u643a\u7a0b"),
-    ("\u53bb\u54ea\u513f", "\u53bb\u54ea\u513f"),
-    ("\u540c\u7a0b\u65c5\u884c", "\u540c\u7a0b\u65c5\u884c"),
-    ("\u667a\u884c", "\u667a\u884c"),
-)
-COUNT_LABELS = (
-    ("\u5168\u90e8\u70b9\u8bc4", "total_review_count"),
-    ("\u5f85\u56de\u590d", "unreplied_review_count"),
-    ("\u5dee\u8bc4", "negative_review_count"),
+    ("携程", "trip", "ctripCount"),
+    ("去哪儿", "qunar", "qunarCount"),
+    ("同程旅行", "elong", "elongCount"),
+    ("智行", "zx", "zxCount"),
 )
 
 
-def profile_path() -> Path:
-    local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    return local / "HotelAgent" / "browser_profiles" / "ctrip"
+class CtripReviewChannelError(RuntimeError):
+    pass
 
 
-def read_count(page: Any, label: str) -> int:
-    text = page.get_by_text(label, exact=True).locator("xpath=following-sibling::p[1]").inner_text().strip()
-    matched = re.search(r"\d+", text.replace(",", ""))
-    if not matched:
-        raise RuntimeError(f"Ctrip review count is missing: {label}")
-    return int(matched.group())
+def request_head() -> dict[str, Any]:
+    return {
+        "host": "ebooking.ctrip.com",
+        "pathName": "/comment/commentList",
+        "locale": "zh-CN",
+        "release": "",
+        "client": {
+            "deviceType": "PC", "os": "Windows", "osVersion": "Windows 10",
+            "deviceName": "Windows PC", "clientId": "hotel-agent",
+            "screenWidth": 1536, "screenHeight": 864,
+            "isIn": {"ie": False, "chrome": True, "chrome49": False, "wechat": False,
+                     "firefox": False, "ios": False, "android": False},
+            "isModernBrowser": True, "browser": "Chrome", "browserVersion": "150",
+            "platform": "pc", "technology": "web",
+        },
+        "ubt": {"pageid": "10650085973", "pvid": 1, "sid": 1, "vid": "", "fp": ""},
+        "gps": {"coord": "", "lat": "", "lng": "", "cid": 0, "cnm": ""},
+        "protocal": "https:",
+    }
 
 
-def counts(page: Any) -> dict[str, int]:
-    return {field: read_count(page, label) for label, field in COUNT_LABELS}
+def request_base() -> dict[str, Any]:
+    return {
+        "reqHead": request_head(),
+        "header": {"platform": "WEB"},
+        "head": {"cid": "hotel-agent", "ctok": "", "cver": "1.0", "lang": "01",
+                 "sid": "8888", "syscode": "09", "auth": "", "xsid": "", "extension": []},
+    }
 
 
-def response_payload(response: Any, source: str) -> dict[str, Any]:
-    payload = response.json()
-    status = payload.get("resStatus") or {}
-    if status.get("rcode") != 200 or not isinstance(payload.get("ratingInfo"), dict):
-        raise RuntimeError(f"Ctrip review channel request failed: {source}")
+def rating_payload(channel: str) -> dict[str, Any]:
+    payload = request_base()
+    payload["channelSource"] = channel
     return payload
 
 
-def collect_review_channels() -> list[tuple[str, dict[str, Any], dict[str, int]]]:
-    with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_path()), channel="msedge", headless=True,
-            no_viewport=True, locale="zh-CN", timezone_id="Asia/Shanghai",
-        )
+def count_payload() -> dict[str, Any]:
+    payload = request_base()
+    payload["channelSources"] = [channel for _, channel, _ in CHANNELS]
+    return payload
+
+
+def review_session() -> requests.Session:
+    if not COOKIE.strip():
+        raise CtripReviewChannelError("CTRIP_COOKIE is empty; log in through the control panel first")
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json;charset=UTF-8",
+        "Origin": "https://ebooking.ctrip.com",
+        "Referer": "https://ebooking.ctrip.com/comment/commentList?microJump=true",
+        "Cookie": COOKIE.strip(),
+    })
+    session.headers.update(EXTRA_HEADERS or {})
+    return session
+
+
+def post_json(session: requests.Session, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(2):
         try:
-            page = context.pages[0] if context.pages else context.new_page()
-            with page.expect_response(lambda response: "getHotelRating" in response.url, timeout=60_000) as initial:
-                page.goto(PAGE_URL, wait_until="domcontentloaded", timeout=60_000)
-            page.get_by_text(CHANNELS[0][1], exact=True).wait_for(state="visible", timeout=45_000)
-            page.wait_for_timeout(250)
-            results = [(CHANNELS[0][0], response_payload(initial.value, CHANNELS[0][0]), counts(page))]
-            for source, label in CHANNELS[1:]:
-                with page.expect_response(lambda response: "getHotelRating" in response.url, timeout=30_000) as rating:
-                    page.get_by_text(label, exact=True).click()
-                page.wait_for_timeout(250)
-                results.append((source, response_payload(rating.value, source), counts(page)))
-            return results
-        finally:
-            context.close()
+            response = session.post(url, json=payload, timeout=45)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                raise CtripReviewChannelError("Ctrip review response is not an object")
+            status = data.get("resStatus") or {}
+            if status.get("rcode") not in (None, 0, "0", 200, "200"):
+                raise CtripReviewChannelError(f"Ctrip review request failed: {status.get('rmsg')}")
+            return data
+        except (requests.RequestException, ValueError, CtripReviewChannelError) as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(1)
+    raise CtripReviewChannelError(f"Ctrip review request failed after retry: {last_error}")
+
+
+def parse_counts(payload: dict[str, Any], key: str) -> dict[str, int]:
+    values = payload.get(key) or {}
+    if not isinstance(values, dict):
+        raise CtripReviewChannelError(f"Ctrip review count is missing: {key}")
+    return {
+        "total_review_count": int(values.get("commentCount") or 0),
+        "unreplied_review_count": int(values.get("unReplyCount") or 0),
+        "negative_review_count": int(values.get("noRecommendCount") or 0),
+    }
+
+
+def collect_review_channels() -> list[tuple[str, dict[str, Any], dict[str, int]]]:
+    session = review_session()
+    try:
+        counts_payload = post_json(session, COUNT_URL, count_payload())
+        results = []
+        for source, channel, count_key in CHANNELS:
+            rating = post_json(session, RATING_URL, rating_payload(channel))
+            if not isinstance(rating.get("ratingInfo"), dict):
+                raise CtripReviewChannelError(f"Ctrip review rating is missing: {source}")
+            results.append((source, rating, parse_counts(counts_payload, count_key)))
+        return results
+    finally:
+        session.close()
