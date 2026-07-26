@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -11,9 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import DB_CONFIG
 
 
-WORKBENCH_URL = "https://eb.meituan.com/ebooking/new-workbench/index.html"
-INFO_MENU = "\u4fe1\u606f\u7ba1\u7406"
-VIDEO_MENU = "\u89c6\u9891\u7ba1\u7406"
+VIDEO_URL = "https://me.meituan.com/ebooking/merchant/i/hasVpoiSelect?biz=universal&page=videomanage"
 VIDEO_TYPES = (
     ("room_type_video", "\u623f\u578b\u89c6\u9891"),
     ("hotel_preview_video", "\u9152\u5e97\u9884\u89c8\u89c6\u9891"),
@@ -36,7 +35,17 @@ def page_text(page: object) -> str:
     return "\n".join(parts)
 
 
+def extract_video_counts(text: str) -> list[tuple[str, int, int]]:
+    rows = []
+    for code, label in VIDEO_TYPES:
+        match = re.search(rf"{re.escape(label)}\s*(\d+)\s*/\s*(\d+)", text)
+        if match:
+            rows.append((code, int(match.group(1)), int(match.group(2))))
+    return rows
+
+
 def fetch_video_counts() -> list[tuple[str, int, int]]:
+    last_url = VIDEO_URL
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile_path()),
@@ -47,26 +56,17 @@ def fetch_video_counts() -> list[tuple[str, int, int]]:
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
-            menu = page.get_by_text(INFO_MENU, exact=True)
-            menu.wait_for(state="visible", timeout=20_000)
-            page.wait_for_timeout(3_000)
-            menu.click(force=True)
-            page.wait_for_timeout(500)
-            page.get_by_text(VIDEO_MENU, exact=True).dispatch_event("click")
-            for _ in range(20):
-                text = page_text(page)
-                rows = []
-                for code, label in VIDEO_TYPES:
-                    match = re.search(rf"{re.escape(label)}\s*(\d+)\s*/\s*(\d+)", text)
-                    if match:
-                        rows.append((code, int(match.group(1)), int(match.group(2))))
+            page.goto(VIDEO_URL, wait_until="domcontentloaded", timeout=60_000)
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                last_url = page.url
+                rows = extract_video_counts(page_text(page))
                 if len(rows) == len(VIDEO_TYPES):
                     return rows
                 page.wait_for_timeout(500)
         finally:
             context.close()
-    raise RuntimeError("Video management page did not return all upload counts")
+    raise RuntimeError(f"Video management page did not return all upload counts: url={last_url}")
 
 
 def save_video_counts(hotel_id: str, rows: list[tuple[str, int, int]]) -> None:
