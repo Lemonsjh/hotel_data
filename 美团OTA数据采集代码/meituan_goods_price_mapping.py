@@ -12,7 +12,8 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from meituan_config import MEITUAN_ME_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
+from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
+from meituan_page_capture import capture_json_response_with_payload, capture_json_responses
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "OTA采集服务"))
@@ -24,11 +25,14 @@ TABLE_NAME = "ota_goods_price_mapping"
 HOTEL_ID = os.environ.get("HOTEL_ID", "").strip()
 PLATFORM = "\u7f8e\u56e2"
 
-QUERY_URL = os.environ.get("MEITUAN_GOODS_QUERY_URL", "").strip()
 CALC_PRICE_URL = os.environ.get("MEITUAN_CALC_PRICE_URL", "").strip()
 PRICE_STATUS_URL = os.environ.get("MEITUAN_PRICE_STATUS_URL", "").strip()
 PRICE_STATUS_PAYLOAD_PATH = os.environ.get("MEITUAN_PRICE_STATUS_PAYLOAD_FILE", "").strip()
 DEFAULT_PRICE_STATUS_PAYLOAD_FILE = Path(PRICE_STATUS_PAYLOAD_PATH) if PRICE_STATUS_PAYLOAD_PATH else None
+GOODS_PAGE_URL = "https://eb.meituan.com/ebooking/product-me/index.html#/price"
+GOODS_API_PATH = "/queryListAndTag"
+PRICE_STATUS_PAGE_URL = "https://eb.meituan.com/ebooking/product-me/index.html#/calendar"
+PRICE_STATUS_API_PATH = "/queryPriceInventoryStatusInfo"
 
 HEADERS = [
     "snapshot_time",
@@ -48,8 +52,7 @@ SUPER_DEAL_INDEX = HEADERS.index("is_super_deal")
 
 
 class MeituanGoodsClient:
-    def __init__(self, cookie: str, query_url: str = QUERY_URL):
-        self.query_url = query_url
+    def __init__(self, cookie: str):
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -65,15 +68,14 @@ class MeituanGoodsClient:
             self.session.headers["Cookie"] = cookie.strip()
 
     def query_goods(self) -> dict[str, Any]:
-        if not self.query_url:
-            raise RuntimeError("MEITUAN_GOODS_QUERY_URL is empty; configure a current signed URL")
-        response = self.session.post(
-            self.query_url,
-            json={"poiId": str(POI_ID), "partnerId": int(PARTNER_ID)},
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        payload = capture_json_responses(
+            GOODS_PAGE_URL,
+            {"goods": GOODS_API_PATH},
+            cookies_by_url={
+                "https://me.meituan.com/": MEITUAN_ME_COOKIE,
+                "https://eb.meituan.com/": MEITUAN_EB_COOKIE,
+            },
+        )["goods"]
         if payload.get("code") not in (0, 10000, "0", "10000"):
             raise RuntimeError({"code": payload.get("code"), "error": payload.get("error")})
         data = payload.get("data")
@@ -98,11 +100,15 @@ class MeituanGoodsClient:
         return None
 
     def query_price_status(self, goods_data: dict[str, Any], price_status_url: str, business_date: str) -> list[Any]:
-        if not price_status_url:
-            raise RuntimeError("MEITUAN_PRICE_STATUS_URL is empty; configure a current signed URL")
-        response = self.session.post(price_status_url, json=build_price_status_payload(goods_data, business_date), timeout=30)
-        response.raise_for_status()
-        payload = response.json()
+        payload = capture_json_response_with_payload(
+            PRICE_STATUS_PAGE_URL,
+            PRICE_STATUS_API_PATH,
+            build_price_status_payload(goods_data, business_date),
+            cookies_by_url={
+                "https://me.meituan.com/": MEITUAN_ME_COOKIE,
+                "https://eb.meituan.com/": MEITUAN_EB_COOKIE,
+            },
+        )
         if payload.get("code") not in (0, 10000, "0", "10000"):
             raise RuntimeError({"code": payload.get("code"), "error": payload.get("error")})
         data = payload.get("data")
@@ -452,7 +458,6 @@ def load_sample_file(path: Path) -> dict[str, Any]:
 
 
 def collect(
-    query_url: str = QUERY_URL,
     sample_file: Path | None = None,
     price_url: str = CALC_PRICE_URL,
     price_sample_file: Path | None = None,
@@ -461,7 +466,7 @@ def collect(
     price_status_url: str = PRICE_STATUS_URL,
     business_date: str | None = None,
 ) -> list[list[Any]]:
-    client = MeituanGoodsClient(MEITUAN_ME_COOKIE, query_url)
+    client = MeituanGoodsClient(MEITUAN_ME_COOKIE)
     business_date = business_date or datetime.now().strftime("%Y-%m-%d")
     if sample_file:
         data = load_sample_file(sample_file)
@@ -499,7 +504,6 @@ def collect(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Meituan goods price mapping crawler.")
-    parser.add_argument("--url", default=QUERY_URL, help="Signed queryListAndTag URL copied from Network.")
     parser.add_argument("--price-url", default=CALC_PRICE_URL, help="Signed calcPriceV2 URL copied from Network.")
     parser.add_argument("--price-status-url", default=PRICE_STATUS_URL, help="Signed queryPriceInventoryStatusInfo URL.")
     parser.add_argument("--business-date", help="Business date, YYYY-MM-DD. Default is today.")
@@ -520,7 +524,6 @@ def main() -> None:
     if not args.sample_file and not MEITUAN_ME_COOKIE:
         raise RuntimeError("Please set MEITUAN_ME_COOKIE or MEITUAN_COOKIE in meituan_config.py")
     rows = collect(
-        args.url,
         args.sample_file,
         args.price_url,
         args.price_sample_file,

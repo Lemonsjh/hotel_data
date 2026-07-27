@@ -35,6 +35,10 @@ def interval_minutes() -> int:
     return max(1, int(value))
 
 
+def scheduler_enabled() -> bool:
+    return bool((load_settings().get("service") or {}).get("scheduler_enabled", True))
+
+
 def save_status(**changes: Any) -> dict[str, Any]:
     data: dict[str, Any] = {}
     if STATUS_PATH.exists():
@@ -117,7 +121,7 @@ def run_scheduler() -> int:
     )
 
     try:
-        while not STOP_PATH.exists():
+        while not STOP_PATH.exists() and scheduler_enabled():
             run_started = datetime.now()
             save_status(
                 scheduler_status="collecting",

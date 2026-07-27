@@ -3,12 +3,15 @@ from __future__ import annotations
 from flask import redirect, url_for
 
 import runner
+from price_routes import PRICE_STOP_PATH, price_scheduler_status, start_price_scheduler
 from panel_common import (
     esc,
     manual_scheduler_status,
     ota_scope_panel,
     page,
+    request_manual_scheduler_stop,
     run_background,
+    start_manual_scheduler,
     status_class,
     status_label,
     task_label,
@@ -21,6 +24,7 @@ def register(app) -> None:
         status = runner.load_status()
         settings = runner.load_settings()
         scheduler = manual_scheduler_status()
+        price_scheduler = price_scheduler_status()
         tasks = status.get("tasks") or {}
         run_names = status.get("last_run_tasks") or runner.enabled_tasks(settings)
         run_items = [tasks.get(name, {}) for name in run_names]
@@ -59,6 +63,9 @@ def register(app) -> None:
         running_names = [task_label(name) for name in run_names if tasks.get(name, {}).get("status") == "running"]
         current_task = running_names[0] if running_names else "-"
         scheduler_state = scheduler.get("scheduler_status", "stopped")
+        price_scheduler_state = price_scheduler.get("scheduler_status", "stopped")
+        collection_enabled = bool((settings.get("service") or {}).get("scheduler_enabled", True))
+        price_enabled = bool((settings.get("price_scheduler") or {}).get("enabled", True))
         scheduler_labels = {
             "collecting": "正在采集",
             "waiting": "定时等待",
@@ -66,22 +73,57 @@ def register(app) -> None:
             "stopping": "待当前采集完成后停止",
             "failed": "启动失败",
             "stopped": "未启动",
+            "paused": "已暂停",
         }
+        price_scheduler_labels = {
+            "waiting": "定时等待",
+            "executing": "正在调价",
+            "stopping": "待当前调价完成后停止",
+            "failed": "启动失败",
+            "stopped": "未启动",
+            "paused": "已暂停",
+        }
+        collection_display_state = scheduler_state if collection_enabled or scheduler.get("alive") else "paused"
+        price_display_state = price_scheduler_state if price_enabled or price_scheduler.get("alive") else "paused"
         scheduler_class = (
             "danger"
-            if scheduler_state == "failed"
-            else ("warn" if scheduler_state in {"collecting", "stopping"} else ("good" if scheduler_state in {"waiting", "running"} else "idle"))
+            if collection_display_state == "failed"
+            else ("warn" if collection_display_state in {"collecting", "stopping"} else ("good" if collection_display_state in {"waiting", "running"} else "idle"))
         )
-        should_refresh = is_running or scheduler_state in {"collecting", "stopping"}
+        price_scheduler_class = (
+            "danger"
+            if price_display_state == "failed"
+            else ("warn" if price_display_state in {"executing", "stopping"} else ("good" if price_display_state == "waiting" else "idle"))
+        )
+        collection_action = (
+            "<form method='post' action='/scheduler/collection/stop'><button class='secondary'>暂停定时采集</button></form>"
+            if scheduler.get("alive")
+            else "<form method='post' action='/scheduler/collection/start'><button>开启定时采集</button></form>"
+        )
+        price_action = (
+            "<form method='post' action='/scheduler/price/stop'><button class='secondary'>暂停定时调价</button></form>"
+            if price_scheduler.get("alive")
+            else "<form method='post' action='/scheduler/price/start'><button>开启定时调价</button></form>"
+        )
+        should_refresh = is_running or scheduler_state in {"collecting", "stopping"} or price_scheduler_state in {"executing", "stopping"}
         refresh_script = "<script>setTimeout(() => location.reload(), 2000);</script>" if should_refresh else ""
         scheduler_html = f"""
-<section class="panel" style="padding:16px 20px">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-    <div><strong>手动定时采集</strong><div class="muted">启动：{esc(scheduler.get('started_at') or '-')}</div></div>
-    <span class="pill {scheduler_class}">{esc(scheduler_labels.get(scheduler_state, scheduler_state))}</span>
-    <div class="muted">下次执行：{esc(scheduler.get('next_run_at') or '-')}</div>
-  </div>
-</section>"""
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px">
+  <section class="panel" style="padding:16px 20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><strong>定时采集任务</strong><div class="muted">下次执行：{esc(scheduler.get('next_run_at') or '-')}</div></div>
+      <span class="pill {scheduler_class}">{esc(scheduler_labels.get(collection_display_state, collection_display_state))}</span>
+      {collection_action}
+    </div>
+  </section>
+  <section class="panel" style="padding:16px 20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><strong>定时调价任务</strong><div class="muted">下次检查：{esc(price_scheduler.get('next_run_at') or '-')}</div></div>
+      <span class="pill {price_scheduler_class}">{esc(price_scheduler_labels.get(price_display_state, price_display_state))}</span>
+      {price_action}
+    </div>
+  </section>
+</div>"""
         body = f"""
 {scheduler_html}
 {ota_scope_panel(settings, "/")}
@@ -114,4 +156,37 @@ def register(app) -> None:
     def run_task(task: str):
         if task in runner.TASKS:
             run_background(["run-task", task])
+        return redirect(url_for("index"))
+
+    @app.post("/scheduler/collection/start")
+    def start_collection_scheduler():
+        settings = runner.load_settings()
+        settings.setdefault("service", {})["scheduler_enabled"] = True
+        runner.save_json(runner.CONFIG_PATH, settings)
+        start_manual_scheduler(settings)
+        return redirect(url_for("index"))
+
+    @app.post("/scheduler/collection/stop")
+    def stop_collection_scheduler():
+        settings = runner.load_settings()
+        settings.setdefault("service", {})["scheduler_enabled"] = False
+        runner.save_json(runner.CONFIG_PATH, settings)
+        request_manual_scheduler_stop()
+        return redirect(url_for("index"))
+
+    @app.post("/scheduler/price/start")
+    def start_price_scheduler_from_status():
+        settings = runner.load_settings()
+        settings.setdefault("price_scheduler", {})["enabled"] = True
+        runner.save_json(runner.CONFIG_PATH, settings)
+        start_price_scheduler(settings)
+        return redirect(url_for("index"))
+
+    @app.post("/scheduler/price/stop")
+    def stop_price_scheduler_from_status():
+        settings = runner.load_settings()
+        settings.setdefault("price_scheduler", {})["enabled"] = False
+        runner.save_json(runner.CONFIG_PATH, settings)
+        PRICE_STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PRICE_STOP_PATH.write_text("stop", encoding="utf-8")
         return redirect(url_for("index"))

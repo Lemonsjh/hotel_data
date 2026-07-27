@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode
 
 from playwright.sync_api import sync_playwright
+from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE
+from meituan_page_capture import browser_profile_lock, cookie_entries
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import DB_CONFIG
@@ -16,6 +18,11 @@ from ota_mysql_writer import DB_CONFIG
 TABLE_NAME = "meituan_ota_promotion_performance_30d"
 PAGE_SIZE = 50
 PERIOD_DAYS = 30
+PROMOTION_PAGE_URL = (
+    "https://me.meituan.com/ebooking/merchant/ebIframe?"
+    "iUrl=%2Febooking%2Fi%2Findex.html%3Fbiz%3Dspread%26page%3Doverview"
+)
+PROMOTION_API_PATH = "/paginateQueryPlanAndLaunch"
 TAB_IDS = (
     "T30002,T30003,T30032,T30034,T30033,T30001,T30004,T300030,"
     "T30005,T30047,T30006,T300071"
@@ -72,40 +79,61 @@ def request_payload(period_start: date, period_end: date, page_num: int) -> dict
     }
 
 
-def request_page(page: Any, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    result = page.evaluate(
-        """async ({url, payload}) => {
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
-            body: new URLSearchParams(payload).toString(),
-          });
-          return {status: response.status, text: await response.text()};
-        }""",
-        {"url": url, "payload": payload},
-    )
-    if result["status"] != 200:
-        raise RuntimeError(f"Promotion performance API failed: HTTP {result['status']}")
-    response = json.loads(result["text"])
+def request_page(context: Any, page: Any, period_start: date, period_end: date, page_num: int) -> dict[str, Any]:
+    responses: list[Any] = []
+    payload = request_payload(period_start, period_end, page_num)
+
+    def continue_with_period(route: Any) -> None:
+        values = dict(parse_qsl(route.request.post_data or "", keep_blank_values=True))
+        values.update(payload)
+        route.continue_(post_data=urlencode(values))
+
+    def capture_response(response: Any) -> None:
+        if PROMOTION_API_PATH in response.url:
+            responses.append(response)
+
+    context.route(f"**{PROMOTION_API_PATH}*", continue_with_period)
+    page.on("response", capture_response)
+    try:
+        page.goto(PROMOTION_PAGE_URL, wait_until="domcontentloaded", timeout=60_000)
+        for _ in range(90):
+            if responses:
+                break
+            page.wait_for_timeout(500)
+        if not responses:
+            raise RuntimeError("Promotion performance page did not issue a data request")
+        response = responses[-1]
+        if response.status != 200:
+            raise RuntimeError(f"Promotion performance API failed: HTTP {response.status}")
+        response = response.json()
+    finally:
+        page.remove_listener("response", capture_response)
+        context.unroute(f"**{PROMOTION_API_PATH}*", continue_with_period)
     if response.get("code") != 200 or not isinstance(response.get("msg"), dict):
         raise RuntimeError(f"Promotion performance API response is invalid: {response.get('code')}")
     return response["msg"]
 
 
-def fetch_plans(url: str, period_start: date, period_end: date) -> list[dict[str, Any]]:
-    if not url:
-        raise RuntimeError("MEITUAN_PROMOTION_PERFORMANCE_URL is empty")
-    with sync_playwright() as playwright:
+def fetch_plans(period_start: date, period_end: date) -> list[dict[str, Any]]:
+    with browser_profile_lock(), sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_path()), channel="msedge", headless=True,
-            chromium_sandbox=True, locale="zh-CN",
+            user_data_dir=str(profile_path()),
+            channel="msedge",
+            headless=True,
+            chromium_sandbox=True,
+            locale="zh-CN",
         )
         try:
+            cookies = (
+                cookie_entries(MEITUAN_ME_COOKIE, "https://me.meituan.com/")
+                + cookie_entries(MEITUAN_EB_COOKIE, "https://eb.meituan.com/")
+            )
+            if cookies:
+                context.add_cookies(cookies)
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto("https://ebmidas.dianping.com/", wait_until="domcontentloaded", timeout=60_000)
             plans: list[dict[str, Any]] = []
             for page_num in range(1, 101):
-                response = request_page(page, url, request_payload(period_start, period_end, page_num))
+                response = request_page(context, page, period_start, period_end, page_num)
                 page_rows = response.get("planList") or []
                 plans.extend(row for row in page_rows if isinstance(row, dict))
                 if len(plans) >= int(response.get("total") or 0) or len(page_rows) < PAGE_SIZE:
@@ -179,9 +207,7 @@ def main() -> int:
     hotel_id = os.environ.get("HOTEL_ID", "").strip()
     period_end = date.today() - timedelta(days=1)
     period_start = period_end - timedelta(days=PERIOD_DAYS - 1)
-    plans = fetch_plans(
-        os.environ.get("MEITUAN_PROMOTION_PERFORMANCE_URL", "").strip(), period_start, period_end
-    )
+    plans = fetch_plans(period_start, period_end)
     rows = build_rows(plans, period_start, period_end)
     save_rows(hotel_id, rows)
     print(f"promotion performance plans={len(plans)} launches={len(rows)}")

@@ -5,7 +5,6 @@ import os
 import re
 import sys
 import time
-from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,7 +14,8 @@ import requests
 from playwright.sync_api import sync_playwright
 
 from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
-from meituan_goods_price_mapping import MeituanGoodsClient, PRICE_STATUS_URL
+from meituan_goods_price_mapping import MeituanGoodsClient
+from meituan_page_capture import browser_profile_lock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import DB_CONFIG, OUTPUT_DIR
@@ -48,42 +48,6 @@ PUBLIC_WELFARE_ACTIVE = "\u751f\u6548\u4e2d"
 SCHEDULED_INVOICE_CODE = "reservation_invoice"
 SCHEDULED_INVOICE_NAME = "\u9884\u7ea6\u53d1\u7968"
 SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
-PROFILE_LOCK_TIMEOUT_SECONDS = 120
-PROFILE_LOCK_STALE_SECONDS = 180
-
-
-def profile_lock_path() -> Path:
-    base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    return base / "HotelAgent" / "browser_profiles" / "meituan" / ".promotion_status.lock"
-
-
-@contextmanager
-def browser_profile_lock() -> Any:
-    path = profile_lock_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + PROFILE_LOCK_TIMEOUT_SECONDS
-    while True:
-        try:
-            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(descriptor, str(os.getpid()).encode())
-            break
-        except FileExistsError:
-            try:
-                if time.time() - path.stat().st_mtime > PROFILE_LOCK_STALE_SECONDS:
-                    path.unlink(missing_ok=True)
-                    continue
-            except FileNotFoundError:
-                continue
-            if time.monotonic() >= deadline:
-                raise RuntimeError("Meituan browser profile is busy; retry after the active task finishes")
-            time.sleep(1)
-    try:
-        yield
-    finally:
-        os.close(descriptor)
-        path.unlink(missing_ok=True)
-
-
 def fetch_youmeihui_status() -> str:
     if not MEITUAN_EB_COOKIE:
         raise RuntimeError("MEITUAN_EB_COOKIE is empty")
@@ -143,12 +107,10 @@ def fetch_business_travel_status() -> str:
 
 
 def fetch_hourly_room_status() -> str:
-    if not PRICE_STATUS_URL:
-        raise RuntimeError("MEITUAN_PRICE_STATUS_URL is empty")
     client = MeituanGoodsClient(MEITUAN_ME_COOKIE)
     goods_data = client.query_goods()
     business_date = datetime.now().strftime("%Y-%m-%d")
-    status_rows = client.query_price_status(goods_data, PRICE_STATUS_URL, business_date)
+    status_rows = client.query_price_status(goods_data, "", business_date)
     for item in status_rows:
         goods = item.get("goodsBaseInfo") or {}
         if not re.search(r"-[0-9]+(?:[.][0-9]+)?\u5c0f\u65f6-", str(goods.get("goodsName") or "")):
@@ -375,7 +337,7 @@ def main() -> int:
     print(", ".join(f"{code} status={status}" for code, _name, status in results))
     if failures:
         summary = "; ".join(f"{code}: {error}" for code, _name, error in failures)
-        raise RuntimeError(f"Promotion status partial failure; previous values retained: {summary}")
+        print(f"Promotion status partial warning; previous values retained: {summary}")
     return 0
 
 

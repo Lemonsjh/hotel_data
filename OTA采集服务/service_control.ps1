@@ -68,16 +68,23 @@ function Start-ManualService {
     }
 
     New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
-    Remove-Item -LiteralPath $StopPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $PriceStopPath -Force -ErrorAction SilentlyContinue
 
-    $scheduler = Get-TrackedProcess $SchedulerPidPath "manual_scheduler.py"
-    if (-not $scheduler) {
-        Start-Process -FilePath $pythonPath -ArgumentList "`"$SchedulerPath`"" `
-            -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
-        Start-Sleep -Seconds 1
+    $collectorSchedulerEnabled = $true
+    if ($null -ne $settings.service -and $null -ne $settings.service.scheduler_enabled) {
+        $collectorSchedulerEnabled = [bool]$settings.service.scheduler_enabled
+    }
+    if ($collectorSchedulerEnabled) {
+        Remove-Item -LiteralPath $StopPath -Force -ErrorAction SilentlyContinue
         $scheduler = Get-TrackedProcess $SchedulerPidPath "manual_scheduler.py"
-        if (-not $scheduler) { throw "Manual scheduler failed to start. Check logs\manual_scheduler.log." }
+        if (-not $scheduler) {
+            Start-Process -FilePath $pythonPath -ArgumentList "`"$SchedulerPath`"" `
+                -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
+            Start-Sleep -Seconds 1
+            $scheduler = Get-TrackedProcess $SchedulerPidPath "manual_scheduler.py"
+            if (-not $scheduler) { throw "Manual scheduler failed to start. Check logs\manual_scheduler.log." }
+        }
+    } else {
+        Set-Content -LiteralPath $StopPath -Value "stop" -Encoding ASCII
     }
 
     $priceSchedulerEnabled = $true
@@ -85,6 +92,7 @@ function Start-ManualService {
         $priceSchedulerEnabled = [bool]$settings.price_scheduler.enabled
     }
     if ($priceSchedulerEnabled) {
+        Remove-Item -LiteralPath $PriceStopPath -Force -ErrorAction SilentlyContinue
         $priceScheduler = Get-TrackedProcess $PriceSchedulerPidPath "price_scheduler.py"
         if (-not $priceScheduler) {
             Start-Process -FilePath $pythonPath -ArgumentList "`"$PriceSchedulerPath`"" `
@@ -93,6 +101,8 @@ function Start-ManualService {
             $priceScheduler = Get-TrackedProcess $PriceSchedulerPidPath "price_scheduler.py"
             if (-not $priceScheduler) { throw "Price scheduler failed to start. Check logs\price_scheduler.log." }
         }
+    } else {
+        Set-Content -LiteralPath $PriceStopPath -Value "stop" -Encoding ASCII
     }
 
     $port = [int]($settings.service.panel_port)

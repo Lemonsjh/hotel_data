@@ -13,6 +13,7 @@ import runner
 
 
 MANUAL_STATUS_PATH = runner.ROOT / "state" / "manual_scheduler_status.json"
+MANUAL_PID_PATH = runner.ROOT / "state" / "manual_scheduler.pid"
 MANUAL_STOP_PATH = runner.ROOT / "state" / "manual_scheduler.stop"
 
 KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -131,7 +132,27 @@ def manual_scheduler_status() -> dict[str, Any]:
     if alive and MANUAL_STOP_PATH.exists():
         state = "stopping"
     data["scheduler_status"] = state
+    data["alive"] = alive
     return data
+
+
+def start_manual_scheduler(settings: dict[str, Any]) -> None:
+    if manual_scheduler_status()["alive"]:
+        return
+    MANUAL_PID_PATH.unlink(missing_ok=True)
+    MANUAL_STOP_PATH.unlink(missing_ok=True)
+    subprocess.Popen(
+        [str(runner.python_path(settings)), str(runner.ROOT / "manual_scheduler.py")],
+        cwd=str(runner.ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def request_manual_scheduler_stop() -> None:
+    MANUAL_STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
+    MANUAL_STOP_PATH.write_text("stop", encoding="utf-8")
 
 
 def run_background(args: list[str]) -> bool:

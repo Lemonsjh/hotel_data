@@ -16,6 +16,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
+from meituan_page_capture import capture_json_responses
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import OUTPUT_DIR, sync_table
@@ -41,10 +42,9 @@ def build_ranking_url() -> str:
     return f"https://eb.meituan.com/api/shepherdGw/bizDatacenter/hotel/eb/dataCenter/service/ranking?{urlencode(query)}"
 
 
-CONTRAST_URL = os.environ.get("MEITUAN_REVIEW_CONTRAST_URL", "").strip()
-DIANPING_CONTRAST_URL = os.environ.get("MEITUAN_DIANPING_REVIEW_CONTRAST_URL", "").strip()
 RANKING_URL = os.environ.get("MEITUAN_REVIEW_RANKING_URL", build_ranking_url()).strip()
 HOTEL_ID = os.environ.get("HOTEL_ID", "").strip()
+COMMENT_PAGE_URL = "https://me.meituan.com/ebooking/merchant/comment-manage-react"
 
 OVERVIEW_HEADERS = [
     "snapshot_time",
@@ -75,9 +75,20 @@ class MeituanReviewError(RuntimeError):
     pass
 
 
+def extract_contrast_payload(response: Any, source_name: str) -> dict[str, Any]:
+    if not isinstance(response, dict):
+        raise MeituanReviewError(f"{source_name} contrast response is not object")
+    if response.get("code") not in (0, 10000, "0", "10000"):
+        msg = response.get("message") or (response.get("error") or {}).get("msg")
+        raise MeituanReviewError(f"{source_name} contrast failed: code={response.get('code')}, msg={msg}")
+    payload = response.get("data")
+    if not isinstance(payload, dict):
+        raise MeituanReviewError(f"{source_name} contrast data is not object")
+    return payload
+
+
 class MeituanReviewClient:
-    def __init__(self, cookie: str, contrast_url: str = CONTRAST_URL):
-        self.contrast_url = contrast_url
+    def __init__(self, cookie: str):
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -101,19 +112,7 @@ class MeituanReviewClient:
         response.raise_for_status()
         response.encoding = "utf-8"
         data = response.json()
-        if data.get("code") not in (0, 10000, "0", "10000"):
-            msg = data.get("message") or (data.get("error") or {}).get("msg")
-            raise MeituanReviewError(f"{source_name} contrast failed: code={data.get('code')}, msg={msg}")
-        payload = data.get("data")
-        if not isinstance(payload, dict):
-            raise MeituanReviewError("contrast data is not object")
-        return payload
-
-    def get_contrast_new(self) -> dict[str, Any]:
-        return self.get_contrast(self.contrast_url, "Meituan")
-
-    def get_dianping_contrast(self) -> dict[str, Any]:
-        return self.get_contrast(DIANPING_CONTRAST_URL, "Dianping")
+        return extract_contrast_payload(data, source_name)
 
     def get_ranking(self, ranking_url: str = RANKING_URL, cookie: str = MEITUAN_EB_COOKIE) -> dict[str, Any]:
         session = requests.Session()
@@ -399,7 +398,8 @@ def collect(
     dianping_payload: dict[str, Any] | None = None,
 ) -> tuple[list[list[Any]], list[list[Any]]]:
     captured_at = datetime.now()
-    payload = payload or MeituanReviewClient(MEITUAN_ME_COOKIE).get_contrast_new()
+    if not payload:
+        raise MeituanReviewError("Meituan review overview payload is empty")
     overview_rows = normalize_overview_rows(payload, captured_at)
     if dianping_payload:
         overview_rows.extend(normalize_overview_rows(dianping_payload, captured_at, "dianping"))
@@ -412,7 +412,6 @@ def collect(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Meituan review data crawler.")
     parser.add_argument("--self-test", action="store_true", help="Parse built-in sample data; no request.")
-    parser.add_argument("--contrast-url", default=CONTRAST_URL, help="Signed contrast URL copied from Network.")
     parser.add_argument("--ranking-url", default=RANKING_URL, help="Review keyword ranking URL.")
     args = parser.parse_args()
     if args.self_test:
@@ -420,10 +419,19 @@ def main() -> None:
     else:
         if not MEITUAN_ME_COOKIE:
             raise RuntimeError("Please set MEITUAN_ME_COOKIE or MEITUAN_COOKIE in meituan_config.py")
-        client = MeituanReviewClient(MEITUAN_ME_COOKIE, args.contrast_url)
-        dianping_payload = client.get_dianping_contrast() if DIANPING_CONTRAST_URL else None
+        captures = capture_json_responses(
+            COMMENT_PAGE_URL,
+            {"meituan": "/contrast", "dianping": "/contrastNew"},
+            cookies_by_url={
+                "https://me.meituan.com/": MEITUAN_ME_COOKIE,
+                "https://eb.meituan.com/": MEITUAN_EB_COOKIE,
+            },
+        )
+        client = MeituanReviewClient(MEITUAN_ME_COOKIE)
         overview_rows, ranking_rows = collect(
-            client.get_contrast_new(), client.get_ranking(args.ranking_url), dianping_payload
+            extract_contrast_payload(captures["meituan"], "Meituan"),
+            client.get_ranking(args.ranking_url),
+            extract_contrast_payload(captures["dianping"], "Dianping"),
         )
     excel_path = save_to_excel(overview_rows, ranking_rows)
     print(f"review_overview rows={len(overview_rows)}")
