@@ -9,13 +9,9 @@ from typing import Any
 from flask import Flask, jsonify, redirect, request, url_for
 
 from config_schema import (
-    ADVANCED_SECRET_GROUPS,
-    ADVANCED_TEXT_GROUPS,
     CONFIG_SECTIONS,
     NUMBER_FIELDS,
-    SECRET_GROUPS,
     SHORT_SECRET_FIELDS,
-    TEXT_GROUPS,
 )
 import log_routes
 import platform_login
@@ -40,10 +36,15 @@ def mask(value: Any) -> str:
 
 
 def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
-    for _title, fields in TEXT_GROUPS + ADVANCED_TEXT_GROUPS:
-        for key, _label in fields:
-            value: Any = request.form.get(key, "")
-            if request.form.get(key) is None:
+    for section in CONFIG_SECTIONS:
+        for key, _label, secret, _is_advanced in section["fields"]:
+            value = request.form.get(key)
+            if value is None:
+                continue
+            value = value.strip()
+            if secret:
+                if value:
+                    set_path(settings, key, value)
                 continue
             old = get_path(settings, key)
             if isinstance(old, int):
@@ -52,11 +53,6 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
                 except ValueError:
                     value = old
             set_path(settings, key, value)
-    for _title, fields in SECRET_GROUPS + ADVANCED_SECRET_GROUPS:
-        for key, _label in fields:
-            value = request.form.get(key, "")
-            if value.strip():
-                set_path(settings, key, value.strip())
     settings.setdefault("tasks", {})
     for name in runner.TASKS:
         settings["tasks"][name] = request.form.get(f"task.{name}") == "on"
