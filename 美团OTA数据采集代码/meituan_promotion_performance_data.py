@@ -9,7 +9,7 @@ from urllib.parse import parse_qsl, urlencode
 
 from playwright.sync_api import sync_playwright
 from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE
-from meituan_page_capture import browser_profile_lock, cookie_entries
+from meituan_page_capture import browser_profile_lock, cookie_entries, page_access_issue
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import DB_CONFIG
@@ -99,6 +99,8 @@ def request_page(context: Any, page: Any, period_start: date, period_end: date, 
         for _ in range(90):
             if responses:
                 break
+            if issue := page_access_issue(page):
+                raise RuntimeError(f"Promotion performance page requires manual action: {issue}")
             page.wait_for_timeout(500)
         if not responses:
             raise RuntimeError("Promotion performance page did not issue a data request")

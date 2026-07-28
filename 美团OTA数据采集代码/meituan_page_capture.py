@@ -67,6 +67,23 @@ def cookie_entries(cookie_header: str, url: str) -> list[dict[str, str]]:
     ]
 
 
+def page_access_issue(page: Any) -> str:
+    """Return a human-actionable reason when a page is blocked before data can load."""
+    if any(token in page.url.lower() for token in ("/login", "verify", "captcha")):
+        return "登录会话无效或需要安全验证"
+    texts = []
+    for frame in page.frames:
+        try:
+            texts.append(frame.locator("body").inner_text(timeout=500))
+        except Exception:
+            continue
+    body = "\n".join(texts)
+    for marker in ("当前操作异常", "安全验证", "请完成验证", "请重新登录", "暂无权限", "无权限访问"):
+        if marker in body:
+            return marker
+    return ""
+
+
 def capture_json_responses(
     page_url: str,
     endpoints: dict[str, str],

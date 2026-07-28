@@ -8,6 +8,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from meituan_page_capture import page_access_issue
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import DB_CONFIG
 
@@ -63,6 +65,8 @@ def fetch_video_counts() -> list[tuple[str, int, int]]:
                 rows = extract_video_counts(page_text(page))
                 if len(rows) == len(VIDEO_TYPES):
                     return rows
+                if issue := page_access_issue(page):
+                    raise RuntimeError(f"Video management page requires manual action: {issue}")
                 page.wait_for_timeout(500)
         finally:
             context.close()

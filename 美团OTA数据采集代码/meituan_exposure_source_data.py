@@ -81,20 +81,35 @@ def business_date(now: datetime) -> str:
     return (now.date() - timedelta(days=1 if now.hour >= 9 else 2)).isoformat()
 
 
-def read_source_values(page) -> dict[str, int]:
-    for _ in range(60):
-        text = page.locator("body").inner_text(timeout=5_000)
-        try:
-            return {field: read_value(text, labels) for field, labels in FIELD_LABELS.items()}
-        except RuntimeError:
-            page.wait_for_timeout(500)
-    raise RuntimeError("美团流量来源页面未返回完整曝光数据，请稍后重试")
+def detail_days(details: dict[str, list[dict[str, object]]]) -> set[str]:
+    return {
+        str(item.get("dateTime"))
+        for series in details.values()
+        for item in series
+        if item.get("dateTime")
+    }
+
+
+def summary_values(details: dict[str, list[dict[str, object]]]) -> dict[str, int]:
+    non_ad = sum(int(item.get("value") or 0) for item in details["noads"])
+    ad = sum(int(item.get("value") or 0) for item in details["ads"])
+    return {"total_exposure": non_ad + ad, "non_ad_exposure": non_ad, "ad_exposure": ad}
+
+
+def wait_for_detail_days(page, details: dict[str, list[dict[str, object]]], minimum: int) -> bool:
+    for _ in range(80):
+        if len(detail_days(details)) >= minimum:
+            return True
+        page.wait_for_timeout(250)
+    return False
 
 
 def source_period_button(page):
+    source_text = "\u6d41\u91cf\u6765\u6e90"
+    period_text = "\u8fd130\u5929"
     button = page.locator(
         "xpath=//*[contains(@class, 'card-container')]"
-        "[.//*[normalize-space()='流量来源']]//button[normalize-space()='近30天']"
+        f"[.//*[normalize-space()='{source_text}']]//button[normalize-space()='{period_text}']"
     )
     button.wait_for(state="visible", timeout=30_000)
     if button.count() != 1:
@@ -151,14 +166,15 @@ def collect() -> tuple[list[object], list[list[object]]]:
                 page.get_by_text("流量分析", exact=True).click(
                     force=True, no_wait_after=True, timeout=30_000
                 )
-                source_period_button(page).click(timeout=30_000)
-                values = read_source_values(page)
-                for _ in range(20):
-                    if details:
-                        break
-                    page.wait_for_timeout(250)
-                if not details:
-                    raise RuntimeError("美团流量来源页面未返回每日曝光数据")
+                source_period_button(page)
+                if not wait_for_detail_days(page, details, 1):
+                    raise RuntimeError("Exposure source page did not return daily data")
+                if len(detail_days(details)) < 30:
+                    details.clear()
+                    source_period_button(page).click(timeout=30_000)
+                    if not wait_for_detail_days(page, details, 30):
+                        raise RuntimeError("Exposure source page did not return 30 days of daily data")
+                values = summary_values(details)
             finally:
                 browser.close()
     except PlaywrightTimeoutError as exc:
