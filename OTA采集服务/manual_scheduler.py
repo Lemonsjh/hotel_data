@@ -19,6 +19,7 @@ STATE_DIR = ROOT / "state"
 STATUS_PATH = STATE_DIR / "manual_scheduler_status.json"
 PID_PATH = STATE_DIR / "manual_scheduler.pid"
 STOP_PATH = STATE_DIR / "manual_scheduler.stop"
+RUN_STOP_PATH = STATE_DIR / "collection_run.stop"
 LOG_PATH = ROOT / "logs" / "manual_scheduler.log"
 
 
@@ -76,6 +77,7 @@ def release_process(pid: int) -> None:
 
 def run_collection() -> int:
     maintain_logs(LOG_PATH.parent, LOG_PATH)
+    RUN_STOP_PATH.unlink(missing_ok=True)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a", encoding="utf-8") as log:
         log.write(f"\n[{now_text()}] full collection started\n")

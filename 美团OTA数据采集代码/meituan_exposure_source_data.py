@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import (
     OUTPUT_DIR,
     sync_exposure_source_daily_history,
-    sync_exposure_source_history,
+    sync_exposure_source_snapshot,
 )
 
 
@@ -180,7 +180,7 @@ def main() -> int:
     (OUTPUT_DIR / "meituan_ota_exposure_source_monthly.json").write_text(
         json.dumps(dict(zip(HEADERS, row)), ensure_ascii=False, default=str, indent=2), encoding="utf-8"
     )
-    sync_exposure_source_history(HEADERS, [row])
+    sync_exposure_source_snapshot(HEADERS, row)
     (OUTPUT_DIR / "meituan_ota_exposure_source_daily.json").write_text(
         json.dumps([dict(zip(DAILY_HEADERS, item)) for item in daily], ensure_ascii=False, default=str, indent=2),
         encoding="utf-8",

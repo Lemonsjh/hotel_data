@@ -61,6 +61,8 @@ STATUS_LABELS = {
     "running": "运行中",
     "starting": "正在启动",
     "partial_failed": "部分失败",
+    "stopping": "正在中断",
+    "cancelled": "已中断",
     "never_run": "未运行",
 }
 
@@ -74,7 +76,7 @@ def status_class(value: str) -> str:
         return "good"
     if value in ("failed", "partial_failed"):
         return "danger"
-    if value in ("starting", "running"):
+    if value in ("starting", "running", "stopping", "cancelled"):
         return "warn"
     return "idle"
 
@@ -157,9 +159,10 @@ def request_manual_scheduler_stop() -> None:
 
 def run_background(args: list[str]) -> bool:
     status = runner.load_status()
-    if status.get("last_run_status") in {"starting", "running"}:
+    if status.get("last_run_status") in {"starting", "running", "stopping"}:
         return False
 
+    runner.RUN_STOP_PATH.unlink(missing_ok=True)
     settings = runner.load_settings()
     task_names = runner.enabled_tasks(settings) if args == ["run-once"] else args[1:]
     status.update(

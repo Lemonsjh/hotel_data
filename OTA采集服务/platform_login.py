@@ -94,6 +94,20 @@ def process_alive(pid: Any) -> bool:
     return True
 
 
+def stop_login_process(pid: Any) -> None:
+    """Stop only the login-helper process and its dedicated Edge child processes."""
+    if not process_alive(pid):
+        return
+    subprocess.run(
+        ["taskkill", "/PID", str(pid), "/T", "/F"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
 def start(platform: str, settings: dict[str, Any]) -> int:
     info = require_platform(platform)
     old = read_status(platform)
@@ -106,7 +120,13 @@ def start(platform: str, settings: dict[str, Any]) -> int:
                 break
             time.sleep(0.25)
         if process_alive(old_pid):
-            raise RuntimeError(f"{info['label']}登录窗口仍在运行，请先关闭窗口")
+            stop_login_process(old_pid)
+            for _ in range(20):
+                if not process_alive(old_pid):
+                    break
+                time.sleep(0.25)
+        if process_alive(old_pid):
+            raise RuntimeError(f"无法结束旧的{info['label']}登录助手，请在任务管理器中结束该进程后重试")
 
     stop_path(platform).unlink(missing_ok=True)
     write_status(platform, "starting", f"正在打开{info['label']}登录窗口", pid=0)

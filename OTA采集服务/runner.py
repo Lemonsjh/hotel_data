@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from process_runner import ProcessTimeoutError, run_streamed
+from process_runner import ProcessCancelledError, ProcessTimeoutError, run_streamed
 from settings_validation import require_valid_settings
 from data_retention import DEFAULT_RETENTION
 
@@ -24,6 +24,7 @@ PROJECT_ROOT = ROOT.parent
 CONFIG_PATH = ROOT / "config" / "settings.json"
 STATUS_PATH = ROOT / "state" / "status.json"
 LOG_DIR = ROOT / "logs"
+RUN_STOP_PATH = ROOT / "state" / "collection_run.stop"
 
 
 TASKS = {
@@ -131,6 +132,22 @@ def load_status() -> dict[str, Any]:
             "tasks": {},
         },
     )
+
+
+def run_stop_requested() -> bool:
+    return RUN_STOP_PATH.exists()
+
+
+def request_run_stop() -> bool:
+    status = load_status()
+    if status.get("last_run_status") not in {"starting", "running", "stopping"}:
+        return False
+    RUN_STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RUN_STOP_PATH.write_text(now_text(), encoding="utf-8")
+    status["last_run_status"] = "stopping"
+    status["stop_requested_at"] = now_text()
+    save_json(STATUS_PATH, status)
+    return True
 
 
 def enabled_tasks(settings: dict[str, Any]) -> list[str]:
@@ -302,6 +319,7 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
             timeout=timeout,
             log_path=log_path,
             transform=lambda line: sanitize(line, settings),
+            should_cancel=run_stop_requested,
         )
         output = completed.output_tail
         result["return_code"] = completed.return_code
@@ -314,6 +332,9 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
     except ProcessTimeoutError as exc:
         result["status"] = "failed"
         result["error_summary"] = f"timeout after {timeout}s"
+    except ProcessCancelledError:
+        result["status"] = "cancelled"
+        result["error_summary"] = "已由用户中断"
     except Exception as exc:
         result["status"] = "failed"
         result["error_summary"] = str(exc)
@@ -370,6 +391,12 @@ def pending_result(name: str) -> dict[str, Any]:
     }
 
 
+def cancelled_result(name: str) -> dict[str, Any]:
+    result = pending_result(name)
+    result.update(status="cancelled", finished_at=now_text(), error_summary="已由用户中断")
+    return result
+
+
 def run_once(task_names: list[str] | None = None) -> dict[str, Any]:
     settings = load_settings()
     status = load_status()
@@ -382,12 +409,34 @@ def run_once(task_names: list[str] | None = None) -> dict[str, Any]:
         status.setdefault("tasks", {})[name] = pending_result(name)
     save_json(STATUS_PATH, status)
 
-    results = [run_task(name, settings, status) for name in tasks]
-    status = load_status()
-    status["last_run_finished_at"] = now_text()
-    status["last_run_status"] = "success" if all(item["status"] == "success" for item in results) else "partial_failed"
-    save_json(STATUS_PATH, status)
-    return status
+    results = []
+    cancelled = False
+    try:
+        for index, name in enumerate(tasks):
+            if run_stop_requested():
+                cancelled = True
+                for pending_name in tasks[index:]:
+                    status.setdefault("tasks", {})[pending_name] = cancelled_result(pending_name)
+                save_json(STATUS_PATH, status)
+                break
+            result = run_task(name, settings, status)
+            results.append(result)
+            if result["status"] == "cancelled" or run_stop_requested():
+                cancelled = True
+                for pending_name in tasks[index + 1:]:
+                    status.setdefault("tasks", {})[pending_name] = cancelled_result(pending_name)
+                save_json(STATUS_PATH, status)
+                break
+        status = load_status()
+        status["last_run_finished_at"] = now_text()
+        status["last_run_status"] = "cancelled" if cancelled else (
+            "success" if all(item["status"] == "success" for item in results) else "partial_failed"
+        )
+        status.pop("stop_requested_at", None)
+        save_json(STATUS_PATH, status)
+        return status
+    finally:
+        RUN_STOP_PATH.unlink(missing_ok=True)
 
 
 def config_warnings(settings: dict[str, Any]) -> list[str]:

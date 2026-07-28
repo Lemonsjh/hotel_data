@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import os
 import subprocess
 import threading
 import time
@@ -23,6 +24,33 @@ class ProcessTimeoutError(TimeoutError):
         self.output_tail = output_tail
 
 
+class ProcessCancelledError(RuntimeError):
+    def __init__(self, output_tail: str):
+        super().__init__("process interrupted by user")
+        self.output_tail = output_tail
+
+
+def stop_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
 def run_streamed(
     command: list[str],
     *,
@@ -31,6 +59,7 @@ def run_streamed(
     timeout: int,
     log_path: Path,
     transform: Callable[[str], str],
+    should_cancel: Callable[[], bool] | None = None,
 ) -> ProcessResult:
     """运行子进程，将合并输出逐行写入日志，并仅保留有限尾部。"""
     process = subprocess.Popen(
@@ -63,10 +92,21 @@ def run_streamed(
 
     with log_path.open("w", encoding="utf-8") as log:
         while not stream_closed or process.poll() is None:
+            if process.poll() is None and should_cancel and should_cancel():
+                stop_process_tree(process)
+                reader.join(timeout=2)
+                while not output_queue.empty():
+                    item = output_queue.get_nowait()
+                    if item is not None:
+                        clean = transform(item)
+                        log.write(clean)
+                        tail.append(clean)
+                log.write("\n[interrupted by user]\n")
+                log.flush()
+                raise ProcessCancelledError("".join(tail))
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                process.kill()
-                process.wait()
+                stop_process_tree(process)
                 reader.join(timeout=2)
                 while not output_queue.empty():
                     item = output_queue.get_nowait()

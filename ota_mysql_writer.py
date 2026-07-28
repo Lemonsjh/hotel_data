@@ -312,8 +312,9 @@ def sync_user_source_history(headers: Sequence[str], rows: Sequence[Sequence[Any
     sync_monthly_history("meituan_ota_user_source_monthly", headers, rows, retention_days)
 
 
-def sync_exposure_source_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 30) -> None:
-    sync_monthly_history("meituan_ota_exposure_source_monthly", headers, rows, retention_days)
+def sync_exposure_source_snapshot(headers: Sequence[str], row: Sequence[Any]) -> None:
+    """Keep only the latest 30-day exposure-source summary for each hotel."""
+    sync_latest_row("meituan_ota_exposure_source_monthly", headers, row)
 
 
 def sync_exposure_source_daily_history(

@@ -35,7 +35,7 @@ def register(app) -> None:
         completed_count = success_count + failed_count
         total = len(run_names)
         current_status = status.get("last_run_status", "never_run")
-        is_running = current_status in {"starting", "running"}
+        is_running = current_status in {"starting", "running", "stopping"}
         warnings = runner.config_warnings(settings)
         warning_html = "".join(f"<div class='warning'>{esc(w)}</div>" for w in warnings)
         cards = []
@@ -140,7 +140,10 @@ def register(app) -> None:
       <h2 style="margin:0">采集任务</h2>
       <div class="muted">最近运行：{esc(status.get('last_run_started_at') or '-')}</div>
     </div>
-    <form method="post" action="/run/all"><button {'disabled' if is_running else ''}>运行全部</button></form>
+    <div class="actions">
+      <form method="post" action="/run/all"><button {'disabled' if is_running else ''}>运行全部</button></form>
+      {"<form method='post' action='/run/stop'><button class='secondary'>中断当前采集</button></form>" if is_running else ""}
+    </div>
   </div>
   <div class="grid">{''.join(cards)}</div>
 </section>
@@ -156,6 +159,11 @@ def register(app) -> None:
     def run_task(task: str):
         if task in runner.TASKS:
             run_background(["run-task", task])
+        return redirect(url_for("index"))
+
+    @app.post("/run/stop")
+    def stop_current_run():
+        runner.request_run_stop()
         return redirect(url_for("index"))
 
     @app.post("/scheduler/collection/start")
