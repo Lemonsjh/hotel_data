@@ -20,6 +20,14 @@ def profile_path() -> Path:
     return base / "HotelAgent" / "browser_profiles" / "meituan"
 
 
+def process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 @contextmanager
 def browser_profile_lock(timeout_seconds: int = 120) -> Any:
     global _LOCK_DEPTH
@@ -41,10 +49,14 @@ def browser_profile_lock(timeout_seconds: int = 120) -> Any:
             break
         except FileExistsError:
             try:
-                if time.time() - path.stat().st_mtime > timeout_seconds + 60:
+                owner = int(path.read_text(encoding="ascii").strip() or "0")
+                if not process_alive(owner):
                     path.unlink(missing_ok=True)
                     continue
             except FileNotFoundError:
+                continue
+            except (ValueError, OSError):
+                path.unlink(missing_ok=True)
                 continue
             if time.monotonic() >= deadline:
                 raise RuntimeError("Meituan browser profile is busy; retry after the active task finishes")

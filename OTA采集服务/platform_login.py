@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,12 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 import runner
+
+
+MEITUAN_CODE_DIR = runner.PROJECT_ROOT / "美团OTA数据采集代码"
+if str(MEITUAN_CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(MEITUAN_CODE_DIR))
+from meituan_page_capture import browser_profile_lock
 
 
 PLATFORMS = {
@@ -240,7 +247,8 @@ def run(platform: str) -> int:
     info = require_platform(platform)
     stop_path(platform).unlink(missing_ok=True)
     try:
-        with sync_playwright() as playwright:
+        profile_guard = browser_profile_lock(timeout_seconds=600) if platform == "meituan" else nullcontext()
+        with profile_guard, sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
                 user_data_dir=str(profile_path(platform)),
                 channel="msedge",

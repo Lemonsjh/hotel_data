@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from contextlib import nullcontext
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,12 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+
+
+MEITUAN_CODE_DIR = Path(__file__).resolve().parent.parent / "美团OTA数据采集代码"
+if str(MEITUAN_CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(MEITUAN_CODE_DIR))
+from meituan_page_capture import browser_profile_lock
 
 
 MEITUAN_URL = "https://me.meituan.com/ebooking/merchant/comment-manage-react"
@@ -234,14 +241,15 @@ def probe(
     else:
         raise ValueError(f"Unsupported platform: {platform}")
 
-    with sync_playwright() as p:
+    profile = meituan_profile_path()
+    profile_guard = browser_profile_lock() if platform == "meituan" and profile.exists() else nullcontext()
+    with profile_guard, sync_playwright() as p:
         browser = None
         context = None
         session_source = "cookie"
         try:
             hits: list[dict[str, str]] = []
             meituan_request: dict[str, str] = {}
-            profile = meituan_profile_path()
             if platform == "meituan" and profile.exists():
                 try:
                     context = p.chromium.launch_persistent_context(
