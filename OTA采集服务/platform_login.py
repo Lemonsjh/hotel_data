@@ -194,6 +194,20 @@ def navigate(page: Any, url: str) -> None:
         raise RuntimeError(f"登录页面访问失败：HTTP {response.status} {url}")
 
 
+def initial_login_page(context: Any, platform: str) -> Any:
+    """Keep Ctrip login focused on one fresh tab instead of restored profile tabs."""
+    pages = list(context.pages)
+    page = pages[0] if pages else context.new_page()
+    if platform != "ctrip":
+        return page
+    for stale_page in pages[1:]:
+        try:
+            stale_page.close(run_before_unload=False)
+        except PlaywrightError:
+            pass
+    return page
+
+
 def save_cookies(platform: str, context: Any) -> int:
     settings = runner.load_settings()
     section = settings.setdefault(platform, {})
@@ -259,7 +273,7 @@ def run(platform: str) -> int:
                 timezone_id="Asia/Shanghai",
                 args=["--start-maximized"],
             )
-            page = context.pages[0] if context.pages else context.new_page()
+            page = initial_login_page(context, platform)
             navigate(page, info["url"])
 
             if platform == "meituan":
