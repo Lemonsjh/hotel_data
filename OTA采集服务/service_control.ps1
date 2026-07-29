@@ -10,12 +10,15 @@ $StateDir = Join-Path $Root "state"
 $ConfigPath = Join-Path $Root "config\settings.json"
 $SchedulerPath = Join-Path $Root "manual_scheduler.py"
 $PriceSchedulerPath = Join-Path $Root "price_scheduler.py"
+$ReplySchedulerPath = Join-Path $Root "review_reply_scheduler.py"
 $PanelPath = Join-Path $Root "panel.py"
 $SchedulerPidPath = Join-Path $StateDir "manual_scheduler.pid"
 $PriceSchedulerPidPath = Join-Path $StateDir "price_scheduler.pid"
+$ReplySchedulerPidPath = Join-Path $StateDir "review_reply_scheduler.pid"
 $PanelPidPath = Join-Path $StateDir "panel.pid"
 $StopPath = Join-Path $StateDir "manual_scheduler.stop"
 $PriceStopPath = Join-Path $StateDir "price_scheduler.stop"
+$ReplyStopPath = Join-Path $StateDir "review_reply_scheduler.stop"
 
 function Get-TrackedProcess([string]$PidPath, [string]$ExpectedScript) {
     if (-not (Test-Path -LiteralPath $PidPath)) { return $null }
@@ -60,6 +63,7 @@ function Start-ManualService {
     if (Test-Path -LiteralPath $browserPath) { $env:PLAYWRIGHT_BROWSERS_PATH = $browserPath }
     if (-not (Test-Path -LiteralPath $SchedulerPath)) { throw "Scheduler not found: $SchedulerPath" }
     if (-not (Test-Path -LiteralPath $PriceSchedulerPath)) { throw "Price scheduler not found: $PriceSchedulerPath" }
+    if (-not (Test-Path -LiteralPath $ReplySchedulerPath)) { throw "Review reply scheduler not found: $ReplySchedulerPath" }
     if (-not (Test-Path -LiteralPath $PanelPath)) { throw "Panel not found: $PanelPath" }
 
     $persistentTask = Get-ScheduledTask -TaskName "HotelOTACollector" -ErrorAction SilentlyContinue
@@ -105,6 +109,24 @@ function Start-ManualService {
         Set-Content -LiteralPath $PriceStopPath -Value "stop" -Encoding ASCII
     }
 
+    $replySchedulerEnabled = $false
+    if ($null -ne $settings.reply_scheduler -and $null -ne $settings.reply_scheduler.enabled) {
+        $replySchedulerEnabled = [bool]$settings.reply_scheduler.enabled
+    }
+    if ($replySchedulerEnabled) {
+        Remove-Item -LiteralPath $ReplyStopPath -Force -ErrorAction SilentlyContinue
+        $replyScheduler = Get-TrackedProcess $ReplySchedulerPidPath "review_reply_scheduler.py"
+        if (-not $replyScheduler) {
+            Start-Process -FilePath $pythonPath -ArgumentList "`"$ReplySchedulerPath`"" `
+                -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
+            Start-Sleep -Seconds 1
+            $replyScheduler = Get-TrackedProcess $ReplySchedulerPidPath "review_reply_scheduler.py"
+            if (-not $replyScheduler) { throw "Review reply scheduler failed to start. Check logs\review_reply_scheduler.log." }
+        }
+    } else {
+        Set-Content -LiteralPath $ReplyStopPath -Value "stop" -Encoding ASCII
+    }
+
     $port = [int]($settings.service.panel_port)
     if (-not $port) { $port = 8765 }
     $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -133,6 +155,7 @@ function Stop-ManualService {
     New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
     Set-Content -LiteralPath $StopPath -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
     Set-Content -LiteralPath $PriceStopPath -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
+    Set-Content -LiteralPath $ReplyStopPath -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
 
     $panel = Get-TrackedProcess $PanelPidPath "panel.py"
     if ($panel) { Stop-Process -Id $panel.ProcessId -Force }
@@ -153,14 +176,24 @@ function Stop-ManualService {
         Remove-Item -LiteralPath $PriceStopPath -Force -ErrorAction SilentlyContinue
         Write-Host "Price scheduler is not running."
     }
+
+    $replyScheduler = Get-TrackedProcess $ReplySchedulerPidPath "review_reply_scheduler.py"
+    if ($replyScheduler) {
+        Write-Host "Review reply scheduler stop requested. An active reply will finish first."
+    } else {
+        Remove-Item -LiteralPath $ReplyStopPath -Force -ErrorAction SilentlyContinue
+        Write-Host "Review reply scheduler is not running."
+    }
 }
 
 function Show-ManualStatus {
     $scheduler = Get-TrackedProcess $SchedulerPidPath "manual_scheduler.py"
     $priceScheduler = Get-TrackedProcess $PriceSchedulerPidPath "price_scheduler.py"
+    $replyScheduler = Get-TrackedProcess $ReplySchedulerPidPath "review_reply_scheduler.py"
     $panel = Get-TrackedProcess $PanelPidPath "panel.py"
     Write-Host "scheduler:" $(if ($scheduler) { "running (PID $($scheduler.ProcessId))" } else { "stopped" })
     Write-Host "price scheduler:" $(if ($priceScheduler) { "running (PID $($priceScheduler.ProcessId))" } else { "stopped" })
+    Write-Host "review reply scheduler:" $(if ($replyScheduler) { "running (PID $($replyScheduler.ProcessId))" } else { "stopped" })
     Write-Host "panel:" $(if ($panel) { "running (PID $($panel.ProcessId))" } else { "stopped" })
 }
 

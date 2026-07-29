@@ -8,7 +8,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from meituan_page_capture import page_access_issue
+from meituan_config import MEITUAN_ME_COOKIE
+from meituan_page_capture import browser_profile_lock, cookie_entries, page_access_issue
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import DB_CONFIG
@@ -20,6 +21,7 @@ VIDEO_TYPES = (
     ("hotel_preview_video", "\u9152\u5e97\u9884\u89c8\u89c6\u9891"),
     ("room_type_preview_video", "\u623f\u578b\u9884\u89c8\u89c6\u9891"),
 )
+PAGE_WAIT_SECONDS = 12
 
 
 def profile_path() -> Path:
@@ -48,7 +50,7 @@ def extract_video_counts(text: str) -> list[tuple[str, int, int]]:
 
 def fetch_video_counts() -> list[tuple[str, int, int]]:
     last_url = VIDEO_URL
-    with sync_playwright() as playwright:
+    with browser_profile_lock(), sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile_path()),
             channel="msedge",
@@ -57,9 +59,12 @@ def fetch_video_counts() -> list[tuple[str, int, int]]:
             locale="zh-CN",
         )
         try:
+            cookies = cookie_entries(MEITUAN_ME_COOKIE, "https://me.meituan.com/")
+            if cookies:
+                context.add_cookies(cookies)
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(VIDEO_URL, wait_until="domcontentloaded", timeout=60_000)
-            deadline = time.monotonic() + 45
+            deadline = time.monotonic() + PAGE_WAIT_SECONDS
             while time.monotonic() < deadline:
                 last_url = page.url
                 rows = extract_video_counts(page_text(page))

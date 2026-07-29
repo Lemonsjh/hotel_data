@@ -171,7 +171,10 @@ def wait_for_auth(context: Any, platform: str, required: set[str], message: str)
         try:
             pages = context.pages
             if required.issubset(cookie_names(context)) and pages:
-                return pages[-1]
+                active_page = pages[-1]
+                active_url = active_page.url.lower()
+                if "login" not in active_url and "passport" not in active_url:
+                    return active_page
             time.sleep(0.5)
         except PlaywrightError:
             time.sleep(0.5)

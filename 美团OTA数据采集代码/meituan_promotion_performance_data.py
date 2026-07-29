@@ -46,6 +46,7 @@ COLUMNS = [
     "booking_order_count", "room_night_count", "booking_order_amount", "spend_amount",
     "cost_per_click", "click_rate_pct", "merchant_view_count", "cash_spend_amount",
 ]
+PAGE_WAIT_SECONDS = 12
 
 
 def profile_path() -> Path:
@@ -96,7 +97,7 @@ def request_page(context: Any, page: Any, period_start: date, period_end: date, 
     page.on("response", capture_response)
     try:
         page.goto(PROMOTION_PAGE_URL, wait_until="domcontentloaded", timeout=60_000)
-        for _ in range(90):
+        for _ in range(PAGE_WAIT_SECONDS * 2):
             if responses:
                 break
             if issue := page_access_issue(page):

@@ -48,6 +48,10 @@ PUBLIC_WELFARE_ACTIVE = "\u751f\u6548\u4e2d"
 SCHEDULED_INVOICE_CODE = "reservation_invoice"
 SCHEDULED_INVOICE_NAME = "\u9884\u7ea6\u53d1\u7968"
 SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
+PAGE_CHECK_SECONDS = 10
+PAGE_ACTION_TIMEOUT_MS = 5_000
+
+
 def fetch_youmeihui_status() -> str:
     if not MEITUAN_EB_COOKIE:
         raise RuntimeError("MEITUAN_EB_COOKIE is empty")
@@ -93,7 +97,7 @@ def fetch_business_travel_status() -> str:
             context.add_cookies(browser_cookies())
             page = context.new_page()
             page.goto(BUSINESS_TRAVEL_URL, wait_until="domcontentloaded", timeout=60_000)
-            for _ in range(20):
+            for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:
                     try:
                         if "\u5df2\u52a0\u5165\u5546\u65c5\u5408\u4f5c" in frame.locator("body").inner_text(timeout=2_000):
@@ -136,12 +140,14 @@ def fetch_hotel_highlights_status() -> str:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
             menu = page.get_by_text("\u4fe1\u606f\u7ba1\u7406", exact=True)
-            menu.wait_for(state="visible", timeout=20_000)
-            menu.click(force=True)
+            menu.wait_for(state="visible", timeout=PAGE_ACTION_TIMEOUT_MS)
+            menu.click(force=True, timeout=PAGE_ACTION_TIMEOUT_MS)
             page.wait_for_timeout(500)
-            page.get_by_text(HIGHLIGHTS_NAME, exact=True).first.dispatch_event("click")
-            page.wait_for_timeout(4_000)
-            for _ in range(20):
+            page.get_by_text(HIGHLIGHTS_NAME, exact=True).first.dispatch_event(
+                "click", timeout=PAGE_ACTION_TIMEOUT_MS
+            )
+            page.wait_for_timeout(1_000)
+            for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:
                     try:
                         if frame.locator(".list-empty").count():
@@ -172,7 +178,7 @@ def fetch_auto_order_status() -> str:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(AUTO_ORDER_URL, wait_until="domcontentloaded", timeout=60_000)
-            for _ in range(60):
+            for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:
                     try:
                         open_radio = frame.locator('input#status-open[value="1"]')
@@ -200,9 +206,11 @@ def fetch_public_welfare_status() -> str:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(5_000)
-            page.get_by_text(PUBLIC_WELFARE_NAME, exact=True).first.dispatch_event("click")
-            for _ in range(40):
+            page.wait_for_timeout(1_000)
+            page.get_by_text(PUBLIC_WELFARE_NAME, exact=True).first.dispatch_event(
+                "click", timeout=PAGE_ACTION_TIMEOUT_MS
+            )
+            for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:
                     if urlparse(frame.url).hostname != "gongyi.meituan.com":
                         continue
@@ -233,7 +241,7 @@ def fetch_scheduled_invoice_status() -> str:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
             maintenance_clicked = False
-            for _ in range(60):
+            for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:
                     try:
                         links = frame.locator("a", has_text="\u9152\u5e97\u53d1\u7968\u4fe1\u606f\u7ef4\u62a4")
@@ -253,9 +261,9 @@ def fetch_scheduled_invoice_status() -> str:
             if not maintenance_clicked:
                 raise RuntimeError("Hotel invoice maintenance link was not found")
 
-            page.wait_for_timeout(1_500)
+            page.wait_for_timeout(1_000)
             page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
-            for _ in range(120):
+            for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:
                     try:
                         texts = frame.locator("span.no-join-title").all_inner_texts()

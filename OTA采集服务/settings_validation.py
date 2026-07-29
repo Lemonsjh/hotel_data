@@ -11,6 +11,7 @@ POSITIVE_NUMBERS = (
     "price_scheduler.interval_minutes",
     "price_scheduler.startup_delay_seconds",
     "price_scheduler.max_tasks_per_run",
+    "reply_scheduler.max_tasks_per_run",
     "pms.timeout_seconds",
     "pms.navigation_timeout_ms",
     "pms.action_timeout_ms",
@@ -52,7 +53,7 @@ def validate_settings(settings: Any) -> list[str]:
     if not isinstance(settings, dict):
         return ["配置根节点必须是 JSON 对象"]
 
-    for section in ("service", "price_scheduler", "data_retention", "hotel", "paths", "pms", "mysql", "meituan", "ctrip", "tasks"):
+    for section in ("service", "price_scheduler", "reply_scheduler", "data_retention", "hotel", "paths", "pms", "mysql", "meituan", "ctrip", "tasks"):
         value = settings.get(section)
         if value is not None and not isinstance(value, dict):
             errors.append(f"{section} 必须是 JSON 对象")

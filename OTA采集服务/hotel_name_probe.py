@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from http.cookies import SimpleCookie
@@ -96,6 +97,11 @@ def parse_cookie_header(cookie_header: str, domains: list[str]) -> list[dict[str
         for domain in domains:
             cookies.append({"name": name, "value": morsel.value, "domain": domain, "path": "/"})
     return cookies
+
+
+def meituan_profile_path() -> Path:
+    local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    return local / "HotelAgent" / "browser_profiles" / "meituan"
 
 
 def extract_meituan_comment_request(url: str) -> dict[str, str]:
@@ -208,26 +214,49 @@ def js_storage_probe() -> str:
     """
 
 
-def probe(platform: str, cookie_header: str, timeout_ms: int = 45000) -> dict[str, Any]:
+def probe(
+    platform: str,
+    cookie_header: str,
+    secondary_cookie_header: str = "",
+    timeout_ms: int = 45000,
+) -> dict[str, Any]:
     if not cookie_header.strip():
         return {"ok": False, "error": f"{platform} cookie is empty", "hotel_name": "", "candidates": []}
 
     if platform == "meituan":
         url = MEITUAN_URL
-        domains = [".meituan.com", "meituan.com", ".me.meituan.com", "me.meituan.com", ".eb.meituan.com", "eb.meituan.com"]
+        primary_domains = [".meituan.com", "meituan.com", ".me.meituan.com", "me.meituan.com"]
+        secondary_domains = [".eb.meituan.com", "eb.meituan.com"]
     elif platform == "ctrip":
         url = CTRIP_URL
-        domains = [".ctrip.com", "ctrip.com", ".ebooking.ctrip.com", "ebooking.ctrip.com"]
+        primary_domains = [".ctrip.com", "ctrip.com", ".ebooking.ctrip.com", "ebooking.ctrip.com"]
+        secondary_domains: list[str] = []
     else:
         raise ValueError(f"Unsupported platform: {platform}")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        browser = None
+        context = None
+        session_source = "cookie"
         try:
             hits: list[dict[str, str]] = []
             meituan_request: dict[str, str] = {}
-            context = browser.new_context(viewport={"width": 1280, "height": 800})
-            context.add_cookies(parse_cookie_header(cookie_header, domains))
+            profile = meituan_profile_path()
+            if platform == "meituan" and profile.exists():
+                try:
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=str(profile), channel="msedge", headless=True, no_viewport=True
+                    )
+                    session_source = "profile"
+                except PlaywrightError:
+                    context = None
+            if context is None:
+                browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+                context = browser.new_context(viewport={"width": 1280, "height": 800})
+                cookies = parse_cookie_header(cookie_header, primary_domains)
+                if secondary_cookie_header.strip():
+                    cookies.extend(parse_cookie_header(secondary_cookie_header, secondary_domains))
+                context.add_cookies(cookies)
             page = context.new_page()
             page.route(
                 "**/*",
@@ -298,15 +327,18 @@ def probe(platform: str, cookie_header: str, timeout_ms: int = 45000) -> dict[st
                     "hotel_name": hotel_name,
                     "current_url": current_url,
                     "title": page.title(),
+                    "session_source": session_source,
                     "candidates": candidates[:15],
                 }
                 if platform == "meituan":
                     result.update(meituan_request)
                 return result
             finally:
-                context.close()
+                if context is not None:
+                    context.close()
         finally:
-            browser.close()
+            if browser is not None:
+                browser.close()
 
 
 def main() -> None:
@@ -314,11 +346,18 @@ def main() -> None:
     parser.add_argument("platform", choices=["meituan", "ctrip"])
     parser.add_argument("--cookie-file")
     parser.add_argument("--cookie")
+    parser.add_argument("--secondary-cookie")
     args = parser.parse_args()
     cookie_header = args.cookie or ""
     if args.cookie_file:
         cookie_header = Path(args.cookie_file).read_text(encoding="utf-8", errors="ignore").strip()
-    print(json.dumps(probe(args.platform, cookie_header), ensure_ascii=True, indent=2))
+    print(
+        json.dumps(
+            probe(args.platform, cookie_header, args.secondary_cookie or ""),
+            ensure_ascii=True,
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

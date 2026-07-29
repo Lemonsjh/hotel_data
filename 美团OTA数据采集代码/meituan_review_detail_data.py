@@ -353,7 +353,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Collect Meituan review details.")
     parser.add_argument("--input-json", help="Parse a saved response without requesting.")
     parser.add_argument("--limit", type=int, default=10)
-    parser.add_argument("--max-pages", type=int, default=500)
+    parser.add_argument("--max-pages", type=int, default=10)
     parser.add_argument("--full-history", action="store_true")
     parser.add_argument("--no-db", action="store_true")
     args = parser.parse_args()

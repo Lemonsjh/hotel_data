@@ -14,6 +14,10 @@
     "startup_delay_seconds": 60,
     "max_tasks_per_run": 20
   },
+  "reply_scheduler": {
+    "enabled": false,
+    "max_tasks_per_run": 10
+  },
   "data_retention": {
     "pms_hourly_days": 180,
     "pms_daily_days": 400,

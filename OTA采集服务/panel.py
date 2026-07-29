@@ -59,8 +59,10 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
-def probe_hotel_name(platform: str, cookie: str) -> dict[str, Any]:
+def probe_hotel_name(platform: str, cookie: str, secondary_cookie: str = "") -> dict[str, Any]:
     command = [sys.executable, str(runner.ROOT / "hotel_name_probe.py"), platform, "--cookie", cookie]
+    if secondary_cookie:
+        command.extend(["--secondary-cookie", secondary_cookie])
     completed = subprocess.run(
         command,
         cwd=str(runner.ROOT),
@@ -302,18 +304,23 @@ def detect_hotel(platform: str):
 
     settings = apply_form_to_settings(runner.load_settings())
     if platform == "meituan":
-        cookie = (get_path(settings, "meituan.me_cookie") or get_path(settings, "meituan.eb_cookie") or "").strip()
+        cookie = (get_path(settings, "meituan.me_cookie") or "").strip()
+        secondary_cookie = (get_path(settings, "meituan.eb_cookie") or "").strip()
+        if not cookie:
+            cookie = secondary_cookie
+            secondary_cookie = ""
         target_key = "meituan.hotel_name"
         label = "\u7f8e\u56e2"
     else:
         cookie = (get_path(settings, "ctrip.cookie") or "").strip()
+        secondary_cookie = ""
         target_key = "ctrip.hotel_name"
         label = "\u643a\u7a0b"
 
     if not cookie:
         return redirect(url_for("config_page", error=f"{label} Cookie \u4e3a\u7a7a\uff0c\u8bf7\u5148\u7c98\u8d34 Cookie"))
 
-    result = probe_hotel_name(platform, cookie)
+    result = probe_hotel_name(platform, cookie, secondary_cookie)
     hotel_name = str(result.get("hotel_name") or "").strip()
     if platform == "meituan":
         config_fields = {

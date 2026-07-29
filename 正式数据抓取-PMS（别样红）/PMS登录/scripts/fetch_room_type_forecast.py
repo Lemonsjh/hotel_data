@@ -23,6 +23,7 @@ BASE_URL = pms_config.FORECAST_API_BASE_URL
 ROOM_TYPES_URL = f"{BASE_URL}/API/Room/GetRoomTypesForcasting"
 FORECAST_URL = f"{BASE_URL}/API/Room/SearchBaseRoomForcasting"
 PAGE_URL = f"{pms_config.LOGIN_BASE_URL}/newFuture"
+REQUEST_ATTEMPTS = 3
 
 
 def api_session() -> requests.Session | None:
@@ -38,13 +39,23 @@ def api_session() -> requests.Session | None:
 
 
 def request_json(session: requests.Session, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
-    response = session.request(method, url, timeout=pms_config.API_TIMEOUT_SECONDS, **kwargs)
-    if response.status_code != 200:
-        raise RuntimeError(f"接口状态码 {response.status_code}: {response.text[:160]}")
-    data = response.json()
-    if not isinstance(data, dict) or data.get("Code") != 0:
-        raise RuntimeError(f"接口返回异常: {str(data)[:200]}")
-    return data
+    last_error: Exception | None = None
+    for attempt in range(1, REQUEST_ATTEMPTS + 1):
+        try:
+            response = session.request(method, url, timeout=pms_config.API_TIMEOUT_SECONDS, **kwargs)
+            if response.status_code != 200:
+                raise RuntimeError(f"接口状态码 {response.status_code}: {response.text[:160]}")
+            data = response.json()
+            if not isinstance(data, dict) or data.get("Code") != 0:
+                raise RuntimeError(f"接口返回异常: {str(data)[:200]}")
+            return data
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            if attempt == REQUEST_ATTEMPTS:
+                break
+            print(f"预测服务请求失败，第 {attempt}/{REQUEST_ATTEMPTS} 次重试: {exc}")
+            time.sleep(attempt)
+    raise RuntimeError(f"预测服务请求连续失败: {last_error}") from last_error
 
 
 def forecast_window(days: int) -> dict[str, str]:
