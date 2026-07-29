@@ -185,9 +185,16 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); }
   gap: 14px;
   margin-bottom: 18px;
 }
+.config-heading > div:first-child { min-width: 0; }
 .config-heading h2 { margin: 4px 0 5px; font-size: 20px; }
 .config-heading p { margin: 0; color: var(--muted); font-size: 13px; }
-.config-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.config-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .login-assistant {
   display: flex;
   justify-content: space-between;
@@ -333,7 +340,8 @@ pre { background: #101815; color: #eef7f1; padding: 16px; border-radius: 10px; o
 
 @media (max-width: 980px) {
   .hero { grid-template-columns: 1fr; }
-  .summary, .grid, .form-grid, .config-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary, .grid, .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .config-layout { grid-template-columns: 1fr; }
   .switch-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
@@ -346,7 +354,7 @@ pre { background: #101815; color: #eef7f1; padding: 16px; border-radius: 10px; o
   .config-system > .config-grid > .mysql-pair-field { grid-column: auto; }
   .ota-scope-options { grid-template-columns: 1fr; }
   .config-heading, .save-bar { align-items: stretch; flex-direction: column; }
-  .config-actions { justify-content: flex-start; }
+  .config-actions { flex-wrap: wrap; justify-content: flex-start; }
   .login-assistant { align-items: flex-start; flex-direction: column; }
   .login-state { max-width: 100%; text-align: left; }
   .save-bar { position: static; bottom: auto; }

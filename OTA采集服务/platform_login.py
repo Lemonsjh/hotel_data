@@ -15,6 +15,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 import runner
+from hotel_name_probe import probe as probe_hotel
 
 
 MEITUAN_CODE_DIR = runner.PROJECT_ROOT / "美团OTA数据采集代码"
@@ -196,6 +197,56 @@ def navigate(page: Any, url: str) -> None:
         raise RuntimeError(f"登录页面访问失败：HTTP {response.status} {url}")
 
 
+def validate_protected_page(page: Any, platform: str) -> None:
+    page.wait_for_timeout(1200)
+    current_url = page.url.lower()
+    blocked_url_marks = ("login", "passport", "captcha", "challenge", "verify")
+    body = page.locator("body").inner_text(timeout=10000)[:6000]
+    blocked_texts = (
+        "\u8bf7\u5148\u767b\u5f55",
+        "\u5b89\u5168\u9a8c\u8bc1",
+        "\u8bbf\u95ee\u9a8c\u8bc1",
+        "\u5f53\u524d\u64cd\u4f5c\u5f02\u5e38",
+        "\u8bf7\u5b8c\u6210\u9a8c\u8bc1",
+    )
+    if any(mark in current_url for mark in blocked_url_marks) or any(text in body for text in blocked_texts):
+        raise RuntimeError(f"{PLATFORMS[platform]['label']}\u767b\u5f55\u672a\u901a\u8fc7\u53d7\u4fdd\u62a4\u9875\u9762\u9a8c\u8bc1")
+
+
+def refresh_hotel_settings(platform: str) -> dict[str, Any]:
+    settings = runner.load_settings()
+    section = settings.setdefault(platform, {})
+    if platform == "meituan":
+        result = probe_hotel(
+            platform,
+            str(section.get("me_cookie") or ""),
+            str(section.get("eb_cookie") or ""),
+        )
+        mapping = {
+            "poi_id": "poi_id",
+            "partner_id": "partner_id",
+            "biz_account_id": "biz_account_id",
+            "review_detail_url": "review_detail_url",
+        }
+        missing = [source for source in mapping.values() if not str(result.get(source) or "").strip()]
+        if not result.get("ok") or missing:
+            return {"ok": False, "error": result.get("error") or "\u9152\u5e97\u53c2\u6570\u4e0d\u5b8c\u6574"}
+        updates = {target: str(result[source]).strip() for target, source in mapping.items()}
+        hotel_name = str(result.get("hotel_name") or "").strip()
+        if hotel_name:
+            updates["hotel_name"] = hotel_name
+    else:
+        result = probe_hotel(platform, str(section.get("cookie") or ""))
+        hotel_name = str(result.get("hotel_name") or "").strip()
+        if not result.get("ok") or not hotel_name:
+            return {"ok": False, "error": result.get("error") or "\u672a\u8bc6\u522b\u5230\u9152\u5e97\u540d"}
+        updates = {"hotel_name": hotel_name}
+
+    section.update(updates)
+    runner.save_json(runner.CONFIG_PATH, settings)
+    return {"ok": True, "hotel_name": str(updates.get("hotel_name") or "")}
+
+
 def initial_login_page(context: Any, platform: str) -> Any:
     """Keep Ctrip login focused on one fresh tab instead of restored profile tabs."""
     pages = list(context.pages)
@@ -262,6 +313,7 @@ def keep_open(context: Any, platform: str) -> None:
 def run(platform: str, switch_account: bool = False) -> int:
     info = require_platform(platform)
     stop_path(platform).unlink(missing_ok=True)
+    refresh_identity = False
     try:
         profile_guard = browser_profile_lock(timeout_seconds=600) if platform == "meituan" else nullcontext()
         with profile_guard, sync_playwright() as playwright:
@@ -296,7 +348,11 @@ def run(platform: str, switch_account: bool = False) -> int:
                     "请在Edge中完成携程登录",
                 )
 
+            protected_url = info["eb_url"] if platform == "meituan" else info["url"]
+            navigate(page, protected_url)
+            validate_protected_page(page, platform)
             count = save_cookies(platform, context)
+            refresh_identity = switch_account or not had_session
             write_status(
                 platform,
                 "success",
@@ -313,6 +369,25 @@ def run(platform: str, switch_account: bool = False) -> int:
                 context.close()
             except PlaywrightError:
                 pass
+        if refresh_identity:
+            try:
+                result = refresh_hotel_settings(platform)
+            except Exception as exc:
+                result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            if result.get("ok"):
+                hotel_name = str(result.get("hotel_name") or "").strip()
+                message = f"{info['label']}Cookie\u548c\u9152\u5e97\u53c2\u6570\u5df2\u66f4\u65b0"
+                if hotel_name:
+                    message += f"\uff1a{hotel_name}"
+                write_status(platform, "success", message, completed_at=now_text(), pid=0)
+            else:
+                write_status(
+                    platform,
+                    "success",
+                    f"{info['label']}Cookie\u5df2\u4fdd\u5b58\uff1b\u8b66\u544a\uff1a\u9152\u5e97\u53c2\u6570\u672a\u66f4\u65b0\uff1a{result.get('error')}",
+                    completed_at=now_text(),
+                    pid=0,
+                )
         return 0
     except LoginCancelled as exc:
         write_status(platform, "cancelled", str(exc))
