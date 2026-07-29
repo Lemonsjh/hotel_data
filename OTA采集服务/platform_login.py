@@ -115,7 +115,7 @@ def stop_login_process(pid: Any) -> None:
     )
 
 
-def start(platform: str, settings: dict[str, Any]) -> int:
+def start(platform: str, settings: dict[str, Any], switch_account: bool = False) -> int:
     info = require_platform(platform)
     old = read_status(platform)
     old_pid = old.get("pid")
@@ -138,6 +138,8 @@ def start(platform: str, settings: dict[str, Any]) -> int:
     stop_path(platform).unlink(missing_ok=True)
     write_status(platform, "starting", f"正在打开{info['label']}登录窗口", pid=0)
     command = [str(runner.python_path(settings)), str(Path(__file__).resolve()), platform]
+    if switch_account:
+        command.append("--switch-account")
     try:
         process = subprocess.Popen(
             command,
@@ -257,7 +259,7 @@ def keep_open(context: Any, platform: str) -> None:
         time.sleep(0.5)
 
 
-def run(platform: str) -> int:
+def run(platform: str, switch_account: bool = False) -> int:
     info = require_platform(platform)
     stop_path(platform).unlink(missing_ok=True)
     try:
@@ -273,6 +275,11 @@ def run(platform: str) -> int:
                 timezone_id="Asia/Shanghai",
                 args=["--start-maximized"],
             )
+            required_cookies = {"mebsid"} if platform == "meituan" else {"usertoken", "usersign"}
+            had_session = required_cookies.issubset(cookie_names(context))
+            if switch_account:
+                context.clear_cookies()
+                had_session = False
             page = initial_login_page(context, platform)
             navigate(page, info["url"])
 
@@ -298,7 +305,10 @@ def run(platform: str) -> int:
                 completed_at=now_text(),
             )
             show_success(context, platform, count)
-            keep_open(context, platform)
+            if had_session:
+                keep_open(context, platform)
+            else:
+                time.sleep(3)
             try:
                 context.close()
             except PlaywrightError:
@@ -317,7 +327,9 @@ def run(platform: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="OTA可见Edge登录助手")
     parser.add_argument("platform", choices=sorted(PLATFORMS))
-    return run(parser.parse_args().platform)
+    parser.add_argument("--switch-account", action="store_true")
+    args = parser.parse_args()
+    return run(args.platform, args.switch_account)
 
 
 if __name__ == "__main__":

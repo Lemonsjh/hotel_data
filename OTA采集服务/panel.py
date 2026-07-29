@@ -138,6 +138,7 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         actions = (
             "<div class='config-actions'>"
             "<button type='submit' class='compact' formaction='/platform-login/meituan'>打开Edge登录</button>"
+            "<button type='submit' class='secondary compact' name='login_mode' value='switch' formaction='/platform-login/meituan'>&#20999;&#25442;&#36134;&#21495;</button>"
             "<button type='submit' class='secondary compact' formaction='/detect-hotel/meituan'>识别酒店参数</button>"
             "</div>"
         )
@@ -145,6 +146,7 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         actions = (
             "<div class='config-actions'>"
             "<button type='submit' class='compact' formaction='/platform-login/ctrip'>打开Edge登录</button>"
+            "<button type='submit' class='secondary compact' name='login_mode' value='switch' formaction='/platform-login/ctrip'>&#20999;&#25442;&#36134;&#21495;</button>"
             "<button type='submit' class='secondary compact' formaction='/detect-hotel/ctrip'>识别酒店</button>"
             "</div>"
         )
@@ -261,7 +263,8 @@ def start_platform_login(platform: str):
     try:
         settings = apply_form_to_settings(runner.load_settings())
         runner.save_json(runner.CONFIG_PATH, settings)
-        platform_login.start(platform, settings)
+        switch_account = request.form.get("login_mode") == "switch"
+        platform_login.start(platform, settings, switch_account=switch_account)
         label = platform_login.PLATFORMS[platform]["label"]
         return redirect(url_for("config_page", notice=f"{label}登录窗口已打开，请在Edge中手动登录"))
     except Exception as exc:
