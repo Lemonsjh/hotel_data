@@ -14,6 +14,7 @@ from config_schema import (
     SHORT_SECRET_FIELDS,
 )
 import log_routes
+import local_reset
 import platform_login
 import price_routes
 import price_tasks
@@ -168,10 +169,10 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         <div>
           <div class="config-kicker">{badge}</div>
           <h2>{esc(section['title'])}</h2>
-          <p>{esc(section['hint'])}</p>
         </div>
         {actions}
       </div>
+      <p class="config-hint">{esc(section['hint'])}</p>
       {login_html}
       <div class="config-grid">{''.join(regular)}</div>
       {advanced_html}
@@ -224,7 +225,11 @@ def config_page() -> str:
   </section>
   <div class="save-bar">
     <div><strong>敏感信息不会回显</strong><span>密码、Cookie 和签名 URL 留空即保留原值</span></div>
-    <button type="submit">保存全部配置</button>
+    <div class="save-actions">
+      <button type="submit" class="secondary reset-config" formmethod="post" formaction="/config/reset"
+        onclick="return confirm('将清除本地配置、登录 Cookie 与专用浏览器 Profile；数据库中的已采集数据不会删除。确定继续吗？')">重置本地配置</button>
+      <button type="submit">保存全部配置</button>
+    </div>
   </div>
 </form>
 <script>
@@ -254,6 +259,20 @@ def save_config():
     settings = apply_form_to_settings(settings)
     runner.save_json(runner.CONFIG_PATH, settings)
     return redirect(url_for("config_page"))
+
+
+@app.post("/config/reset")
+def reset_config():
+    try:
+        local_reset.reset_local_configuration()
+        return redirect(
+            url_for(
+                "config_page",
+                notice="本地配置与登录状态已重置；数据库数据未删除，定时任务已暂停",
+            )
+        )
+    except Exception as exc:
+        return redirect(url_for("config_page", error=str(exc)))
 
 
 @app.post("/platform-login/<platform>")

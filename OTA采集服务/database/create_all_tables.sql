@@ -196,7 +196,6 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_order_detail` (
 
 -- Table: ctrip_ota_order_loss_monthly
 CREATE TABLE IF NOT EXISTS `ctrip_ota_order_loss_monthly` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `hotel_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `platform_scope` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -209,8 +208,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_order_loss_monthly` (
   `common_browse_rate_pct` decimal(9,4) DEFAULT NULL,
   `order_conversion_rate_pct` decimal(9,4) DEFAULT NULL,
   `loss_order_count` int DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_ctrip_order_loss_monthly` (`hotel_id`,`platform_scope`,`ranking_position`),
+  PRIMARY KEY (`hotel_id`,`platform_scope`,`ranking_position`),
   KEY `idx_ctrip_order_loss_period` (`hotel_id`,`period_end_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -403,7 +401,6 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_review_ranking` (
 
 -- Table: ctrip_ota_userprofile_distribution
 CREATE TABLE IF NOT EXISTS `ctrip_ota_userprofile_distribution` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `hotel_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `platform_scope` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -414,8 +411,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_userprofile_distribution` (
   `metric_value` decimal(12,4) DEFAULT NULL,
   `metric_unit` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `rank_position` int DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_ctrip_userprofile_distribution` (`hotel_id`,`platform_scope`,`dimension_code`,`bucket_label`)
+  PRIMARY KEY (`hotel_id`,`platform_scope`,`dimension_code`,`bucket_label`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Table: ctrip_price_task
@@ -633,7 +629,6 @@ CREATE TABLE IF NOT EXISTS `jl02_hotel_performance_daily` (
 
 -- Table: jl11_room_type_classification
 CREATE TABLE IF NOT EXISTS `jl11_room_type_classification` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `hotel_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `source_platform` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'PMS',
@@ -654,8 +649,7 @@ CREATE TABLE IF NOT EXISTS `jl11_room_type_classification` (
   `overnight_room_count` decimal(18,4) DEFAULT NULL,
   `overnight_occupancy_rate` decimal(9,4) DEFAULT NULL,
   `snapshot_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_jl11_snapshot_row` (`hotel_id`,`snapshot_date`,`section`,`room_type_name`,`dimension_code`),
+  PRIMARY KEY (`hotel_id`,`snapshot_date`,`section`,`room_type_name`,`dimension_code`),
   KEY `idx_jl11_period` (`hotel_id`,`period_end`),
   KEY `idx_jl11_room_type` (`hotel_id`,`room_type_id`),
   KEY `idx_hotel_room_type_id` (`hotel_id`,`room_type_id`)
@@ -808,7 +802,6 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_exposure_source_daily` (
 
 -- Table: meituan_ota_exposure_source_monthly
 CREATE TABLE IF NOT EXISTS `meituan_ota_exposure_source_monthly` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `business_date` date NOT NULL COMMENT '近30天统计窗口结束日',
   `snapshot_time` datetime NOT NULL,
@@ -820,8 +813,7 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_exposure_source_monthly` (
   `data_status` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'NORMAL' COMMENT 'NORMAL/NO_EXPOSURE',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_meituan_exposure_source` (`hotel_id`,`business_date`),
+  PRIMARY KEY (`hotel_id`,`business_date`),
   KEY `idx_meituan_exposure_source_snapshot` (`hotel_id`,`snapshot_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='美团近30天流量来源曝光分析快照';
 
@@ -920,7 +912,6 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_nearby_event` (
 
 -- Table: meituan_ota_order_loss_monthly
 CREATE TABLE IF NOT EXISTS `meituan_ota_order_loss_monthly` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `hotel_name` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL,
   `business_date` date NOT NULL COMMENT '近30天统计窗口结束日期',
@@ -946,8 +937,7 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_order_loss_monthly` (
   `lost_room_types_json` json DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_meituan_order_loss_daily` (`hotel_id`,`business_date`,`competitor_poi_id`),
+  PRIMARY KEY (`hotel_id`,`business_date`,`competitor_poi_id`),
   KEY `idx_meituan_order_loss_date` (`hotel_id`,`business_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='美团近30天流失订单竞争酒店分析';
 

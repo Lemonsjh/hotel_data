@@ -119,6 +119,7 @@ button, .button {
   display: inline-block;
 }
 button.secondary, .button.secondary { background: #eaf1ee; color: var(--brand-strong); }
+button.secondary:hover, .button.secondary:hover { background: #dce8e2; color: var(--brand-strong); }
 button.danger, .button.danger { background: var(--danger); color: #fff; }
 button:hover, .button:hover { background: var(--brand-strong); }
 button.danger:hover, .button.danger:hover { background: #7f1d16; }
@@ -178,16 +179,16 @@ input[type="checkbox"] { width: auto; accent-color: var(--brand); }
 .config-meituan::before { background: #f3b126; }
 .config-ctrip::before { background: #2f70d0; }
 .config-pms::before { background: #8b5fbf; }
-.config-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 14px;
-  margin-bottom: 18px;
-}
-.config-heading > div:first-child { min-width: 0; }
-.config-heading h2 { margin: 4px 0 5px; font-size: 20px; }
-.config-heading p { margin: 0; color: var(--muted); font-size: 13px; }
+  .config-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 4px;
+  }
+  .config-heading > div:first-child { min-width: 0; }
+  .config-heading h2 { margin: 4px 0 5px; font-size: 20px; }
+  .config-hint { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
 .config-actions {
   display: flex;
   flex: 0 0 auto;
@@ -323,6 +324,13 @@ button.ota-scope-button.active {
 .save-bar strong, .save-bar span { display: block; }
 .save-bar strong { font-size: 13px; }
 .save-bar span { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.save-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+button.reset-config {
+  color: var(--brand-strong);
+  border-color: #c8ddd3;
+  background: #eaf1ee;
+}
+button.reset-config:hover { color: #fff; background: #ad3028; }
 .table-wrap { overflow-x: auto; }
 .inline-form { display: flex; gap: 8px; align-items: center; }
 .inline-form input { width: 126px; }
@@ -359,5 +367,6 @@ pre { background: #101815; color: #eef7f1; padding: 16px; border-radius: 10px; o
   .login-state { max-width: 100%; text-align: left; }
   .save-bar { position: static; bottom: auto; }
   .save-bar button { width: 100%; }
+  .save-actions { width: 100%; flex-direction: column; }
   .nav { overflow-x: auto; }
 }

@@ -78,6 +78,8 @@ def room_options(
     hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
     hotel_filter = " WHERE hotel_id=%s" if hotel_id else ""
     pms_params = (hotel_id, hotel_id) if hotel_id else ()
+    forecast_filter = "WHERE hotel_id=%s AND" if hotel_id else "WHERE"
+    forecast_params = (hotel_id,) if hotel_id else ()
     pms_hotel_sql = f"""
     SELECT hotel_name AS name FROM (
         SELECT hotel_name, snapshot_time FROM kf11_room_status_snapshot{hotel_filter}
@@ -88,12 +90,10 @@ def room_options(
     ORDER BY MAX(snapshot_time) DESC, COUNT(*) DESC, hotel_name
     """
     pms_room_sql = f"""
-    SELECT DISTINCT name FROM (
-        SELECT room_type_name AS name FROM kf11_room_status_snapshot{hotel_filter}
-        UNION
-        SELECT room_type_name AS name FROM rs01_room_revenue_daily{hotel_filter}
-    ) t WHERE name IS NOT NULL AND TRIM(name) <> '' AND name <> '预订单'
-    ORDER BY name
+    SELECT DISTINCT room_type_name AS name
+    FROM pms_room_type_forecast
+    {forecast_filter} room_type_name IS NOT NULL AND TRIM(room_type_name) <> ''
+    ORDER BY room_type_name
     """
     meituan_room_sql = """
     SELECT DISTINCT room_type_name AS name
@@ -110,7 +110,7 @@ def room_options(
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
         return (
             _query_names(cur, pms_hotel_sql, pms_params),
-            _query_names(cur, pms_room_sql, pms_params),
+            _query_names(cur, pms_room_sql, forecast_params),
             _query_names(cur, meituan_room_sql),
             _query_names(cur, ctrip_room_sql),
         )
