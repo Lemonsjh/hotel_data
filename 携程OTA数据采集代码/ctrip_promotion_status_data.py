@@ -11,7 +11,7 @@ from typing import Any
 
 from playwright.sync_api import sync_playwright
 
-from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME
+from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, USER_AGENT
 from ctrip_goods_price_mapping import CtripGoodsClient, normalize_products
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -23,9 +23,13 @@ HOME_URL = "https://ebooking.ctrip.com/home/mainland?microJump=true"
 HOTEL_HIGHLIGHTS_URL = "https://ebooking.ctrip.com/hotelinfo/ebooking/hoteltag?microJump=true"
 APPLY_SELECTOR = 'button[he-click="connectEquity_submit"]'
 PROMOTION_MENU_POINT = (110, 235)
+PROMOTION_MENU_TEXT = "促销推广"
 POINTS_ALLIANCE_MENU_POINT = (110, 385)
+POINTS_ALLIANCE_MENU_TEXT = "积分联盟"
 PREFERRED_CLUB_MENU_POINT = (110, 458)
+PREFERRED_CLUB_MENU_TEXT = "优享会"
 BUSINESS_TRAVEL_MENU_POINT = (110, 503)
+BUSINESS_TRAVEL_MENU_TEXT = "商旅专享价"
 INFORMATION_MENU_POINT = (110, 435)
 PICTURE_VIDEO_MENU_POINT = (110, 571)
 VIDEO_TAB_POINT = (340, 167)
@@ -75,19 +79,45 @@ def dismiss_overlays(page: Any) -> None:
             continue
 
 
-def open_promotion_page(page: Any, menu_point: tuple[int, int]) -> None:
+def ensure_logged_in(page: Any) -> None:
+    url = page.url.lower()
+    if any(marker in url for marker in ("/login", "passport", "security", "verify")):
+        raise RuntimeError(f"Ctrip login session is invalid or requires verification: {page.url}")
+    if page.locator('input[type="password"]').count():
+        raise RuntimeError("Ctrip login session is invalid or requires verification")
+    body = page.locator("body").inner_text(timeout=1_000)
+    if any(marker in body for marker in ("登录后查看", "请先登录", "安全验证", "滑动验证")):
+        raise RuntimeError("Ctrip login session is invalid or requires verification")
+
+
+def click_menu(page: Any, text: str, point: tuple[int, int]) -> None:
+    menu = page.get_by_text(text, exact=True)
+    if menu.count():
+        menu.last.click(timeout=10_000)
+        return
+    page.mouse.click(*point)
+
+
+def open_promotion_page(page: Any, menu_point: tuple[int, int], menu_text: str) -> None:
     page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(4_000)
+    ensure_logged_in(page)
+    page.wait_for_timeout(1_500)
     dismiss_overlays(page)
-    page.mouse.click(*PROMOTION_MENU_POINT)
+    click_menu(page, PROMOTION_MENU_TEXT, PROMOTION_MENU_POINT)
     page.wait_for_timeout(700)
-    page.mouse.click(*menu_point)
+    click_menu(page, menu_text, menu_point)
 
 
 def activity_enabled(page: Any, menu_point: tuple[int, int], markers: tuple[str, ...], selector: str, apply_text: str) -> int:
-    open_promotion_page(page, menu_point)
+    menu_text = {
+        POINTS_ALLIANCE_MENU_POINT: POINTS_ALLIANCE_MENU_TEXT,
+        PREFERRED_CLUB_MENU_POINT: PREFERRED_CLUB_MENU_TEXT,
+        BUSINESS_TRAVEL_MENU_POINT: BUSINESS_TRAVEL_MENU_TEXT,
+    }[menu_point]
+    open_promotion_page(page, menu_point, menu_text)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
+        ensure_logged_in(page)
         apply_buttons = page.locator(selector)
         if any(button.is_visible() for button in apply_buttons.all()):
             return 0
@@ -208,9 +238,15 @@ def collect_statuses() -> dict[str, tuple[Any | None, str | None]]:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, chromium_sandbox=True)
         try:
-            context = browser.new_context(locale="zh-CN", viewport={"width": 1920, "height": 1080})
+            context = browser.new_context(
+                locale="zh-CN",
+                user_agent=USER_AGENT,
+                viewport={"width": 1920, "height": 1080},
+            )
             context.add_cookies(ctrip_cookies())
             page = context.new_page()
+            page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
+            ensure_logged_in(page)
             return {
                 "points_alliance": collect_one("points_alliance", lambda: activity_enabled(page, POINTS_ALLIANCE_MENU_POINT, POINTS_PAGE_MARKERS, APPLY_SELECTOR, "立即报名")),
                 "preferred_club": collect_one("preferred_club", lambda: activity_enabled(page, PREFERRED_CLUB_MENU_POINT, PREFERRED_CLUB_PAGE_MARKERS, 'button[he-click="join_tplus"]', "立即报名")),
