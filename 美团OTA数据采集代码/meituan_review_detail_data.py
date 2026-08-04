@@ -63,6 +63,7 @@ HEADERS = [
 ]
 CHINA_TZ = timezone(timedelta(hours=8))
 COMMENT_PAGE_URL = "https://me.meituan.com/ebooking/merchant/comment-manage-react"
+MEITUAN_FIRST_FULL_HISTORY_MAX_PAGES = 30
 
 
 class MeituanReviewDetailClient:
@@ -225,7 +226,7 @@ def collect_online(
     overview_counts: dict[str, int] = {}
     previous_ids: set[str] = set()
     try:
-        while full_history or offset <= max_pages:
+        while offset <= max_pages:
             if offset > 1 and (offset - 1) % 40 == 0:
                 print(f"review_detail browser restart before page={offset}")
                 client.close()
@@ -371,14 +372,19 @@ def main() -> None:
         for channel_source, review_platform, platform, api_url in REVIEW_CHANNELS:
             existing_ids = existing_by_channel.get(channel_source, set())
             full_history = args.full_history or (not args.no_db and not existing_ids)
+            channel_max_pages = (
+                MEITUAN_FIRST_FULL_HISTORY_MAX_PAGES
+                if channel_source == "美团" and full_history
+                else max(1, args.max_pages)
+            )
             mode = "full_history" if full_history else f"incremental existing={len(existing_ids)}"
-            print(f"review_detail channel={channel_source} mode={mode}")
+            print(f"review_detail channel={channel_source} mode={mode} max_pages={channel_max_pages}")
             channel_rows, counts = collect_online(
                 api_url,
                 platform,
                 channel_source,
                 max(1, args.limit),
-                max(1, args.max_pages),
+                channel_max_pages,
                 full_history,
                 existing_ids,
             )

@@ -23,7 +23,7 @@ def profile_path() -> Path:
 def process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-    except (OSError, ValueError):
+    except (OSError, ValueError, SystemError):
         return False
     return True
 
