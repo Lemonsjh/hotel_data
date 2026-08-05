@@ -18,7 +18,7 @@ from meituan_page_capture import browser_profile_lock, page_access_issue, profil
 
 TASK_TABLE = "ota_review_reply_task"
 REVIEW_TABLE = "meituan_ota_review_detail"
-COMMENT_PAGE_URL = "https://me.meituan.com/ebooking/merchant/comment-manage-react#/home"
+COMMENT_PAGE_URL = "https://me.meituan.com/ebooking/merchant/comment-manage-react"
 REPLY_URL = "https://me.meituan.com/api/gw/v1/base/comments/{comment_id}/replyInfo"
 COMMENT_LIST_URL = "https://me.meituan.com/api/gw/v1/base/comments/queryGeneralCommentInfo"
 CHANNEL_PLATFORMS = {"meituan": 1, "dianping": 0}
@@ -133,7 +133,11 @@ class ReplyClient:
                 user_agent=USER_AGENT, viewport={"width": 1440, "height": 1000},
             )
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
-            self.page.goto(COMMENT_PAGE_URL, wait_until="domcontentloaded", timeout=60_000)
+            with self.page.expect_response(
+                lambda response: COMMENT_LIST_URL in response.url and "replyType=0" in response.url,
+                timeout=45_000,
+            ):
+                self.page.goto(COMMENT_PAGE_URL, wait_until="domcontentloaded", timeout=60_000)
             self.page.wait_for_timeout(1000)
             if issue := page_access_issue(self.page):
                 raise RuntimeError(f"Meituan review page requires manual action: {issue}")
@@ -151,7 +155,13 @@ class ReplyClient:
             })
             payload = self.page.evaluate(
                 """async url => {
-                    const response = await fetch(url, {credentials: 'include'});
+                    const response = await fetch(url, {
+                        credentials: 'include',
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Request-Page-Source': 'ME'
+                        }
+                    });
                     if (!response.ok) throw new Error(`HTTP ${response.status}`);
                     return await response.json();
                 }""",
