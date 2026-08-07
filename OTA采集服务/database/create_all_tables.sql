@@ -859,6 +859,7 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_goods_price_mapping` (
   `ota_product_name` varchar(500) DEFAULT NULL,
   `rate_plan_name` varchar(500) DEFAULT NULL,
   `is_super_deal` tinyint(1) DEFAULT NULL,
+  `is_hour_room` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否钟点房：1钟点房，0非钟点房',
   `ota_sale_price` decimal(10,2) DEFAULT NULL,
   `commission_rate` varchar(20) DEFAULT NULL,
   PRIMARY KEY (`id`),
