@@ -59,10 +59,12 @@ def request_json(session: requests.Session, method: str, url: str, **kwargs: Any
 
 
 def forecast_window(days: int) -> dict[str, str]:
-    start = datetime.now().date()
+    now = datetime.now()
+    start = now.date()
+    begin_hour = "12:00" if 0 <= now.hour < 6 else now.strftime("%H:00")
     return {
         "beginDate": f"{start.isoformat()} 00:00:00",
-        "beginHour": "12:00",
+        "beginHour": begin_hour,
         "endDate": f"{(start + timedelta(days=days - 1)).isoformat()} 00:00:00",
     }
 
