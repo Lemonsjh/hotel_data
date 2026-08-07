@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ GOODS_PAGE_URL = "https://eb.meituan.com/ebooking/product-me/index.html#/price"
 GOODS_API_PATH = "/queryListAndTag"
 PRICE_STATUS_PAGE_URL = "https://eb.meituan.com/ebooking/product-me/index.html#/calendar"
 PRICE_STATUS_API_PATH = "/queryPriceInventoryStatusInfo"
+HOUR_ROOM_RE = re.compile(r"-[0-9]+([.][0-9]+)?小时-")
 
 HEADERS = [
     "snapshot_time",
@@ -44,6 +46,7 @@ HEADERS = [
     "ota_product_name",
     "rate_plan_name",
     "is_super_deal",
+    "is_hour_room",
     "ota_sale_price",
     "commission_rate",
 ]
@@ -255,6 +258,10 @@ def is_super_deal(goods: dict[str, Any]) -> bool:
     )
 
 
+def is_hour_room(goods: dict[str, Any]) -> bool:
+    return bool(HOUR_ROOM_RE.search(to_text(goods.get("goodsName"))))
+
+
 def block_reason(goods: dict[str, Any]) -> str:
     if is_super_deal(goods):
         return "super_deal"
@@ -354,6 +361,7 @@ def normalize_rows(
                         goods.get("goodsName"),
                         goods.get("rpCustomName"),
                         is_super_deal(goods),
+                        is_hour_room(goods),
                         price.get("ota_sale_price", ""),
                         price.get("commission_rate", ""),
                     ]
@@ -373,6 +381,7 @@ def normalize_rows(
                 goods.get("goodsName"),
                 goods.get("rpCustomName"),
                 is_super_deal(goods),
+                is_hour_room(goods),
                 price.get("ota_sale_price", ""),
                 price.get("commission_rate", ""),
             ]
@@ -439,7 +448,7 @@ def save_excel(rows: list[list[Any]]) -> Path:
     for row in rows:
         ws.append(row)
         ws.cell(ws.max_row, 1).number_format = "yyyy-mm-dd hh:mm:ss"
-    widths = [20, 12, 16, 26, 16, 16, 46, 28, 14, 18, 22, 16]
+    widths = [20, 12, 16, 26, 16, 16, 46, 28, 14, 14, 18, 22, 16]
     for index, width in enumerate(widths, 1):
         ws.column_dimensions[ws.cell(row=1, column=index).column_letter].width = width
     wb.save(out_path)
