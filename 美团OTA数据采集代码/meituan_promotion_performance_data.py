@@ -50,7 +50,7 @@ COLUMNS = [
     "booking_order_count", "room_night_count", "booking_order_amount", "spend_amount",
     "cost_per_click", "click_rate_pct", "merchant_view_count", "cash_spend_amount",
 ]
-PAGE_WAIT_SECONDS = 45
+PAGE_WAIT_SECONDS = 12
 COOLDOWN_MIN_HOURS = 22.0
 COOLDOWN_MAX_HOURS = 26.0
 
