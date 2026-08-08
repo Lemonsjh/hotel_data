@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import random
 import re
 import sys
+import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -50,6 +53,64 @@ SCHEDULED_INVOICE_NAME = "\u9884\u7ea6\u53d1\u7968"
 SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
 PAGE_CHECK_SECONDS = 10
 PAGE_ACTION_TIMEOUT_MS = 5_000
+COOLDOWN_MIN_HOURS = 10.0
+COOLDOWN_MAX_HOURS = 14.0
+
+
+def schedule_state_path() -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    return base / "HotelAgent" / "state" / "meituan_promotion_status_schedule.json"
+
+
+def load_schedule_state() -> dict[str, Any]:
+    path = schedule_state_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_schedule_state(data: dict[str, Any]) -> None:
+    path = schedule_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
+        json.dump(data, file, ensure_ascii=False, indent=2)
+        temporary = Path(file.name)
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def parse_state_time(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def schedule_next_attempt(attempted_at: datetime) -> datetime:
+    cooldown_hours = random.uniform(COOLDOWN_MIN_HOURS, COOLDOWN_MAX_HOURS)
+    next_allowed_at = attempted_at + timedelta(hours=cooldown_hours)
+    state = load_schedule_state()
+    state.update(
+        {
+            "last_attempt_at": attempted_at.isoformat(timespec="seconds"),
+            "next_allowed_at": next_allowed_at.isoformat(timespec="seconds"),
+            "cooldown_hours": round(cooldown_hours, 3),
+        }
+    )
+    save_schedule_state(state)
+    return next_allowed_at
+
+
+def mark_schedule_success(success_at: datetime) -> None:
+    state = load_schedule_state()
+    state["last_success_at"] = success_at.isoformat(timespec="seconds")
+    save_schedule_state(state)
 
 
 def fetch_youmeihui_status() -> str:
@@ -299,9 +360,31 @@ def save_status(hotel_id: str, code: str, name: str, status: str) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Collect Meituan promotion status data")
+    parser.add_argument("--force", action="store_true", help="ignore the 10-14 hour automatic cooldown")
+    args = parser.parse_args()
+
     hotel_id = os.environ.get("HOTEL_ID", "").strip()
     if not hotel_id:
         raise RuntimeError("HOTEL_ID is empty")
+
+    now = datetime.now()
+    state = load_schedule_state()
+    next_allowed_at = parse_state_time(state.get("next_allowed_at"))
+    if not args.force and next_allowed_at is not None and now < next_allowed_at:
+        print(
+            "promotion status skipped: cooldown active; "
+            f"next_allowed_at={next_allowed_at:%Y-%m-%d %H:%M:%S}"
+        )
+        return 0
+
+    next_allowed_at = schedule_next_attempt(now)
+    mode = "forced" if args.force else "scheduled"
+    print(
+        f"promotion status attempt mode={mode}; "
+        f"next automatic attempt after {next_allowed_at:%Y-%m-%d %H:%M:%S}"
+    )
+
     checks = [
         (PROMOTION_CODE, PROMOTION_NAME, fetch_youmeihui_status),
         (BUSINESS_TRAVEL_CODE, BUSINESS_TRAVEL_NAME, fetch_business_travel_status),
@@ -346,6 +429,8 @@ def main() -> int:
     if failures:
         summary = "; ".join(f"{code}: {error}" for code, _name, error in failures)
         print(f"Promotion status partial warning; previous values retained: {summary}")
+    else:
+        mark_schedule_success(datetime.now())
     return 0
 
 
