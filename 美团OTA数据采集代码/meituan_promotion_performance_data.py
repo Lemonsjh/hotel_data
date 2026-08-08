@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import argparse
+import json
 import os
+import random
 import sys
+import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -46,12 +50,70 @@ COLUMNS = [
     "booking_order_count", "room_night_count", "booking_order_amount", "spend_amount",
     "cost_per_click", "click_rate_pct", "merchant_view_count", "cash_spend_amount",
 ]
-PAGE_WAIT_SECONDS = 45
+PAGE_WAIT_SECONDS = 12
+COOLDOWN_MIN_HOURS = 22.0
+COOLDOWN_MAX_HOURS = 26.0
 
 
 def profile_path() -> Path:
     base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     return base / "HotelAgent" / "browser_profiles" / "meituan"
+
+
+def schedule_state_path() -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    return base / "HotelAgent" / "state" / "meituan_promotion_performance_schedule.json"
+
+
+def load_schedule_state() -> dict[str, Any]:
+    path = schedule_state_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_schedule_state(data: dict[str, Any]) -> None:
+    path = schedule_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
+        json.dump(data, file, ensure_ascii=False, indent=2)
+        temporary = Path(file.name)
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def parse_state_time(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def schedule_next_attempt(attempted_at: datetime) -> datetime:
+    cooldown_hours = random.uniform(COOLDOWN_MIN_HOURS, COOLDOWN_MAX_HOURS)
+    next_allowed_at = attempted_at + timedelta(hours=cooldown_hours)
+    state = load_schedule_state()
+    state.update(
+        {
+            "last_attempt_at": attempted_at.isoformat(timespec="seconds"),
+            "next_allowed_at": next_allowed_at.isoformat(timespec="seconds"),
+            "cooldown_hours": round(cooldown_hours, 3),
+        }
+    )
+    save_schedule_state(state)
+    return next_allowed_at
+
+
+def mark_schedule_success(success_at: datetime) -> None:
+    state = load_schedule_state()
+    state["last_success_at"] = success_at.isoformat(timespec="seconds")
+    save_schedule_state(state)
 
 
 def number(value: Any) -> float | int | None:
@@ -212,12 +274,34 @@ def save_rows(hotel_id: str, rows: list[tuple[Any, ...]]) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Collect Meituan promotion performance data")
+    parser.add_argument("--force", action="store_true", help="ignore the 22-26 hour automatic cooldown")
+    args = parser.parse_args()
+
+    now = datetime.now()
+    state = load_schedule_state()
+    next_allowed_at = parse_state_time(state.get("next_allowed_at"))
+    if not args.force and next_allowed_at is not None and now < next_allowed_at:
+        print(
+            "promotion performance skipped: daily cooldown active; "
+            f"next_allowed_at={next_allowed_at:%Y-%m-%d %H:%M:%S}"
+        )
+        return 0
+
+    next_allowed_at = schedule_next_attempt(now)
+    mode = "forced" if args.force else "scheduled"
+    print(
+        f"promotion performance attempt mode={mode}; "
+        f"next automatic attempt after {next_allowed_at:%Y-%m-%d %H:%M:%S}"
+    )
+
     hotel_id = os.environ.get("HOTEL_ID", "").strip()
     period_end = date.today() - timedelta(days=1)
     period_start = period_end - timedelta(days=PERIOD_DAYS - 1)
     plans = fetch_plans(period_start, period_end)
     rows = build_rows(plans, period_start, period_end)
     save_rows(hotel_id, rows)
+    mark_schedule_success(datetime.now())
     print(f"promotion performance plans={len(plans)} launches={len(rows)}")
     return 0
 
