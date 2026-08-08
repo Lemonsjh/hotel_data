@@ -8,7 +8,10 @@ PMS（别样红）主脚本 - 自动判断登录状态并抓取所有报表
 import sys
 import os
 import argparse
+import random
+import time
 import pymysql
+import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -29,6 +32,9 @@ from data_retention import cleanup_pms_history
 from mysql_connection import connect_mysql
 
 OUTPUT_DIR = os.path.join(current_dir, "output")
+FETCH_DELAY_MIN_SECONDS = 2.0
+FETCH_DELAY_MAX_SECONDS = 5.0
+FAILURE_CIRCUIT_BREAKER_THRESHOLD = 3
 
 
 def run_fetch(code, label, fetcher):
@@ -46,6 +52,69 @@ def run_fetch(code, label, fetcher):
         print(f"❌ {code} 本轮未生成新数据，禁止使用旧文件入库")
         return False
     return True
+
+
+def pms_network_available() -> bool:
+    """连续报表失败后轻量探测 PMS 报表中心，区分业务失败和连接层故障。"""
+    session_info = pms_utils.read_session(require_cookies=True, quiet=True) or {}
+    session = requests.Session()
+    session.trust_env = False
+    session.cookies.update(session_info.get("cookies") or {})
+    try:
+        response = session.get(
+            pms_utils.report_url(),
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=min(int(pms_utils.API_TIMEOUT_SECONDS), 8),
+            allow_redirects=True,
+        )
+    except requests.RequestException as exc:
+        print(f"⚠️ PMS 网络探测失败: {exc}")
+        return False
+    if response.status_code >= 500:
+        print(f"⚠️ PMS 网络探测返回 HTTP {response.status_code}")
+        return False
+    return True
+
+
+def run_fetch_jobs(fetch_jobs, *, enable_circuit_breaker: bool) -> dict[str, bool]:
+    """顺序抓取报表，加入轻微抖动；连续失败且网络探测异常时终止本轮后续采集。"""
+    fetch_results: dict[str, bool] = {}
+    consecutive_failures = 0
+
+    for index, (code, label, fetcher) in enumerate(fetch_jobs):
+        success = run_fetch(code, label, fetcher)
+        fetch_results[code] = success
+        consecutive_failures = 0 if success else consecutive_failures + 1
+        has_remaining = index + 1 < len(fetch_jobs)
+
+        if (
+            enable_circuit_breaker
+            and has_remaining
+            and consecutive_failures >= FAILURE_CIRCUIT_BREAKER_THRESHOLD
+        ):
+            print(
+                f"⚠️ PMS 已连续 {consecutive_failures} 个报表采集失败，"
+                "正在检查报表中心连通性..."
+            )
+            if not pms_network_available():
+                remaining = fetch_jobs[index + 1:]
+                print(
+                    "🛑 PMS 报表中心当前不可用，触发本轮网络熔断；"
+                    "停止继续访问后续报表，等待下一轮定时采集"
+                )
+                for remaining_code, remaining_label, _remaining_fetcher in remaining:
+                    fetch_results[remaining_code] = False
+                    print(f"⏭️ 熔断跳过 {remaining_code} {remaining_label}")
+                break
+            print("✅ PMS 报表中心网络探测正常，本轮继续后续报表")
+            consecutive_failures = 0
+
+        if has_remaining:
+            delay = random.uniform(FETCH_DELAY_MIN_SECONDS, FETCH_DELAY_MAX_SECONDS)
+            print(f"⏳ PMS 报表间随机等待 {delay:.1f} 秒...")
+            time.sleep(delay)
+
+    return fetch_results
 
 
 def need_login(hours=12, force=False, username=""):
@@ -153,7 +222,10 @@ def main() -> int:
     if args.reports:
         selected = set(args.reports)
         fetch_jobs = [job for job in fetch_jobs if job[0] in selected]
-    fetch_results = {code: run_fetch(code, label, fetcher) for code, label, fetcher in fetch_jobs}
+    fetch_results = run_fetch_jobs(
+        fetch_jobs,
+        enable_circuit_breaker=not bool(args.reports),
+    )
     
     print("\n🔄 开始执行 ETL 转换...")
     
