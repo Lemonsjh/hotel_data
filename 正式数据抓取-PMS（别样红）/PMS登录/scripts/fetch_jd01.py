@@ -113,8 +113,9 @@ def fetch_jd01(start_date=None, end_date=None):
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
                 
+                rows = ((data.get("data") or {}).get("dataList") or [])
                 print(f"✅ JD01 报表已保存到 {output_file}")
-                print(f"   数据条数: {len(data.get('Data', []))}")
+                print(f"   数据条数: {len(rows)}")
                 return data
             except Exception as e:
                 print(f"❌ JSON 解析失败: {e}")
