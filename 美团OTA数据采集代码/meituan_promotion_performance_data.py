@@ -46,7 +46,7 @@ COLUMNS = [
     "booking_order_count", "room_night_count", "booking_order_amount", "spend_amount",
     "cost_per_click", "click_rate_pct", "merchant_view_count", "cash_spend_amount",
 ]
-PAGE_WAIT_SECONDS = 12
+PAGE_WAIT_SECONDS = 45
 
 
 def profile_path() -> Path:
@@ -104,7 +104,12 @@ def request_page(context: Any, page: Any, period_start: date, period_end: date, 
                 raise RuntimeError(f"Promotion performance page requires manual action: {issue}")
             page.wait_for_timeout(500)
         if not responses:
-            raise RuntimeError("Promotion performance page did not issue a data request")
+            safe_page_url = page.url.split("?", 1)[0]
+            raise RuntimeError(
+                "Promotion performance page did not issue a data request "
+                f"within {PAGE_WAIT_SECONDS}s; expected_path={PROMOTION_API_PATH}; "
+                f"page={safe_page_url}; title={page.title()!r}"
+            )
         response = responses[-1]
         if response.status != 200:
             raise RuntimeError(f"Promotion performance API failed: HTTP {response.status}")
