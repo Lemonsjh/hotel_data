@@ -55,6 +55,7 @@ PAGE_CHECK_SECONDS = 10
 PAGE_ACTION_TIMEOUT_MS = 5_000
 COOLDOWN_MIN_HOURS = 10.0
 COOLDOWN_MAX_HOURS = 14.0
+COOLDOWN_REASONS = {"success", "failure"}
 
 
 def schedule_state_path() -> Path:
@@ -92,13 +93,22 @@ def parse_state_time(value: Any) -> datetime | None:
         return None
 
 
-def schedule_next_attempt(attempted_at: datetime) -> datetime:
+def mark_attempt_started(attempted_at: datetime) -> None:
+    state = load_schedule_state()
+    state["last_attempt_at"] = attempted_at.isoformat(timespec="seconds")
+    save_schedule_state(state)
+
+
+def schedule_cooldown(completed_at: datetime, reason: str) -> datetime:
+    if reason not in COOLDOWN_REASONS:
+        raise ValueError(f"unsupported cooldown reason: {reason}")
     cooldown_hours = random.uniform(COOLDOWN_MIN_HOURS, COOLDOWN_MAX_HOURS)
-    next_allowed_at = attempted_at + timedelta(hours=cooldown_hours)
+    next_allowed_at = completed_at + timedelta(hours=cooldown_hours)
     state = load_schedule_state()
     state.update(
         {
-            "last_attempt_at": attempted_at.isoformat(timespec="seconds"),
+            "last_result_at": completed_at.isoformat(timespec="seconds"),
+            "cooldown_reason": reason,
             "next_allowed_at": next_allowed_at.isoformat(timespec="seconds"),
             "cooldown_hours": round(cooldown_hours, 3),
         }
@@ -371,19 +381,22 @@ def main() -> int:
     now = datetime.now()
     state = load_schedule_state()
     next_allowed_at = parse_state_time(state.get("next_allowed_at"))
-    if not args.force and next_allowed_at is not None and now < next_allowed_at:
+    cooldown_reason = str(state.get("cooldown_reason") or "")
+    if (
+        not args.force
+        and cooldown_reason in COOLDOWN_REASONS
+        and next_allowed_at is not None
+        and now < next_allowed_at
+    ):
         print(
             "promotion status skipped: cooldown active; "
-            f"next_allowed_at={next_allowed_at:%Y-%m-%d %H:%M:%S}"
+            f"reason={cooldown_reason}; next_allowed_at={next_allowed_at:%Y-%m-%d %H:%M:%S}"
         )
         return 0
 
-    next_allowed_at = schedule_next_attempt(now)
     mode = "forced" if args.force else "scheduled"
-    print(
-        f"promotion status attempt mode={mode}; "
-        f"next automatic attempt after {next_allowed_at:%Y-%m-%d %H:%M:%S}"
-    )
+    mark_attempt_started(now)
+    print(f"promotion status attempt mode={mode}")
 
     checks = [
         (PROMOTION_CODE, PROMOTION_NAME, fetch_youmeihui_status),
@@ -396,41 +409,55 @@ def main() -> int:
     ]
     results = []
     failures = []
-    with browser_profile_lock():
-        for code, name, check in checks:
-            try:
-                status = check()
-                save_status(hotel_id, code, name, status)
-            except Exception as exc:
-                message = f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')[:300]}"
-                failures.append((code, name, message))
-                print(f"{code} check failed; previous database status retained: {message}")
-                continue
-            results.append((code, name, status))
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUTPUT_DIR / "meituan_ota_promotion_status.json").write_text(
-        json.dumps(
-            {
-                "hotel_id": hotel_id,
-                "checked_at": datetime.now(),
-                "items": [{"promotion_code": code, "status": status} for code, _name, status in results],
-                "failures": [
-                    {"promotion_code": code, "promotion_name": name, "error": error}
-                    for code, name, error in failures
-                ],
-            },
-            ensure_ascii=False,
-            default=str,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    try:
+        with browser_profile_lock():
+            for code, name, check in checks:
+                try:
+                    status = check()
+                    save_status(hotel_id, code, name, status)
+                except Exception as exc:
+                    message = f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')[:300]}"
+                    failures.append((code, name, message))
+                    print(f"{code} check failed; previous database status retained: {message}")
+                    continue
+                results.append((code, name, status))
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        (OUTPUT_DIR / "meituan_ota_promotion_status.json").write_text(
+            json.dumps(
+                {
+                    "hotel_id": hotel_id,
+                    "checked_at": datetime.now(),
+                    "items": [{"promotion_code": code, "status": status} for code, _name, status in results],
+                    "failures": [
+                        {"promotion_code": code, "promotion_name": name, "error": error}
+                        for code, name, error in failures
+                    ],
+                },
+                ensure_ascii=False,
+                default=str,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        failed_at = datetime.now()
+        next_allowed_at = schedule_cooldown(failed_at, "failure")
+        print(
+            "promotion status failed; cooldown scheduled; "
+            f"next_allowed_at={next_allowed_at:%Y-%m-%d %H:%M:%S}"
+        )
+        raise
+
     print(", ".join(f"{code} status={status}" for code, _name, status in results))
+    completed_at = datetime.now()
     if failures:
+        next_allowed_at = schedule_cooldown(completed_at, "failure")
         summary = "; ".join(f"{code}: {error}" for code, _name, error in failures)
         print(f"Promotion status partial warning; previous values retained: {summary}")
     else:
-        mark_schedule_success(datetime.now())
+        next_allowed_at = schedule_cooldown(completed_at, "success")
+        mark_schedule_success(completed_at)
+    print(f"promotion status next automatic attempt after {next_allowed_at:%Y-%m-%d %H:%M:%S}")
     return 0
 
 
