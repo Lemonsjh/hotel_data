@@ -30,6 +30,7 @@ VIDEO_TYPES = (
 PAGE_WAIT_SECONDS = 12
 COOLDOWN_MIN_HOURS = 22.0
 COOLDOWN_MAX_HOURS = 26.0
+COOLDOWN_REASONS = {"success", "failure"}
 
 
 def profile_path() -> Path:
@@ -72,13 +73,22 @@ def parse_state_time(value: Any) -> datetime | None:
         return None
 
 
-def schedule_next_attempt(attempted_at: datetime) -> datetime:
+def mark_attempt_started(attempted_at: datetime) -> None:
+    state = load_schedule_state()
+    state["last_attempt_at"] = attempted_at.isoformat(timespec="seconds")
+    save_schedule_state(state)
+
+
+def schedule_cooldown(completed_at: datetime, reason: str) -> datetime:
+    if reason not in COOLDOWN_REASONS:
+        raise ValueError(f"unsupported cooldown reason: {reason}")
     cooldown_hours = random.uniform(COOLDOWN_MIN_HOURS, COOLDOWN_MAX_HOURS)
-    next_allowed_at = attempted_at + timedelta(hours=cooldown_hours)
+    next_allowed_at = completed_at + timedelta(hours=cooldown_hours)
     state = load_schedule_state()
     state.update(
         {
-            "last_attempt_at": attempted_at.isoformat(timespec="seconds"),
+            "last_result_at": completed_at.isoformat(timespec="seconds"),
+            "cooldown_reason": reason,
             "next_allowed_at": next_allowed_at.isoformat(timespec="seconds"),
             "cooldown_hours": round(cooldown_hours, 3),
         }
@@ -179,24 +189,40 @@ def main() -> int:
     now = datetime.now()
     state = load_schedule_state()
     next_allowed_at = parse_state_time(state.get("next_allowed_at"))
-    if not args.force and next_allowed_at is not None and now < next_allowed_at:
+    cooldown_reason = str(state.get("cooldown_reason") or "")
+    if (
+        not args.force
+        and cooldown_reason in COOLDOWN_REASONS
+        and next_allowed_at is not None
+        and now < next_allowed_at
+    ):
         print(
             "video upload status skipped: cooldown active; "
-            f"next_allowed_at={next_allowed_at:%Y-%m-%d %H:%M:%S}"
+            f"reason={cooldown_reason}; next_allowed_at={next_allowed_at:%Y-%m-%d %H:%M:%S}"
         )
         return 0
 
-    next_allowed_at = schedule_next_attempt(now)
     mode = "forced" if args.force else "scheduled"
-    print(
-        f"video upload status attempt mode={mode}; "
-        f"next automatic attempt after {next_allowed_at:%Y-%m-%d %H:%M:%S}"
-    )
+    mark_attempt_started(now)
+    print(f"video upload status attempt mode={mode}")
 
-    rows = fetch_video_counts()
-    save_video_counts(hotel_id, rows)
-    mark_schedule_success(datetime.now())
+    try:
+        rows = fetch_video_counts()
+        save_video_counts(hotel_id, rows)
+    except Exception:
+        failed_at = datetime.now()
+        next_allowed_at = schedule_cooldown(failed_at, "failure")
+        print(
+            "video upload status failed; cooldown scheduled; "
+            f"next_allowed_at={next_allowed_at:%Y-%m-%d %H:%M:%S}"
+        )
+        raise
+
+    success_at = datetime.now()
+    next_allowed_at = schedule_cooldown(success_at, "success")
+    mark_schedule_success(success_at)
     print(", ".join(f"{code}={uploaded}/{required}" for code, uploaded, required in rows))
+    print(f"video upload status next automatic attempt after {next_allowed_at:%Y-%m-%d %H:%M:%S}")
     return 0
 
 
