@@ -41,11 +41,16 @@ def load_room_type_ids(conn) -> dict[str, str]:
     """
     with conn.cursor() as cursor:
         cursor.execute(sql, (HOTEL_ID,))
-        return {
-            str(row["pms_room_type_name"]).strip(): str(row["room_type_id"]).strip()
-            for row in cursor.fetchall()
-            if row["room_type_id"]
-        }
+        mappings: dict[str, str] = {}
+        for row in cursor.fetchall():
+            name, room_type_id = (
+                (row["pms_room_type_name"], row["room_type_id"])
+                if isinstance(row, dict)
+                else row
+            )
+            if room_type_id:
+                mappings[str(name).strip()] = str(room_type_id).strip()
+        return mappings
 
 
 def transform(payload: dict[str, Any], room_type_ids: dict[str, str]) -> list[dict[str, Any]]:
