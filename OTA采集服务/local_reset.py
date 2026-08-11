@@ -19,6 +19,7 @@ SCHEDULER_STOP_PATHS = (
     runner.ROOT / "state" / "manual_scheduler.stop",
     runner.ROOT / "state" / "price_scheduler.stop",
     runner.ROOT / "state" / "review_reply_scheduler.stop",
+    runner.ROOT / "state" / "promotion_scheduler.stop",
 )
 
 
@@ -35,6 +36,7 @@ def default_settings() -> dict[str, Any]:
     settings.setdefault("service", {})["scheduler_enabled"] = False
     settings.setdefault("price_scheduler", {})["enabled"] = False
     settings.setdefault("reply_scheduler", {})["enabled"] = False
+    settings.setdefault("promotion_scheduler", {})["enabled"] = False
     settings["tasks"] = {name: False for name in runner.TASKS}
     return settings
 

@@ -18,6 +18,7 @@ import local_reset
 import platform_login
 import price_routes
 import price_tasks
+import promotion_routes
 import room_mappings
 import runner
 import status_routes
@@ -88,6 +89,7 @@ room_mappings.register(app, page)
 status_routes.register(app)
 log_routes.register(app)
 price_routes.register(app)
+promotion_routes.register(app)
 
 
 def config_control(settings: dict[str, Any], key: str, label: str, secret: bool) -> str:

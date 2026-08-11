@@ -18,6 +18,10 @@
     "enabled": false,
     "max_tasks_per_run": 10
   },
+  "promotion_scheduler": {
+    "enabled": false,
+    "max_tasks_per_run": 5
+  },
   "data_retention": {
     "pms_hourly_days": 180,
     "pms_daily_days": 400,

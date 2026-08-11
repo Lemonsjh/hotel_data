@@ -4,6 +4,7 @@ from flask import redirect, url_for
 
 import runner
 from price_routes import PRICE_STOP_PATH, price_scheduler_status, start_price_scheduler
+from promotion_scheduler import STOP_PATH as PROMOTION_STOP_PATH, scheduler_status as promotion_scheduler_status, start_scheduler as start_promotion_scheduler
 from review_reply_routes import REPLY_STOP_PATH, reply_scheduler_status, start_reply_scheduler
 from panel_common import (
     esc,
@@ -27,6 +28,7 @@ def register(app) -> None:
         scheduler = manual_scheduler_status()
         price_scheduler = price_scheduler_status()
         reply_scheduler = reply_scheduler_status()
+        promotion_scheduler = promotion_scheduler_status()
         tasks = status.get("tasks") or {}
         run_names = status.get("last_run_tasks") or runner.enabled_tasks(settings)
         run_items = [tasks.get(name, {}) for name in run_names]
@@ -67,9 +69,11 @@ def register(app) -> None:
         scheduler_state = scheduler.get("scheduler_status", "stopped")
         price_scheduler_state = price_scheduler.get("scheduler_status", "stopped")
         reply_scheduler_state = reply_scheduler.get("scheduler_status", "stopped")
+        promotion_scheduler_state = promotion_scheduler.get("scheduler_status", "stopped")
         collection_enabled = bool((settings.get("service") or {}).get("scheduler_enabled", True))
         price_enabled = bool((settings.get("price_scheduler") or {}).get("enabled", True))
         reply_enabled = bool((settings.get("reply_scheduler") or {}).get("enabled", False))
+        promotion_enabled = bool((settings.get("promotion_scheduler") or {}).get("enabled", False))
         scheduler_labels = {
             "collecting": "正在采集",
             "waiting": "定时等待",
@@ -95,9 +99,18 @@ def register(app) -> None:
             "stopped": "未启动",
             "paused": "已暂停",
         }
+        promotion_scheduler_labels = {
+            "waiting": "定时等待",
+            "executing": "正在执行推广控制",
+            "stopping": "待当前推广操作完成后停止",
+            "failed": "启动失败",
+            "stopped": "未启动",
+            "paused": "已暂停",
+        }
         collection_display_state = scheduler_state if collection_enabled or scheduler.get("alive") else "paused"
         price_display_state = price_scheduler_state if price_enabled or price_scheduler.get("alive") else "paused"
         reply_display_state = reply_scheduler_state if reply_enabled or reply_scheduler.get("alive") else "paused"
+        promotion_display_state = promotion_scheduler_state if promotion_enabled or promotion_scheduler.get("alive") else "paused"
         scheduler_class = (
             "danger"
             if collection_display_state == "failed"
@@ -112,6 +125,11 @@ def register(app) -> None:
             "danger"
             if reply_display_state == "failed"
             else ("warn" if reply_display_state in {"executing", "stopping"} else ("good" if reply_display_state == "waiting" else "idle"))
+        )
+        promotion_scheduler_class = (
+            "danger"
+            if promotion_display_state == "failed"
+            else ("warn" if promotion_display_state in {"executing", "stopping"} else ("good" if promotion_display_state == "waiting" else "idle"))
         )
         collection_action = (
             "<form method='post' action='/scheduler/collection/stop'><button class='secondary'>暂停定时采集</button></form>"
@@ -128,15 +146,21 @@ def register(app) -> None:
             if reply_scheduler.get("alive")
             else "<form method='post' action='/scheduler/reply/start'><button>开启定时回复</button></form>"
         )
+        promotion_action = (
+            "<form method='post' action='/scheduler/promotion/stop'><button class='secondary'>暂停推广控制</button></form>"
+            if promotion_scheduler.get("alive")
+            else "<form method='post' action='/scheduler/promotion/start'><button>开启推广控制</button></form>"
+        )
         should_refresh = (
             is_running
             or scheduler_state in {"collecting", "stopping"}
             or price_scheduler_state in {"executing", "stopping"}
             or reply_scheduler_state in {"executing", "stopping"}
+            or promotion_scheduler_state in {"executing", "stopping"}
         )
         refresh_script = "<script>setTimeout(() => location.reload(), 2000);</script>" if should_refresh else ""
         scheduler_html = f"""
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px">
+<div class="grid scheduler-grid">
   <section class="panel" style="padding:16px 20px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><strong>定时采集任务</strong><div class="muted">下次执行：{esc(scheduler.get('next_run_at') or '-')}</div></div>
@@ -156,6 +180,13 @@ def register(app) -> None:
       <div><strong>定时评论回复任务</strong><div class="muted">下次检查：{esc(reply_scheduler.get('next_run_at') or '-')}</div></div>
       <span class="pill {reply_scheduler_class}">{esc(reply_scheduler_labels.get(reply_display_state, reply_display_state))}</span>
       {reply_action}
+    </div>
+  </section>
+  <section class="panel" style="padding:16px 20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><strong>定时推广控制任务</strong><div class="muted">下次检查：{esc(promotion_scheduler.get('next_run_at') or '-')}</div></div>
+      <span class="pill {promotion_scheduler_class}">{esc(promotion_scheduler_labels.get(promotion_display_state, promotion_display_state))}</span>
+      {promotion_action}
     </div>
   </section>
 </div>"""
@@ -249,4 +280,21 @@ def register(app) -> None:
         runner.save_json(runner.CONFIG_PATH, settings)
         REPLY_STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPLY_STOP_PATH.write_text("stop", encoding="utf-8")
+        return redirect(url_for("index"))
+
+    @app.post("/scheduler/promotion/start")
+    def start_promotion_scheduler_from_status():
+        settings = runner.load_settings()
+        settings.setdefault("promotion_scheduler", {})["enabled"] = True
+        runner.save_json(runner.CONFIG_PATH, settings)
+        start_promotion_scheduler(settings)
+        return redirect(url_for("index"))
+
+    @app.post("/scheduler/promotion/stop")
+    def stop_promotion_scheduler_from_status():
+        settings = runner.load_settings()
+        settings.setdefault("promotion_scheduler", {})["enabled"] = False
+        runner.save_json(runner.CONFIG_PATH, settings)
+        PROMOTION_STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PROMOTION_STOP_PATH.write_text("stop", encoding="utf-8")
         return redirect(url_for("index"))

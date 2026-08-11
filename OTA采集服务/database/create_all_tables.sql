@@ -1269,6 +1269,22 @@ CREATE TABLE IF NOT EXISTS `ota_review_reply_task` (
   KEY `idx_ota_review_reply_task_pending` (`status`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Pending review replies submitted by Feishu';
 
+-- Table: ota_promotion_control_task
+CREATE TABLE IF NOT EXISTS `ota_promotion_control_task` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `hotel_id` varchar(64) NOT NULL,
+  `platform` varchar(20) NOT NULL DEFAULT 'meituan',
+  `launch_id` varchar(64) NOT NULL,
+  `action` varchar(16) NOT NULL COMMENT 'pause/recover',
+  `status` varchar(16) NOT NULL DEFAULT 'pending' COMMENT 'pending/processing/success/failed/cancelled',
+  `error_message` varchar(500) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `executed_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_ota_promotion_control_task_pending` (`hotel_id`,`platform`,`status`,`created_at`),
+  KEY `idx_ota_promotion_control_task_launch` (`hotel_id`,`launch_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Pending promotion pause and recovery controls';
+
 -- View: v_hotel_ota_operating_snapshot
 CREATE OR REPLACE VIEW `v_hotel_ota_operating_snapshot` AS select `room_status`.`hotel_id` AS `hotel_id`,`room_status`.`business_date` AS `business_date`,cast(`room_status`.`snapshot_time` as time) AS `snapshot_at`,sum((case when (trim(`room_status`.`room_status`) in ('住净','住脏','空净','空脏')) then 1 else 0 end)) AS `sellable_rooms`,sum((case when (trim(`room_status`.`room_status`) in ('住净','住脏')) then 1 else 0 end)) AS `occupied_rooms`,cast(NULL as unsigned) AS `future_booked_rooms`,cast(NULL as unsigned) AS `extension_rooms`,sum((case when (trim(`room_status`.`room_status`) in ('维修','维修中','停用','锁房')) then 1 else 0 end)) AS `maintenance_rooms` from (`kf11_room_status_snapshot` `room_status` join (select `kf11_room_status_snapshot`.`hotel_id` AS `hotel_id`,`kf11_room_status_snapshot`.`business_date` AS `business_date`,max(`kf11_room_status_snapshot`.`snapshot_time`) AS `latest_snapshot_time` from `kf11_room_status_snapshot` where ((`kf11_room_status_snapshot`.`hotel_id` is not null) and (trim(`kf11_room_status_snapshot`.`hotel_id`) <> '') and (`kf11_room_status_snapshot`.`business_date` is not null) and (`kf11_room_status_snapshot`.`snapshot_time` is not null)) group by `kf11_room_status_snapshot`.`hotel_id`,`kf11_room_status_snapshot`.`business_date`) `latest` on(((`latest`.`hotel_id` = `room_status`.`hotel_id`) and (`latest`.`business_date` = `room_status`.`business_date`) and (`latest`.`latest_snapshot_time` = `room_status`.`snapshot_time`)))) where ((`room_status`.`hotel_id` is not null) and (trim(`room_status`.`hotel_id`) <> '')) group by `room_status`.`hotel_id`,`room_status`.`business_date`,cast(`room_status`.`snapshot_time` as time);
 

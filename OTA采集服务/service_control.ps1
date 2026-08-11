@@ -11,14 +11,17 @@ $ConfigPath = Join-Path $Root "config\settings.json"
 $SchedulerPath = Join-Path $Root "manual_scheduler.py"
 $PriceSchedulerPath = Join-Path $Root "price_scheduler.py"
 $ReplySchedulerPath = Join-Path $Root "review_reply_scheduler.py"
+$PromotionSchedulerPath = Join-Path $Root "promotion_scheduler.py"
 $PanelPath = Join-Path $Root "panel.py"
 $SchedulerPidPath = Join-Path $StateDir "manual_scheduler.pid"
 $PriceSchedulerPidPath = Join-Path $StateDir "price_scheduler.pid"
 $ReplySchedulerPidPath = Join-Path $StateDir "review_reply_scheduler.pid"
+$PromotionSchedulerPidPath = Join-Path $StateDir "promotion_scheduler.pid"
 $PanelPidPath = Join-Path $StateDir "panel.pid"
 $StopPath = Join-Path $StateDir "manual_scheduler.stop"
 $PriceStopPath = Join-Path $StateDir "price_scheduler.stop"
 $ReplyStopPath = Join-Path $StateDir "review_reply_scheduler.stop"
+$PromotionStopPath = Join-Path $StateDir "promotion_scheduler.stop"
 
 function Get-TrackedProcess([string]$PidPath, [string]$ExpectedScript) {
     if (-not (Test-Path -LiteralPath $PidPath)) { return $null }
@@ -64,6 +67,7 @@ function Start-ManualService {
     if (-not (Test-Path -LiteralPath $SchedulerPath)) { throw "Scheduler not found: $SchedulerPath" }
     if (-not (Test-Path -LiteralPath $PriceSchedulerPath)) { throw "Price scheduler not found: $PriceSchedulerPath" }
     if (-not (Test-Path -LiteralPath $ReplySchedulerPath)) { throw "Review reply scheduler not found: $ReplySchedulerPath" }
+    if (-not (Test-Path -LiteralPath $PromotionSchedulerPath)) { throw "Promotion scheduler not found: $PromotionSchedulerPath" }
     if (-not (Test-Path -LiteralPath $PanelPath)) { throw "Panel not found: $PanelPath" }
 
     $persistentTask = Get-ScheduledTask -TaskName "HotelOTACollector" -ErrorAction SilentlyContinue
@@ -127,6 +131,24 @@ function Start-ManualService {
         Set-Content -LiteralPath $ReplyStopPath -Value "stop" -Encoding ASCII
     }
 
+    $promotionSchedulerEnabled = $false
+    if ($null -ne $settings.promotion_scheduler -and $null -ne $settings.promotion_scheduler.enabled) {
+        $promotionSchedulerEnabled = [bool]$settings.promotion_scheduler.enabled
+    }
+    if ($promotionSchedulerEnabled) {
+        Remove-Item -LiteralPath $PromotionStopPath -Force -ErrorAction SilentlyContinue
+        $promotionScheduler = Get-TrackedProcess $PromotionSchedulerPidPath "promotion_scheduler.py"
+        if (-not $promotionScheduler) {
+            Start-Process -FilePath $pythonPath -ArgumentList "`"$PromotionSchedulerPath`"" `
+                -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
+            Start-Sleep -Seconds 1
+            $promotionScheduler = Get-TrackedProcess $PromotionSchedulerPidPath "promotion_scheduler.py"
+            if (-not $promotionScheduler) { throw "Promotion scheduler failed to start. Check logs\promotion_scheduler.log." }
+        }
+    } else {
+        Set-Content -LiteralPath $PromotionStopPath -Value "stop" -Encoding ASCII
+    }
+
     $port = [int]($settings.service.panel_port)
     if (-not $port) { $port = 8765 }
     $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -156,6 +178,7 @@ function Stop-ManualService {
     Set-Content -LiteralPath $StopPath -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
     Set-Content -LiteralPath $PriceStopPath -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
     Set-Content -LiteralPath $ReplyStopPath -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
+    Set-Content -LiteralPath $PromotionStopPath -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
 
     $panel = Get-TrackedProcess $PanelPidPath "panel.py"
     if ($panel) { Stop-Process -Id $panel.ProcessId -Force }
@@ -184,16 +207,25 @@ function Stop-ManualService {
         Remove-Item -LiteralPath $ReplyStopPath -Force -ErrorAction SilentlyContinue
         Write-Host "Review reply scheduler is not running."
     }
+
+    $promotionScheduler = Get-TrackedProcess $PromotionSchedulerPidPath "promotion_scheduler.py"
+    if ($promotionScheduler) {
+        Write-Host "Promotion scheduler stop requested. An active promotion control will finish first."
+    } else {
+        Remove-Item -LiteralPath $PromotionStopPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Show-ManualStatus {
     $scheduler = Get-TrackedProcess $SchedulerPidPath "manual_scheduler.py"
     $priceScheduler = Get-TrackedProcess $PriceSchedulerPidPath "price_scheduler.py"
     $replyScheduler = Get-TrackedProcess $ReplySchedulerPidPath "review_reply_scheduler.py"
+    $promotionScheduler = Get-TrackedProcess $PromotionSchedulerPidPath "promotion_scheduler.py"
     $panel = Get-TrackedProcess $PanelPidPath "panel.py"
     Write-Host "scheduler:" $(if ($scheduler) { "running (PID $($scheduler.ProcessId))" } else { "stopped" })
     Write-Host "price scheduler:" $(if ($priceScheduler) { "running (PID $($priceScheduler.ProcessId))" } else { "stopped" })
     Write-Host "review reply scheduler:" $(if ($replyScheduler) { "running (PID $($replyScheduler.ProcessId))" } else { "stopped" })
+    Write-Host "promotion scheduler:" $(if ($promotionScheduler) { "running (PID $($promotionScheduler.ProcessId))" } else { "stopped" })
     Write-Host "panel:" $(if ($panel) { "running (PID $($panel.ProcessId))" } else { "stopped" })
 }
 

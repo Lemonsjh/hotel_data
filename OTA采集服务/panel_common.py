@@ -110,6 +110,7 @@ def page(title: str, body: str, active: str = "status") -> str:
     nav_items = [
         ("status", "/", "状态"),
         ("prices", "/price-tasks", "调价任务"),
+        ("promotions", "/promotion-controls", "推广管理"),
         ("room_mappings", "/room-mappings", "房型映射"),
         ("config", "/config", "配置"),
         ("logs", "/logs", "日志"),
