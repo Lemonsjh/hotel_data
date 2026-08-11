@@ -27,7 +27,28 @@ def number(value: Any) -> float | None:
         return None
 
 
-def transform(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def load_room_type_ids(conn) -> dict[str, str]:
+    """Return only unambiguous active PMS room-type mappings for this hotel."""
+    sql = """
+    SELECT pms_room_type_name, MIN(room_type_id) AS room_type_id
+    FROM hotel_room_type_mapping
+    WHERE hotel_id=%s
+      AND is_active=1
+      AND pms_room_type_name IS NOT NULL
+      AND TRIM(pms_room_type_name)<>''
+    GROUP BY pms_room_type_name
+    HAVING COUNT(DISTINCT room_type_id)=1
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(sql, (HOTEL_ID,))
+        return {
+            str(row["pms_room_type_name"]).strip(): str(row["room_type_id"]).strip()
+            for row in cursor.fetchall()
+            if row["room_type_id"]
+        }
+
+
+def transform(payload: dict[str, Any], room_type_ids: dict[str, str]) -> list[dict[str, Any]]:
     meta = payload.get("meta") or {}
     snapshot_time = datetime.fromisoformat(str(meta["snapshot_time"]))
     rows = []
@@ -36,6 +57,7 @@ def transform(payload: dict[str, Any]) -> list[dict[str, Any]]:
             stay_date = str(detail.get("Date") or "").split(" ")[0]
             if not stay_date:
                 continue
+            room_type_name = str(room_type.get("room_type_name") or "").strip()
             rows.append(
                 {
                     "hotel_id": HOTEL_ID,
@@ -43,7 +65,8 @@ def transform(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "source_platform": HOTEL_CONFIG.get("source_platform") or "PMS（别样红）",
                     "snapshot_time": snapshot_time,
                     "stay_date": stay_date,
-                    "room_type_name": str(room_type.get("room_type_name") or "").strip(),
+                    "room_type_name": room_type_name,
+                    "room_type_id": room_type_ids.get(room_type_name),
                     "pms_room_type_id": str(room_type.get("pms_room_type_id") or "").strip(),
                     "total_rooms": number(room_type.get("total_rooms")),
                     "available_rooms": number(detail.get("AvailiableCount")),
@@ -64,11 +87,11 @@ def replace_mysql(rows: list[dict[str, Any]], conn=None) -> None:
     sql = f"""
     INSERT INTO {TABLE_NAME} (
         hotel_id, hotel_name, source_platform, snapshot_time, stay_date,
-        room_type_name, pms_room_type_id, total_rooms, available_rooms,
+        room_type_name, room_type_id, pms_room_type_id, total_rooms, available_rooms,
         occupied_rooms, overbooking_rooms, room_revenue, adr, revpar
     ) VALUES (
         %(hotel_id)s, %(hotel_name)s, %(source_platform)s, %(snapshot_time)s, %(stay_date)s,
-        %(room_type_name)s, %(pms_room_type_id)s, %(total_rooms)s, %(available_rooms)s,
+        %(room_type_name)s, %(room_type_id)s, %(pms_room_type_id)s, %(total_rooms)s, %(available_rooms)s,
         %(occupied_rooms)s, %(overbooking_rooms)s, %(room_revenue)s, %(adr)s, %(revpar)s
     )
     """
@@ -88,10 +111,16 @@ def replace_mysql(rows: list[dict[str, Any]], conn=None) -> None:
 def main(conn=None) -> None:
     if not HOTEL_ID:
         raise RuntimeError("未配置 HOTEL_ID，拒绝将房类预测写入空酒店")
-    payload = json.loads(JSON_PATH.read_text(encoding="utf-8"))
-    rows = transform(payload)
-    print(f"房类预测转换完成：{len(rows)} 行")
-    replace_mysql(rows, conn)
+    owns_connection = conn is None
+    conn = conn or pymysql.connect(**DB_CONFIG)
+    try:
+        payload = json.loads(JSON_PATH.read_text(encoding="utf-8"))
+        rows = transform(payload, load_room_type_ids(conn))
+        print(f"房类预测转换完成：{len(rows)} 行")
+        replace_mysql(rows, conn)
+    finally:
+        if owns_connection:
+            conn.close()
 
 
 if __name__ == "__main__":
