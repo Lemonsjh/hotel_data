@@ -142,6 +142,7 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<div class='config-actions'>"
             "<button type='submit' class='compact' formaction='/platform-login/meituan'>打开Edge登录</button>"
             "<button type='submit' class='secondary compact' name='login_mode' value='switch' formaction='/platform-login/meituan'>&#20999;&#25442;&#36134;&#21495;</button>"
+            "<button type='submit' class='secondary compact' formaction='/platform-login/meituan/cancel'>关闭登录助手</button>"
             "<button type='submit' class='secondary compact' formaction='/detect-hotel/meituan'>识别酒店参数</button>"
             "</div>"
         )
@@ -150,6 +151,7 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<div class='config-actions'>"
             "<button type='submit' class='compact' formaction='/platform-login/ctrip'>打开Edge登录</button>"
             "<button type='submit' class='secondary compact' name='login_mode' value='switch' formaction='/platform-login/ctrip'>&#20999;&#25442;&#36134;&#21495;</button>"
+            "<button type='submit' class='secondary compact' formaction='/platform-login/ctrip/cancel'>关闭登录助手</button>"
             "<button type='submit' class='secondary compact' formaction='/detect-hotel/ctrip'>识别酒店</button>"
             "</div>"
         )
@@ -290,6 +292,15 @@ def start_platform_login(platform: str):
         return redirect(url_for("config_page", notice=f"{label}登录窗口已打开，请在Edge中手动登录"))
     except Exception as exc:
         return redirect(url_for("config_page", error=str(exc)))
+
+
+@app.post("/platform-login/<platform>/cancel")
+def cancel_platform_login(platform: str):
+    if platform not in platform_login.PLATFORMS:
+        return redirect(url_for("config_page", error="不支持的平台"))
+    if platform_login.cancel(platform):
+        return redirect(url_for("config_page", notice="登录助手已关闭"))
+    return redirect(url_for("config_page", error="无法关闭登录助手，请稍后重试"))
 
 
 @app.get("/api/platform-login/<platform>")
