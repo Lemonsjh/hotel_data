@@ -102,9 +102,32 @@ def process_alive(pid: Any) -> bool:
     return True
 
 
+def login_process_alive(pid: Any) -> bool:
+    if not process_alive(pid):
+        return False
+    try:
+        process_id = int(pid)
+    except (TypeError, ValueError):
+        return False
+    command = (
+        f"(Get-CimInstance Win32_Process -Filter 'ProcessId={process_id}').CommandLine"
+    )
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return str(Path(__file__).resolve()).lower() in completed.stdout.lower()
+
+
 def stop_login_process(pid: Any) -> None:
     """Stop only the login-helper process and its dedicated Edge child processes."""
-    if not process_alive(pid):
+    if not login_process_alive(pid):
         return
     subprocess.run(
         ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -116,24 +139,36 @@ def stop_login_process(pid: Any) -> None:
     )
 
 
+def cancel(platform: str) -> bool:
+    info = require_platform(platform)
+    pid = read_status(platform).get("pid")
+    if login_process_alive(pid):
+        stop_path(platform).parent.mkdir(parents=True, exist_ok=True)
+        stop_path(platform).write_text(now_text(), encoding="utf-8")
+        for _ in range(20):
+            if not login_process_alive(pid):
+                break
+            time.sleep(0.25)
+        if login_process_alive(pid):
+            stop_login_process(pid)
+            for _ in range(20):
+                if not login_process_alive(pid):
+                    break
+                time.sleep(0.25)
+    if login_process_alive(pid):
+        write_status(platform, "failed", f"无法关闭{info['label']}登录助手", pid=pid)
+        return False
+    stop_path(platform).unlink(missing_ok=True)
+    write_status(platform, "cancelled", f"{info['label']}登录助手已关闭", pid=0)
+    return True
+
+
 def start(platform: str, settings: dict[str, Any], switch_account: bool = False) -> int:
     info = require_platform(platform)
     old = read_status(platform)
     old_pid = old.get("pid")
-    if process_alive(old_pid):
-        stop_path(platform).parent.mkdir(parents=True, exist_ok=True)
-        stop_path(platform).write_text(now_text(), encoding="utf-8")
-        for _ in range(20):
-            if not process_alive(old_pid):
-                break
-            time.sleep(0.25)
-        if process_alive(old_pid):
-            stop_login_process(old_pid)
-            for _ in range(20):
-                if not process_alive(old_pid):
-                    break
-                time.sleep(0.25)
-        if process_alive(old_pid):
+    if login_process_alive(old_pid):
+        if not cancel(platform):
             raise RuntimeError(f"无法结束旧的{info['label']}登录助手，请在任务管理器中结束该进程后重试")
 
     stop_path(platform).unlink(missing_ok=True)
@@ -397,6 +432,14 @@ def run(platform: str, switch_account: bool = False) -> int:
         return 2
     finally:
         stop_path(platform).unlink(missing_ok=True)
+        status = read_status(platform)
+        if status.get("pid"):
+            write_status(
+                platform,
+                str(status.get("status") or "cancelled"),
+                str(status.get("message") or "登录助手已退出"),
+                pid=0,
+            )
 
 
 def main() -> int:
