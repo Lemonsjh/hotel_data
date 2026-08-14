@@ -154,10 +154,18 @@ def sync_metric_history_table(
                 raise MysqlSyncError(f"Metric history keys missing: {', '.join(sorted(missing_keys))}")
             updates = [column for column in columns if column not in key_columns]
             placeholders = ", ".join(["%s"] * len(columns))
+            update_parts = []
+            for column in updates:
+                if table_name == "meituan_ota_business_metrics" and column == "metric_value":
+                    update_parts.append(
+                        "`metric_value`=COALESCE(VALUES(`metric_value`),`metric_value`)"
+                    )
+                else:
+                    update_parts.append(f"`{column}`=VALUES(`{column}`)")
             sql = (
                 f"INSERT INTO `{table_name}` ({', '.join(f'`{column}`' for column in columns)}) "
                 f"VALUES ({placeholders}) ON DUPLICATE KEY UPDATE "
-                + ", ".join(f"`{column}`=VALUES(`{column}`)" for column in updates)
+                + ", ".join(update_parts)
             )
             cursor.executemany(
                 sql,
