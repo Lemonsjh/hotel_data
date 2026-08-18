@@ -300,6 +300,17 @@ def fetch_public_welfare_status() -> str:
     raise RuntimeError("Public welfare page did not return a recognized status")
 
 
+def scheduled_invoice_is_closed(page: Any) -> bool:
+    for frame in page.frames:
+        try:
+            text = frame.locator("body").inner_text(timeout=1_000)
+        except Exception:
+            continue
+        if "\u5f53\u524d\u95e8\u5e97\u6682\u672a\u5f00\u901a" in text and SCHEDULED_INVOICE_NAME in text:
+            return True
+    return False
+
+
 def fetch_scheduled_invoice_status() -> str:
     local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     profile = local_app_data / "HotelAgent" / "browser_profiles" / "meituan"
@@ -313,6 +324,8 @@ def fetch_scheduled_invoice_status() -> str:
             page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
             maintenance_clicked = False
             for _ in range(PAGE_CHECK_SECONDS * 2):
+                if scheduled_invoice_is_closed(page):
+                    return "CLOSED"
                 for frame in page.frames:
                     try:
                         links = frame.locator("a", has_text="\u9152\u5e97\u53d1\u7968\u4fe1\u606f\u7ef4\u62a4")
@@ -335,13 +348,8 @@ def fetch_scheduled_invoice_status() -> str:
             page.wait_for_timeout(1_000)
             page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
             for _ in range(PAGE_CHECK_SECONDS * 2):
-                for frame in page.frames:
-                    try:
-                        texts = frame.locator("span.no-join-title").all_inner_texts()
-                        if any("\u5f53\u524d\u95e8\u5e97\u6682\u672a\u5f00\u901a" in value and SCHEDULED_INVOICE_NAME in value for value in texts):
-                            return "CLOSED"
-                    except Exception:
-                        continue
+                if scheduled_invoice_is_closed(page):
+                    return "CLOSED"
                 page.wait_for_timeout(500)
         finally:
             context.close()

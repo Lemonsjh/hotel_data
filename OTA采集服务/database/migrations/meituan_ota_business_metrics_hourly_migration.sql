@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS `meituan_ota_business_metrics_hourly` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `hotel_id` VARCHAR(100) NOT NULL,
+    `hotel_name` VARCHAR(255) NULL,
+    `business_date` DATE NOT NULL,
+    `snapshot_time` DATETIME NOT NULL,
+    `snapshot_hour` DATETIME NOT NULL,
+    `traffic_price` DECIMAL(18,4) NULL COMMENT '引流价（元）',
+    `exposure_count` BIGINT UNSIGNED NULL COMMENT '曝光量（次）',
+    `browse_count` BIGINT UNSIGNED NULL COMMENT '浏览人数（人）',
+    `payment_conversion_rate` DECIMAL(10,6) NULL COMMENT '支付转化率（比例）',
+    `payment_order_count` BIGINT UNSIGNED NULL COMMENT '支付订单数（单）',
+    `sales_room_nights` DECIMAL(18,4) NULL COMMENT '销售间夜',
+    `sales_average_price` DECIMAL(18,4) NULL COMMENT '销售均价（元）',
+    `sales_amount` DECIMAL(18,4) NULL COMMENT '销售额（元）',
+    `checkin_room_nights` DECIMAL(18,4) NULL COMMENT '入住间夜',
+    `occupancy_rate` DECIMAL(10,6) NULL COMMENT '满房率（比例）',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_meituan_business_hourly` (`hotel_id`, `snapshot_hour`),
+    KEY `idx_meituan_business_hourly_date` (`hotel_id`, `business_date`),
+    KEY `idx_meituan_business_hourly_snapshot` (`snapshot_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

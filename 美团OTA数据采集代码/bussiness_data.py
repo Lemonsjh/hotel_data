@@ -13,7 +13,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from meituan_config import MEITUAN_EB_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ota_mysql_writer import OUTPUT_DIR, sync_metric_history, sync_table
+from ota_mysql_writer import OUTPUT_DIR, sync_meituan_business_metrics_hourly, sync_metric_history, sync_table
 
 DEFAULT_EXCEL_PATH = OUTPUT_DIR / "meituan_ota_collected_data.xlsx"
 SPLIT_OUTPUT_DIR = OUTPUT_DIR
@@ -26,6 +26,24 @@ METRIC_ORDER = [("PAY_AMT", "销售额"), ("PAY_ORDER_CNT", "支付订单"),
                 ("EXPOSE_PV_CNT", "曝光量"), ("INTENTION_UV", "浏览人数"),
                 ("PAY_ORDER_CNT_UV", "支付转化率"), ("PAY_ADR", "销售均价"),
                 ("DAY_ROOM_LOWEST_PRICE_AVG", "引流价"), ("NOT_AVAILABLE_REAL_ROOM_RATE", "满房率")]
+HOURLY_HEADERS = [
+    "hotel_id", "hotel_name", "business_date", "snapshot_time", "snapshot_hour",
+    "traffic_price", "exposure_count", "browse_count", "payment_conversion_rate",
+    "payment_order_count", "sales_room_nights", "sales_average_price", "sales_amount",
+    "checkin_room_nights", "occupancy_rate",
+]
+HOURLY_METRIC_FIELDS = {
+    "DAY_ROOM_LOWEST_PRICE_AVG": "traffic_price",
+    "EXPOSE_PV_CNT": "exposure_count",
+    "INTENTION_UV": "browse_count",
+    "PAY_ORDER_CNT_UV": "payment_conversion_rate",
+    "PAY_ORDER_CNT": "payment_order_count",
+    "PAY_ROOMNIGHT": "sales_room_nights",
+    "PAY_ADR": "sales_average_price",
+    "PAY_AMT": "sales_amount",
+    "CONSUME_ROOMNIGHT_SPLIT_EX_7DAYS_REFUND": "checkin_room_nights",
+    "NOT_AVAILABLE_REAL_ROOM_RATE": "occupancy_rate",
+}
 FLOW_METRIC_ORDER = [("FLOW_EXPOSURE_UV", "曝光人数"), ("FLOW_INTENTION_UV", "浏览人数"), ("FLOW_PAY_ORDER_CNT", "支付订单数"),
                      ("FLOW_INTENTION_PER_EXPOSURE", "曝光-浏览转化率"),
                      ("FLOW_PAY_ORDER_PER_INTENTION", "浏览-支付转化率")]
@@ -285,12 +303,38 @@ def build_score_rows(data, captured_at):
                      excel_metric_value(metric.get("value", ""), metric.get("unit", "")), metric.get("unit", ""),
                      "", "", metric.get("rank", "-"), "-"])
     return rows
+
+
+def hourly_metric_value(metric: dict[str, Any] | None):
+    if not metric:
+        return None
+    value = excel_metric_value(metric.get("value", "-"), metric.get("unit", ""))
+    return value if isinstance(value, (int, float)) else None
+
+
+def build_hourly_snapshot(data, captured_at):
+    values = {field: None for field in HOURLY_METRIC_FIELDS.values()}
+    metrics = data.get("metrics") or {}
+    for metric_id, field in HOURLY_METRIC_FIELDS.items():
+        values[field] = hourly_metric_value(metrics.get(metric_id))
+    snapshot_hour = captured_at.replace(minute=0, second=0, microsecond=0)
+    return [
+        HOTEL_ID, data.get("score_hotel_name", ""), captured_at.date(), captured_at, snapshot_hour,
+        *(values[field] for field in HOURLY_METRIC_FIELDS.values()),
+    ]
+
+
+def save_hourly_snapshot(data, captured_at):
+    row = build_hourly_snapshot(data, captured_at)
+    write_standard_json(OUTPUT_DIR / "meituan_ota_business_metrics_hourly.json", HOURLY_HEADERS, [row])
+    sync_meituan_business_metrics_hourly(HOURLY_HEADERS, row)
 def save_to_excel(today_data, yesterday_data, output_path=DEFAULT_EXCEL_PATH):
     captured_at = datetime.now()
     rows = build_metric_rows(today_data, "today_realtime", 0, captured_at)
     rows += build_metric_rows(yesterday_data, "yesterday", 1, captured_at)
     rows += build_score_rows(today_data, captured_at)
     write_rows_to_workbook(rows, output_path)
+    save_hourly_snapshot(today_data, captured_at)
     return output_path
 def write_rows_to_workbook(rows, output_path):
     headers = [*EXCEL_HEADERS, "hotel_id"]
