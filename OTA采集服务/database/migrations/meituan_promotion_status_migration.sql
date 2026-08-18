@@ -3,6 +3,8 @@ CREATE TABLE IF NOT EXISTS meituan_ota_promotion_status (
     promotion_code VARCHAR(64) NOT NULL,
     promotion_name VARCHAR(64) NOT NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/OPEN/CLOSED',
-    PRIMARY KEY (hotel_id, promotion_code)
+    snapshot_time DATETIME NULL,
+    PRIMARY KEY (hotel_id, promotion_code),
+    KEY idx_meituan_promotion_status_snapshot (hotel_id, snapshot_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Meituan promotion availability status';

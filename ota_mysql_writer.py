@@ -202,14 +202,14 @@ def sync_metric_history(headers: Sequence[str], rows: Sequence[Sequence[Any]], r
 
 
 def sync_meituan_business_metrics_hourly(
-    headers: Sequence[str], row: Sequence[Any], retention_days: int = 60
+    headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 60
 ) -> None:
-    """美团今日实时经营指标按酒店和小时快照保存。"""
+    """美团今日实时经营指标按酒店、小时和指标编码保存。"""
     sync_metric_history_table(
         "meituan_ota_business_metrics_hourly",
         headers,
-        [row],
-        {"hotel_id", "snapshot_hour"},
+        rows,
+        {"hotel_id", "snapshot_hour", "metric_code"},
         retention_days,
     )
 

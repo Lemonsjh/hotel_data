@@ -791,20 +791,17 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_business_metrics_hourly` (
   `business_date` date NOT NULL,
   `snapshot_time` datetime NOT NULL,
   `snapshot_hour` datetime NOT NULL,
-  `traffic_price` decimal(18,4) DEFAULT NULL COMMENT '引流价（元）',
-  `exposure_count` bigint unsigned DEFAULT NULL COMMENT '曝光量（次）',
-  `browse_count` bigint unsigned DEFAULT NULL COMMENT '浏览人数（人）',
-  `payment_conversion_rate` decimal(10,6) DEFAULT NULL COMMENT '支付转化率（比例）',
-  `payment_order_count` bigint unsigned DEFAULT NULL COMMENT '支付订单数（单）',
-  `sales_room_nights` decimal(18,4) DEFAULT NULL COMMENT '销售间夜',
-  `sales_average_price` decimal(18,4) DEFAULT NULL COMMENT '销售均价（元）',
-  `sales_amount` decimal(18,4) DEFAULT NULL COMMENT '销售额（元）',
-  `checkin_room_nights` decimal(18,4) DEFAULT NULL COMMENT '入住间夜',
-  `occupancy_rate` decimal(10,6) DEFAULT NULL COMMENT '满房率（比例）',
+  `metric_code` varchar(64) NOT NULL,
+  `metric_name` varchar(100) NOT NULL,
+  `metric_value` decimal(18,4) DEFAULT NULL,
+  `metric_unit` varchar(50) DEFAULT NULL,
+  `competitor_rank` varchar(100) DEFAULT NULL COMMENT '同行排名',
+  `peer_average` varchar(100) DEFAULT NULL COMMENT '同行均值',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_meituan_business_hourly` (`hotel_id`,`snapshot_hour`),
+  UNIQUE KEY `uk_meituan_business_hourly` (`hotel_id`,`snapshot_hour`,`metric_code`),
   KEY `idx_meituan_business_hourly_date` (`hotel_id`,`business_date`),
-  KEY `idx_meituan_business_hourly_snapshot` (`snapshot_time`)
+  KEY `idx_meituan_business_hourly_snapshot` (`snapshot_time`),
+  KEY `idx_meituan_business_hourly_metric` (`hotel_id`,`metric_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- Table: meituan_ota_exposure_source_daily
@@ -1019,7 +1016,9 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_promotion_status` (
   `promotion_code` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `promotion_name` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/OPEN/CLOSED',
-  PRIMARY KEY (`hotel_id`,`promotion_code`)
+  `snapshot_time` datetime DEFAULT NULL,
+  PRIMARY KEY (`hotel_id`,`promotion_code`),
+  KEY `idx_meituan_promotion_status_snapshot` (`hotel_id`,`snapshot_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Meituan promotion availability status';
 
 -- Table: meituan_ota_review_detail

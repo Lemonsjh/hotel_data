@@ -29,9 +29,9 @@ class MeituanBusinessHourlyTests(unittest.TestCase):
         cls.module = load_module()
         cls.module.HOTEL_ID = "test-hotel"
 
-    def test_build_hourly_snapshot_keeps_only_ten_realtime_metrics(self):
+    def test_build_hourly_rows_keep_ten_realtime_metrics_with_peer_data(self):
         metrics = {
-            "DAY_ROOM_LOWEST_PRICE_AVG": {"value": "197.00", "unit": "元"},
+            "DAY_ROOM_LOWEST_PRICE_AVG": {"value": "197.00", "unit": "元", "rank": "13/20", "peer_avg": "218.1"},
             "EXPOSE_PV_CNT": {"value": "-", "unit": "次"},
             "INTENTION_UV": {"value": "65", "unit": "人"},
             "PAY_ORDER_CNT_UV": {"value": "1.54", "unit": "%"},
@@ -45,17 +45,19 @@ class MeituanBusinessHourlyTests(unittest.TestCase):
         }
         captured_at = datetime(2026, 8, 18, 10, 56, 32)
 
-        row = self.module.build_hourly_snapshot({"score_hotel_name": "测试酒店", "metrics": metrics}, captured_at)
-        values = dict(zip(self.module.HOURLY_HEADERS, row))
+        rows = self.module.build_hourly_metric_rows({"score_hotel_name": "测试酒店", "metrics": metrics}, captured_at)
+        values = {row[self.module.HOURLY_HEADERS.index("metric_code")]: dict(zip(self.module.HOURLY_HEADERS, row)) for row in rows}
 
-        self.assertEqual(values["hotel_id"], "test-hotel")
-        self.assertEqual(values["business_date"].isoformat(), "2026-08-18")
-        self.assertEqual(values["snapshot_hour"], datetime(2026, 8, 18, 10))
-        self.assertEqual(values["traffic_price"], 197)
-        self.assertIsNone(values["exposure_count"])
-        self.assertEqual(values["payment_conversion_rate"], 0.0154)
-        self.assertEqual(values["occupancy_rate"], 0)
-        self.assertEqual(values["sales_amount"], 88)
+        self.assertEqual(len(rows), 10)
+        self.assertEqual(values["PAY_AMT"]["hotel_id"], "test-hotel")
+        self.assertEqual(values["PAY_AMT"]["business_date"].isoformat(), "2026-08-18")
+        self.assertEqual(values["PAY_AMT"]["snapshot_hour"], datetime(2026, 8, 18, 10))
+        self.assertEqual(values["DAY_ROOM_LOWEST_PRICE_AVG"]["metric_value"], 197)
+        self.assertEqual(values["DAY_ROOM_LOWEST_PRICE_AVG"]["competitor_rank"], "13/20")
+        self.assertEqual(values["DAY_ROOM_LOWEST_PRICE_AVG"]["peer_average"], "218.1")
+        self.assertIsNone(values["EXPOSE_PV_CNT"]["metric_value"])
+        self.assertEqual(values["PAY_ORDER_CNT_UV"]["metric_value"], 0.0154)
+        self.assertEqual(values["NOT_AVAILABLE_REAL_ROOM_RATE"]["metric_value"], 0)
         self.assertNotIn("FLOW_EXPOSURE_UV", values)
 
 

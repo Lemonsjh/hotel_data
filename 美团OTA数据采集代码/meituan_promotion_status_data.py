@@ -53,6 +53,7 @@ SCHEDULED_INVOICE_NAME = "\u9884\u7ea6\u53d1\u7968"
 SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
 PAGE_CHECK_SECONDS = 10
 PAGE_ACTION_TIMEOUT_MS = 5_000
+WORKBENCH_MENU_TIMEOUT_MS = 20_000
 COOLDOWN_MIN_HOURS = 10.0
 COOLDOWN_MAX_HOURS = 14.0
 COOLDOWN_REASONS = {"success", "failure"}
@@ -196,6 +197,16 @@ def fetch_hourly_room_status() -> str:
     return "CLOSED"
 
 
+def click_workbench_menu(page: Any, parent_name: str, item_name: str) -> None:
+    parent = page.get_by_text(parent_name, exact=True).first
+    item = page.get_by_text(item_name, exact=True).first
+    parent.wait_for(state="visible", timeout=WORKBENCH_MENU_TIMEOUT_MS)
+    if not item.is_visible(timeout=PAGE_ACTION_TIMEOUT_MS):
+        parent.click(force=True, timeout=PAGE_ACTION_TIMEOUT_MS)
+        item.wait_for(state="visible", timeout=WORKBENCH_MENU_TIMEOUT_MS)
+    item.click(force=True, timeout=PAGE_ACTION_TIMEOUT_MS)
+
+
 def fetch_hotel_highlights_status() -> str:
     local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     profile = local_app_data / "HotelAgent" / "browser_profiles" / "meituan"
@@ -210,13 +221,7 @@ def fetch_hotel_highlights_status() -> str:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
-            menu = page.get_by_text("\u4fe1\u606f\u7ba1\u7406", exact=True)
-            menu.wait_for(state="visible", timeout=PAGE_ACTION_TIMEOUT_MS)
-            menu.click(force=True, timeout=PAGE_ACTION_TIMEOUT_MS)
-            page.wait_for_timeout(500)
-            page.get_by_text(HIGHLIGHTS_NAME, exact=True).first.dispatch_event(
-                "click", timeout=PAGE_ACTION_TIMEOUT_MS
-            )
+            click_workbench_menu(page, "\u4fe1\u606f\u7ba1\u7406", HIGHLIGHTS_NAME)
             page.wait_for_timeout(1_000)
             for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:
@@ -277,10 +282,7 @@ def fetch_public_welfare_status() -> str:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(1_000)
-            page.get_by_text(PUBLIC_WELFARE_NAME, exact=True).first.dispatch_event(
-                "click", timeout=PAGE_ACTION_TIMEOUT_MS
-            )
+            click_workbench_menu(page, "\u4fc3\u9500\u63a8\u5e7f", PUBLIC_WELFARE_NAME)
             for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:
                     if urlparse(frame.url).hostname != "gongyi.meituan.com":
@@ -359,15 +361,17 @@ def fetch_scheduled_invoice_status() -> str:
 def save_status(hotel_id: str, code: str, name: str, status: str) -> None:
     import pymysql
 
+    snapshot_time = datetime.now()
     connection = pymysql.connect(**DB_CONFIG)
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """INSERT INTO meituan_ota_promotion_status
-                   (hotel_id, promotion_code, promotion_name, status)
-                   VALUES (%s, %s, %s, %s)
-                   ON DUPLICATE KEY UPDATE promotion_name=VALUES(promotion_name), status=VALUES(status)""",
-                (hotel_id, code, name, status),
+                   (hotel_id, promotion_code, promotion_name, status, snapshot_time)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON DUPLICATE KEY UPDATE promotion_name=VALUES(promotion_name),
+                   status=VALUES(status), snapshot_time=VALUES(snapshot_time)""",
+                (hotel_id, code, name, status, snapshot_time),
             )
         connection.commit()
     except Exception:
