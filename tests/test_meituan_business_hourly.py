@@ -56,9 +56,13 @@ class MeituanBusinessHourlyTests(unittest.TestCase):
         self.assertEqual(values["DAY_ROOM_LOWEST_PRICE_AVG"]["competitor_rank"], "13/20")
         self.assertEqual(values["DAY_ROOM_LOWEST_PRICE_AVG"]["peer_average"], "218.1")
         self.assertIsNone(values["EXPOSE_PV_CNT"]["metric_value"])
-        self.assertEqual(values["PAY_ORDER_CNT_UV"]["metric_value"], 0.0154)
+        self.assertEqual(values["PAY_ORDER_CNT_UV"]["metric_value"], 1.54)
         self.assertEqual(values["NOT_AVAILABLE_REAL_ROOM_RATE"]["metric_value"], 0)
         self.assertNotIn("FLOW_EXPOSURE_UV", values)
+
+    def test_percent_metric_value_keeps_the_page_percentage(self):
+        self.assertEqual(self.module.excel_metric_value("1.54", "%"), 1.54)
+        self.assertEqual(self.module.excel_metric_value("1.54%"), 1.54)
 
 
 if __name__ == "__main__":

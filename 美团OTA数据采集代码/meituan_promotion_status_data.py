@@ -197,13 +197,43 @@ def fetch_hourly_room_status() -> str:
     return "CLOSED"
 
 
+def find_visible_text(page: Any, text: str):
+    locators = page.get_by_text(text, exact=True)
+    for index in range(locators.count()):
+        locator = locators.nth(index)
+        try:
+            if locator.is_visible(timeout=500):
+                return locator
+        except Exception:
+            continue
+    return None
+
+
+def wait_for_visible_text(page: Any, text: str, timeout_ms: int):
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        locator = find_visible_text(page, text)
+        if locator:
+            return locator
+        page.wait_for_timeout(250)
+    raise RuntimeError(f"Visible workbench menu was not found: {text}")
+
+
+def wait_for_workbench_wrapper(page: Any, timeout_ms: int = WORKBENCH_MENU_TIMEOUT_MS) -> None:
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        if urlparse(page.url).hostname == "me.meituan.com":
+            return
+        page.wait_for_timeout(250)
+    raise RuntimeError("Meituan workbench wrapper did not finish loading")
+
+
 def click_workbench_menu(page: Any, parent_name: str, item_name: str) -> None:
-    parent = page.get_by_text(parent_name, exact=True).first
-    item = page.get_by_text(item_name, exact=True).first
-    parent.wait_for(state="visible", timeout=WORKBENCH_MENU_TIMEOUT_MS)
-    if not item.is_visible(timeout=PAGE_ACTION_TIMEOUT_MS):
+    parent = wait_for_visible_text(page, parent_name, WORKBENCH_MENU_TIMEOUT_MS)
+    item = find_visible_text(page, item_name)
+    if not item:
         parent.click(force=True, timeout=PAGE_ACTION_TIMEOUT_MS)
-        item.wait_for(state="visible", timeout=WORKBENCH_MENU_TIMEOUT_MS)
+        item = wait_for_visible_text(page, item_name, WORKBENCH_MENU_TIMEOUT_MS)
     item.click(force=True, timeout=PAGE_ACTION_TIMEOUT_MS)
 
 
@@ -221,6 +251,7 @@ def fetch_hotel_highlights_status() -> str:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
+            wait_for_workbench_wrapper(page)
             click_workbench_menu(page, "\u4fe1\u606f\u7ba1\u7406", HIGHLIGHTS_NAME)
             page.wait_for_timeout(1_000)
             for _ in range(PAGE_CHECK_SECONDS * 2):
@@ -282,6 +313,7 @@ def fetch_public_welfare_status() -> str:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
+            wait_for_workbench_wrapper(page)
             click_workbench_menu(page, "\u4fc3\u9500\u63a8\u5e7f", PUBLIC_WELFARE_NAME)
             for _ in range(PAGE_CHECK_SECONDS * 2):
                 for frame in page.frames:

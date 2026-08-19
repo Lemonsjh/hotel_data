@@ -28,11 +28,7 @@ class FakeLocator:
         self.waits = []
         self.clicks = 0
 
-    @property
-    def first(self):
-        return self
-
-    def is_visible(self, timeout):
+    def is_visible(self, timeout=None):
         return self.visible
 
     def wait_for(self, **kwargs):
@@ -43,13 +39,43 @@ class FakeLocator:
         self.clicks += 1
 
 
+class FakeLocatorGroup:
+    def __init__(self, locators):
+        self.locators = locators
+
+    def count(self):
+        return len(self.locators)
+
+    def nth(self, index):
+        return self.locators[index]
+
+
 class FakePage:
     def __init__(self, locators):
         self.locators = locators
 
     def get_by_text(self, text, exact):
         self.assert_exact = exact
-        return self.locators[text]
+        locators = self.locators[text]
+        return FakeLocatorGroup(locators if isinstance(locators, list) else [locators])
+
+    def wait_for_timeout(self, _timeout):
+        for locators in self.locators.values():
+            for locator in locators if isinstance(locators, list) else [locators]:
+                locator.visible = True
+
+
+class FakeRedirectPage:
+    def __init__(self):
+        self.urls = ["https://eb.meituan.com/ebooking/new-workbench/index.html", "https://me.meituan.com/ebooking/merchant/ebIframe"]
+        self.index = 0
+
+    @property
+    def url(self):
+        return self.urls[self.index]
+
+    def wait_for_timeout(self, _timeout):
+        self.index = min(self.index + 1, len(self.urls) - 1)
 
 
 class PromotionStatusNavigationTests(unittest.TestCase):
@@ -62,8 +88,8 @@ class PromotionStatusNavigationTests(unittest.TestCase):
         self.module.click_workbench_menu(FakePage({"促销推广": parent, "公益流量": child}), "促销推广", "公益流量")
 
         self.assertEqual(parent.clicks, 1)
+        self.assertTrue(child.visible)
         self.assertEqual(child.clicks, 1)
-        self.assertEqual(child.waits[-1]["state"], "visible")
 
     def test_does_not_collapse_an_already_visible_child(self):
         parent, child = FakeLocator(True), FakeLocator(True)
@@ -71,6 +97,21 @@ class PromotionStatusNavigationTests(unittest.TestCase):
 
         self.assertEqual(parent.clicks, 0)
         self.assertEqual(child.clicks, 1)
+
+    def test_uses_visible_parent_when_same_text_has_hidden_copy(self):
+        hidden_parent, visible_parent, child = FakeLocator(False), FakeLocator(True), FakeLocator(False)
+        page = FakePage({"促销推广": [hidden_parent, visible_parent], "公益流量": child})
+        self.module.click_workbench_menu(page, "促销推广", "公益流量")
+
+        self.assertEqual(hidden_parent.clicks, 0)
+        self.assertEqual(visible_parent.clicks, 1)
+        self.assertEqual(child.clicks, 1)
+
+    def test_waits_for_workbench_wrapper_before_navigation(self):
+        page = FakeRedirectPage()
+        self.module.wait_for_workbench_wrapper(page, 1_000)
+
+        self.assertEqual(page.url, "https://me.meituan.com/ebooking/merchant/ebIframe")
 
 
 if __name__ == "__main__":

@@ -259,9 +259,7 @@ def excel_metric_value(value, unit=""):
     text = str(value)
     try:
         if text.endswith("%"):
-            return float(text.rstrip("%")) / 100
-        if unit == "%":
-            return float(text) / 100
+            text = text.rstrip("%")
         number = float(text)
         return int(number) if number.is_integer() else number
     except ValueError:
@@ -345,7 +343,9 @@ def write_rows_to_workbook(rows, output_path):
         row_idx = ws.max_row
         ws.cell(row_idx, 1).number_format = "yyyy-mm-dd hh:mm:ss"
         ws.cell(row_idx, 3).number_format = "yyyy-mm-dd"
-        if ws.cell(row_idx, 7).value == "%" or ws.cell(row_idx, 5).value in ("曝光-浏览转化率", "浏览-支付转化率"):
+        if ws.cell(row_idx, 7).value == "%":
+            ws.cell(row_idx, 6).number_format = "0.00"
+        elif ws.cell(row_idx, 5).value in ("曝光-浏览转化率", "浏览-支付转化率"):
             ws.cell(row_idx, 6).number_format = "0.00%"
     wb.save(output_path)
     save_single_sheet(wb, SHEET_NAME, "ota_business_metrics.xlsx")
