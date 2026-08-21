@@ -22,6 +22,7 @@ TEXT_GROUPS = [
             ("meituan.hotel_name", "美团酒店名"),
             ("ctrip.hotel_name", "携程酒店名"),
             ("pms.hotel_name", "PMS 酒店名"),
+            ("bypms.hotel_name", "宝寓PMS酒店名"),
             ("pms.username", "PMS 账号"),
         ],
     ),
@@ -78,6 +79,14 @@ ADVANCED_TEXT_GROUPS = [
             ("pms.api_timeout_seconds", "接口超时（秒）"),
         ],
     ),
+    (
+        "宝寓PMS",
+        [
+            ("bypms.code_dir", "宝寓PMS代码目录"),
+            ("bypms.state_url", "宝寓PMS房态接口"),
+            ("bypms.timeout_seconds", "宝寓PMS超时（秒）"),
+        ],
+    ),
 ]
 
 SECRET_GROUPS = [
@@ -87,6 +96,7 @@ SECRET_GROUPS = [
             ("meituan.eb_cookie", "美团 EB Cookie（经营/热词/部分后台接口）"),
             ("meituan.me_cookie", "美团 ME Cookie（评价评分/产品/调价页）"),
             ("ctrip.cookie", "携程 Cookie"),
+            ("bypms.cookie", "宝寓PMS Cookie"),
         ],
     ),
     (
@@ -210,6 +220,19 @@ CONFIG_SECTIONS = [
             ("pms.api_timeout_seconds", "接口超时（秒）", False, True),
         ],
     },
+    {
+        "key": "bypms",
+        "title": "宝寓PMS",
+        "hint": "采集当日房态及渠道商品—宝寓房型关系快照；与别样红 PMS 互斥启用。",
+        "fields": [
+            ("bypms.hotel_name", "酒店名称", False, False),
+            ("bypms.cookie", "登录 Cookie（房态接口）", True, True),
+            ("bypms.code_dir", "代码目录", False, True),
+            ("bypms.state_url", "当日房态接口", False, True),
+            ("bypms.channel_mapping_url", "渠道房型关系接口", False, True),
+            ("bypms.timeout_seconds", "超时（秒）", False, True),
+        ],
+    },
 ]
 
 NUMBER_FIELDS = {
@@ -230,6 +253,7 @@ NUMBER_FIELDS = {
     "pms.navigation_timeout_ms",
     "pms.action_timeout_ms",
     "pms.api_timeout_seconds",
+    "bypms.timeout_seconds",
 }
 
 SHORT_SECRET_FIELDS = {"mysql.password", "pms.password"}

@@ -36,6 +36,11 @@ PLATFORMS = {
         "label": "携程",
         "url": "https://ebooking.ctrip.com/home/mainland",
     },
+    "bypms": {
+        "label": "宝寓PMS",
+        "url": "https://www.bypms.cn/console/state/",
+        "protected_url_prefix": "https://www.bypms.cn/console/state/",
+    },
 }
 STATE_DIR = runner.ROOT / "state"
 KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -218,7 +223,10 @@ def wait_for_auth(context: Any, platform: str, required: set[str], message: str)
             if required.issubset(cookie_names(context)) and pages:
                 active_page = pages[-1]
                 active_url = active_page.url.lower()
-                if "login" not in active_url and "passport" not in active_url:
+                expected_url = str(PLATFORMS[platform].get("protected_url_prefix") or "").lower()
+                if expected_url and active_url.startswith(expected_url):
+                    return active_page
+                if required and "login" not in active_url and "passport" not in active_url:
                     return active_page
             time.sleep(0.5)
         except PlaywrightError:
@@ -270,12 +278,14 @@ def refresh_hotel_settings(platform: str) -> dict[str, Any]:
         hotel_name = str(result.get("hotel_name") or "").strip()
         if hotel_name:
             updates["hotel_name"] = hotel_name
-    else:
+    elif platform == "ctrip":
         result = probe_hotel(platform, str(section.get("cookie") or ""))
         hotel_name = str(result.get("hotel_name") or "").strip()
         if not result.get("ok") or not hotel_name:
             return {"ok": False, "error": result.get("error") or "\u672a\u8bc6\u522b\u5230\u9152\u5e97\u540d"}
         updates = {"hotel_name": hotel_name}
+    else:
+        return {"ok": True, "hotel_name": str(section.get("hotel_name") or "").strip()}
 
     section.update(updates)
     runner.save_json(runner.CONFIG_PATH, settings)
@@ -362,7 +372,11 @@ def run(platform: str, switch_account: bool = False) -> int:
                 timezone_id="Asia/Shanghai",
                 args=["--start-maximized"],
             )
-            required_cookies = {"mebsid"} if platform == "meituan" else {"usertoken", "usersign"}
+            required_cookies = (
+                {"mebsid"}
+                if platform == "meituan"
+                else ({"usertoken", "usersign"} if platform == "ctrip" else set())
+            )
             had_session = required_cookies.issubset(cookie_names(context))
             if switch_account:
                 context.clear_cookies()
@@ -379,8 +393,8 @@ def run(platform: str, switch_account: bool = False) -> int:
                 page = wait_for_auth(
                     context,
                     platform,
-                    {"usertoken", "usersign"},
-                    "请在Edge中完成携程登录",
+                    required_cookies,
+                    f"请在Edge中完成{info['label']}登录",
                 )
 
             protected_url = info["eb_url"] if platform == "meituan" else info["url"]

@@ -54,6 +54,15 @@
     "action_timeout_ms": 15000,
     "api_timeout_seconds": 30
   },
+  "bypms": {
+    "enabled": false,
+    "hotel_name": "",
+    "cookie": "",
+    "code_dir": "宝寓PMS数据采集代码",
+    "state_url": "https://www.bypms.cn/console/state/get",
+    "channel_mapping_url": "https://pms-api.bypms.cn/channel/api/v1/channel-unit/list",
+    "timeout_seconds": 120
+  },
   "mysql": {
     "host": "127.0.0.1",
     "port": 3306,
@@ -117,6 +126,8 @@
     "ctrip_review_detail": true,
     "ctrip_promotion": true,
     "ctrip_goods_price": true,
-    "pms_fetch": true
+    "pms_fetch": true,
+    "bypms_room_status": false,
+    "bypms_channel_mapping": false
   }
 }

@@ -16,6 +16,9 @@ DEFAULT_RETENTION = {
 
 PMS_RETENTION_RULES = (
     ("pms_room_type_hourly_status", "snapshot_hour", "pms_hourly_days", "DAY"),
+    ("bypms_room_status_snapshot", "snapshot_hour", "pms_hourly_days", "DAY"),
+    ("bypms_room_type_hourly_status", "snapshot_hour", "pms_hourly_days", "DAY"),
+    ("bypms_channel_unit_mapping_snapshot", "snapshot_hour", "pms_hourly_days", "DAY"),
     ("rs01_room_revenue_daily", "business_date", "pms_daily_days", "DAY"),
     ("kf11_room_status_snapshot", "business_date", "pms_daily_days", "DAY"),
     ("jl01_room_type_performance_daily", "business_date", "pms_daily_days", "DAY"),

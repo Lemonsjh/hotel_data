@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS `bypms_channel_unit_mapping_snapshot` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `hotel_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `source_platform` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '宝寓PMS',
+  `snapshot_time` datetime(6) NOT NULL,
+  `snapshot_hour` datetime NOT NULL,
+  `channel` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `channel_name` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `channel_unit_id` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `channel_unit_name` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `channel_unit_state` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `relation_type` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `relation_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `bypms_room_type_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `is_base_relation` tinyint(1) NOT NULL DEFAULT 0,
+  `relation_count` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_bypms_channel_mapping_snapshot` (`hotel_id`,`snapshot_hour`,`channel`,`channel_unit_id`,`relation_id`),
+  KEY `idx_bypms_channel_mapping_unit` (`hotel_id`,`channel`,`channel_unit_id`),
+  KEY `idx_bypms_channel_mapping_room` (`hotel_id`,`bypms_room_type_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='宝寓PMS维护的OTA商品与宝寓房型关系快照，不参与自动统一映射';

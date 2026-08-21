@@ -55,6 +55,10 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
                 except ValueError:
                     value = old
             set_path(settings, key, value)
+    pms_source = request.form.get("pms_source")
+    if pms_source in {"pms", "bypms"}:
+        settings.setdefault("pms", {})["enabled"] = pms_source == "pms"
+        settings.setdefault("bypms", {})["enabled"] = pms_source == "bypms"
     settings.setdefault("tasks", {})
     for name in runner.TASKS:
         settings["tasks"][name] = request.form.get(f"task.{name}") == "on"
@@ -126,7 +130,7 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         (advanced if is_advanced else regular).append(config_control(settings, key, label, secret))
 
     section_key = section["key"]
-    badge = {"system": "CORE", "meituan": "MEI", "ctrip": "CTRIP", "pms": "PMS"}[section_key]
+    badge = {"system": "CORE", "meituan": "MEI", "ctrip": "CTRIP", "pms": "PMS", "bypms": "BYPMS"}[section_key]
     advanced_html = ""
     if advanced:
         advanced_html = (
@@ -155,7 +159,15 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<button type='submit' class='secondary compact' formaction='/detect-hotel/ctrip'>识别酒店</button>"
             "</div>"
         )
-    if section_key in {"meituan", "ctrip"}:
+    elif section_key == "bypms":
+        actions = (
+            "<div class='config-actions'>"
+            "<button type='submit' class='compact' formaction='/platform-login/bypms'>打开Edge登录</button>"
+            "<button type='submit' class='secondary compact' name='login_mode' value='switch' formaction='/platform-login/bypms'>&#20999;&#25442;&#36134;&#21495;</button>"
+            "<button type='submit' class='secondary compact' formaction='/platform-login/bypms/cancel'>关闭登录助手</button>"
+            "</div>"
+        )
+    if section_key in {"meituan", "ctrip", "bypms"}:
         login = platform_login.read_status(section_key)
         state = str(login.get("status") or "never")
         state_class = {"success": "good", "failed": "danger", "waiting": "warn", "syncing": "warn", "starting": "warn"}.get(state, "idle")
@@ -184,6 +196,29 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
     """
 
 
+def pms_source_selector(settings: dict[str, Any]) -> str:
+    selected = "bypms" if (settings.get("bypms") or {}).get("enabled") else "pms"
+
+    def option(value: str, title: str, subtitle: str) -> str:
+        active = " active" if selected == value else ""
+        checked = " checked" if selected == value else ""
+        return (
+            f"<label class='pms-source-option{active}'>"
+            f"<input type='radio' name='pms_source' value='{value}'{checked}>"
+            f"<span><strong>{title}</strong><small>{subtitle}</small></span></label>"
+        )
+
+    return (
+        "<section class='pms-source-bar'>"
+        "<div class='pms-source-summary'><span>当前数据源</span><strong>PMS 平台选择</strong>"
+        "<small>两套 PMS 互斥；保存配置后只运行所选平台的任务。</small></div>"
+        "<div class='pms-source-options' role='radiogroup' aria-label='当前采集 PMS'>"
+        f"{option('pms', '别样红 PMS', '报表采集')}"
+        f"{option('bypms', '宝寓 PMS', '房态与渠道关系')}"
+        "</div></section>"
+    )
+
+
 @app.get("/config")
 def config_page() -> str:
     settings = runner.load_settings()
@@ -203,12 +238,14 @@ def config_page() -> str:
         )
     sections = {section["key"]: config_section(settings, section) for section in CONFIG_SECTIONS}
     section_groups = (
-        ("基础配置", ("system", "pms")),
+        ("基础配置", ("system",)),
+        ("PMS 平台", ("pms", "bypms")),
         ("OTA 平台", ("meituan", "ctrip")),
     )
     grouped_sections = "".join(
         "<section class='config-group'>"
         f"<div class='config-group-heading'>{title}</div>"
+        f"{pms_source_selector(settings) if title == 'PMS 平台' else ''}"
         f"<div class='config-layout'>{''.join(sections[key] for key in keys)}</div>"
         "</section>"
         for title, keys in section_groups

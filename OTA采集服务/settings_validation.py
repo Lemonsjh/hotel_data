@@ -16,6 +16,7 @@ POSITIVE_NUMBERS = (
     "pms.navigation_timeout_ms",
     "pms.action_timeout_ms",
     "pms.api_timeout_seconds",
+    "bypms.timeout_seconds",
     "data_retention.pms_hourly_days",
     "data_retention.pms_daily_days",
     "data_retention.jl02_daily_days",
@@ -27,6 +28,8 @@ URL_FIELDS = (
     "pms.report_base_url",
     "pms.service_api_base_url",
     "pms.forecast_api_base_url",
+    "bypms.state_url",
+    "bypms.channel_mapping_url",
 )
 PATH_FIELDS = (
     "python_path",
@@ -36,6 +39,7 @@ PATH_FIELDS = (
     "paths.ctrip_code_dir",
     "pms.code_dir",
     "pms.entry_script",
+    "bypms.code_dir",
 )
 
 
@@ -53,7 +57,7 @@ def validate_settings(settings: Any) -> list[str]:
     if not isinstance(settings, dict):
         return ["配置根节点必须是 JSON 对象"]
 
-    for section in ("service", "price_scheduler", "reply_scheduler", "data_retention", "hotel", "paths", "pms", "mysql", "meituan", "ctrip", "tasks"):
+    for section in ("service", "price_scheduler", "reply_scheduler", "data_retention", "hotel", "paths", "pms", "bypms", "mysql", "meituan", "ctrip", "tasks"):
         value = settings.get(section)
         if value is not None and not isinstance(value, dict):
             errors.append(f"{section} 必须是 JSON 对象")
@@ -90,7 +94,7 @@ def validate_settings(settings: Any) -> list[str]:
             if not isinstance(enabled, bool):
                 errors.append(f"tasks.{name} 必须是布尔值")
 
-    for platform in ("pms", "meituan", "ctrip"):
+    for platform in ("pms", "bypms", "meituan", "ctrip"):
         enabled = get_path(settings, f"{platform}.enabled")
         if enabled is not None and not isinstance(enabled, bool):
             errors.append(f"{platform}.enabled 必须是布尔值")

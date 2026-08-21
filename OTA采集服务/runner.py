@@ -25,6 +25,15 @@ CONFIG_PATH = ROOT / "config" / "settings.json"
 STATUS_PATH = ROOT / "state" / "status.json"
 LOG_DIR = ROOT / "logs"
 RUN_STOP_PATH = ROOT / "state" / "collection_run.stop"
+BYPMS_DEFAULTS = {
+    "enabled": False,
+    "hotel_name": "",
+    "cookie": "",
+    "code_dir": "宝寓PMS数据采集代码",
+    "state_url": "https://www.bypms.cn/console/state/get",
+    "channel_mapping_url": "https://pms-api.bypms.cn/channel/api/v1/channel-unit/list",
+    "timeout_seconds": 120,
+}
 
 
 TASKS = {
@@ -58,6 +67,8 @@ TASKS = {
     "ctrip_promotion": ("ctrip", "ctrip_promotion_data.py", ["--sync-db"]),
     "ctrip_goods_price": ("ctrip", "ctrip_goods_price_mapping.py", []),
     "pms_fetch": ("pms", "fetch_main.py", []),
+    "bypms_room_status": ("bypms", "bypms_room_status_data.py", []),
+    "bypms_channel_mapping": ("bypms", "bypms_channel_mapping_data.py", []),
 }
 
 
@@ -95,6 +106,15 @@ def load_settings() -> dict[str, Any]:
         if name not in tasks:
             tasks[name] = False
             changed = True
+    bypms = settings.setdefault("bypms", {})
+    for name, value in BYPMS_DEFAULTS.items():
+        if name not in bypms:
+            bypms[name] = value
+            changed = True
+    pms = settings.setdefault("pms", {})
+    if bypms.get("enabled") and pms.get("enabled", True):
+        bypms["enabled"] = False
+        changed = True
     retention = settings.setdefault("data_retention", {})
     for name, value in DEFAULT_RETENTION.items():
         if name not in retention:
@@ -181,6 +201,7 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     meituan = settings.get("meituan") or {}
     ctrip = settings.get("ctrip") or {}
     pms = settings.get("pms") or {}
+    bypms = settings.get("bypms") or {}
 
     put_if(env, "HOTEL_OTA_PROJECT_ROOT", PROJECT_ROOT)
     put_if(env, "HOTEL_OTA_OUTPUT_DIR", output_path(settings))
@@ -212,6 +233,12 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     put_if(env, "PMS_NAVIGATION_TIMEOUT_MS", pms.get("navigation_timeout_ms"))
     put_if(env, "PMS_ACTION_TIMEOUT_MS", pms.get("action_timeout_ms"))
     put_if(env, "PMS_API_TIMEOUT_SECONDS", pms.get("api_timeout_seconds"))
+
+    put_if(env, "BYPMS_HOTEL_NAME", bypms.get("hotel_name"))
+    put_if(env, "BYPMS_COOKIE", bypms.get("cookie"))
+    put_if(env, "BYPMS_STATE_URL", bypms.get("state_url"))
+    put_if(env, "BYPMS_CHANNEL_MAPPING_URL", bypms.get("channel_mapping_url"))
+    put_if(env, "BYPMS_TIMEOUT_SECONDS", bypms.get("timeout_seconds"))
 
     put_if(env, "MEITUAN_HOTEL_NAME", meituan.get("hotel_name"))
     put_if(env, "MEITUAN_POI_ID", meituan.get("poi_id"))
@@ -267,6 +294,10 @@ def script_path(settings: dict[str, Any], platform: str, filename: str) -> Path:
         pms = settings.get("pms") or {}
         code_dir = project_path(pms.get("code_dir"), "正式数据抓取-PMS（别样红）/PMS登录")
         return code_dir / (pms.get("entry_script") or filename)
+    if platform == "bypms":
+        bypms = settings.get("bypms") or {}
+        code_dir = project_path(bypms.get("code_dir"), "宝寓PMS数据采集代码")
+        return code_dir / filename
     key = "meituan_code_dir" if platform == "meituan" else "ctrip_code_dir"
     default = "美团OTA数据采集代码" if platform == "meituan" else "携程OTA数据采集代码"
     return project_path(paths.get(key), default) / filename
@@ -275,6 +306,8 @@ def script_path(settings: dict[str, Any], platform: str, filename: str) -> Path:
 def task_timeout(settings: dict[str, Any], platform: str) -> int:
     if platform == "pms":
         return int((settings.get("pms") or {}).get("timeout_seconds") or 900)
+    if platform == "bypms":
+        return int((settings.get("bypms") or {}).get("timeout_seconds") or 120)
     return int((settings.get("service") or {}).get("timeout_seconds") or 300)
 
 
@@ -444,8 +477,10 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
     py = python_path(settings)
     if not py.exists():
         warnings.append(f"Python path not found: {py}")
-    for platform, key in (("meituan", "meituan_code_dir"), ("ctrip", "ctrip_code_dir")):
-        default = "美团OTA数据采集代码" if platform == "meituan" else "携程OTA数据采集代码"
+    for platform, key, default in (
+        ("meituan", "meituan_code_dir", "美团OTA数据采集代码"),
+        ("ctrip", "ctrip_code_dir", "携程OTA数据采集代码"),
+    ):
         code_dir = project_path((settings.get("paths") or {}).get(key), default)
         if not code_dir.exists():
             warnings.append(f"{platform} code dir not found: {code_dir}")
@@ -458,6 +493,14 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
             warnings.append("PMS username is empty.")
         if not pms.get("password"):
             warnings.append("PMS password is empty.")
+    bypms = settings.get("bypms") or {}
+    if bypms.get("enabled", False):
+        code_dir = project_path(bypms.get("code_dir"), "宝寓PMS数据采集代码")
+        script = code_dir / "bypms_room_status_data.py"
+        if not script.exists():
+            warnings.append(f"bypms entry script not found: {script}")
+        if not bypms.get("cookie"):
+            warnings.append("BYPMS_COOKIE is empty; Bypms collection cannot run.")
     if not (settings.get("meituan") or {}).get("me_cookie"):
         warnings.append("MEITUAN_ME_COOKIE is empty; Meituan collection cannot run.")
     if not (settings.get("ctrip") or {}).get("cookie"):

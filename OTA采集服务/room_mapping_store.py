@@ -76,11 +76,14 @@ def room_options(
     settings: dict[str, Any],
 ) -> tuple[list[str], list[str], list[str], list[str]]:
     hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
+    using_bypms = bool((settings.get("bypms") or {}).get("enabled"))
     hotel_filter = " WHERE hotel_id=%s" if hotel_id else ""
     pms_params = (hotel_id, hotel_id) if hotel_id else ()
     forecast_filter = "WHERE hotel_id=%s AND" if hotel_id else "WHERE"
     forecast_params = (hotel_id,) if hotel_id else ()
-    pms_hotel_sql = f"""
+    bypms_filter = "WHERE hotel_id=%s" if hotel_id else ""
+    bypms_params = (hotel_id,) if hotel_id else ()
+    byh_hotel_sql = f"""
     SELECT hotel_name AS name FROM (
         SELECT hotel_name, snapshot_time FROM kf11_room_status_snapshot{hotel_filter}
         UNION ALL
@@ -89,11 +92,19 @@ def room_options(
     GROUP BY hotel_name
     ORDER BY MAX(snapshot_time) DESC, COUNT(*) DESC, hotel_name
     """
-    pms_room_sql = f"""
+    byh_room_sql = f"""
     SELECT DISTINCT room_type_name AS name
     FROM pms_room_type_forecast
     {forecast_filter} room_type_name IS NOT NULL AND TRIM(room_type_name) <> ''
     ORDER BY room_type_name
+    """
+    bypms_hotel_sql = f"""
+    SELECT hotel_name AS name FROM bypms_room_type_hourly_status {bypms_filter}
+    GROUP BY hotel_name ORDER BY MAX(snapshot_time) DESC, hotel_name
+    """
+    bypms_room_sql = f"""
+    SELECT DISTINCT room_type_name AS name FROM bypms_room_type_hourly_status
+    {bypms_filter} ORDER BY room_type_name
     """
     meituan_room_sql = """
     SELECT DISTINCT room_type_name AS name
@@ -108,6 +119,8 @@ def room_options(
     ORDER BY room_type_name
     """
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
+        pms_hotel_sql, pms_room_sql = (bypms_hotel_sql, bypms_room_sql) if using_bypms else (byh_hotel_sql, byh_room_sql)
+        pms_params, forecast_params = (bypms_params, bypms_params) if using_bypms else (pms_params, forecast_params)
         return (
             _query_names(cur, pms_hotel_sql, pms_params),
             _query_names(cur, pms_room_sql, forecast_params),

@@ -1,6 +1,6 @@
 # 项目当前进度（PROJECT_STATUS）
 
-> 最后整理：2026-08-14
+> 最后整理：2026-08-20
 >
 > 本文档记录阶段性进度和近期关键变化。开始新的 Codex 会话时，请先读根目录 `AGENTS.md`，再读本文件，并重新确认当前 `master` HEAD。
 
@@ -23,7 +23,7 @@ master: 7cde2642c0921a103ad2e35aa400fb924369255d
 当前主流程：
 
 ```text
-别样红 PMS / 美团 OTA / 携程 OTA
+别样红 PMS / 宝寓 PMS / 美团 OTA / 携程 OTA
         ↓
 登录态与页面/API采集
         ↓
@@ -42,11 +42,17 @@ MySQL 统一存储
 
 ## 3. 当前任务规模
 
-`OTA采集服务/runner.py` 当前注册 30 个统一调度任务：
+`OTA采集服务/runner.py` 当前注册 32 个统一调度任务：
 
 - 美团：15 个任务。
 - 携程：14 个任务。
-- PMS：1 个统一 `pms_fetch` 任务。
+- PMS：别样红统一 `pms_fetch` 任务、宝寓 PMS 当日房态 `bypms_room_status` 和渠道房型关系 `bypms_channel_mapping` 任务。
+
+### 宝寓 PMS 当前统一调度任务
+
+- 当日房态 `bypms_room_status`：以 POST 表单 `date=<当天至+20天>`, `tagId=0`, `tbl=monthA` 调用 `/console/state/get`；同时读取房态页内的 `_ROOMS` 房间/房型主数据，按页面库存口径写入 `bypms_room_type_hourly_status`（总房、空房、在住、待抵、待离、可售、已售、锁房、维修、剩余可售、入住率）。原始有效记录保留在 `bypms_room_status_snapshot`；两表均不保存住客姓名、电话或订单备注。后续宝寓 PMS 数据表采集统一归入 `bypms` 配置模块和任务前缀。
+- 渠道房型关系 `bypms_channel_mapping`：GET 调用渠道商品接口，采集美团、携程、飞猪、抖音（`Dylife`）商品与宝寓房型的原始关联，写入 `bypms_channel_unit_mapping_snapshot`。该快照只供核对，不会自动写入 `hotel_room_type_mapping`。
+- 别样红 PMS 与宝寓 PMS 在配置页互斥启用；当前选中的 PMS 房型与各 OTA 商品仍通过房型映射页人工确认。
 
 ### 美团当前统一调度任务
 
@@ -104,6 +110,8 @@ PMS 统一采集入口：
 9. `KF11` 房态快照
 10. `FORECAST` 房类预测
 11. `ROOM_STATUS` 每小时房态
+
+另已新增独立的宝寓 PMS 当日房态接口快照，不改变别样红 PMS 的报表和 ETL 链路。
 
 PMS 采集已经具备：
 

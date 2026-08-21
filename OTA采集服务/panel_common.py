@@ -52,6 +52,8 @@ TASK_LABELS = {
     "ctrip_promotion": "携程活动",
     "ctrip_goods_price": "携程调价商品",
     "pms_fetch": "PMS 数据采集",
+    "bypms_room_status": "宝寓PMS当日房态",
+    "bypms_channel_mapping": "宝寓PMS渠道房型关系",
 }
 
 STATUS_LABELS = {
