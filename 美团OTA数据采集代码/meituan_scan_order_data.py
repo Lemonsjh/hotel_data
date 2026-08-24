@@ -60,9 +60,15 @@ def request_page(start_date: date, end_date: date, page_number: int) -> dict[str
     )
     response.raise_for_status()
     payload = response.json()
+    status = payload.get("status")
     data = payload.get("data")
-    if payload.get("status") != 0 or not isinstance(data, dict):
-        raise RuntimeError(f"Meituan scan-order API failed: status={payload.get('status')}")
+    if status != 0:
+        message = payload.get("message") or payload.get("msg") or payload.get("display") or ""
+        raise RuntimeError(f"Meituan scan-order API failed: status={status}; message={message}")
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Meituan scan-order API returned unexpected data type: {type(data).__name__}")
     return data
 
 

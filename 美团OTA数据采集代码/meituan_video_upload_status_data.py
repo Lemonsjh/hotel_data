@@ -27,7 +27,7 @@ VIDEO_TYPES = (
     ("hotel_preview_video", "\u9152\u5e97\u9884\u89c8\u89c6\u9891"),
     ("room_type_preview_video", "\u623f\u578b\u9884\u89c8\u89c6\u9891"),
 )
-PAGE_WAIT_SECONDS = 12
+PAGE_WAIT_SECONDS = 20
 COOLDOWN_MIN_HOURS = 22.0
 COOLDOWN_MAX_HOURS = 26.0
 COOLDOWN_REASONS = {"success", "failure"}
@@ -103,14 +103,18 @@ def mark_schedule_success(success_at: datetime) -> None:
     save_schedule_state(state)
 
 
-def page_text(page: object) -> str:
-    parts = []
+def video_rows_from_page(page: object) -> list[tuple[str, int, int]]:
     for frame in page.frames:
         try:
-            parts.append(frame.locator("body").inner_text(timeout=1_000))
+            text = frame.locator("body").inner_text(timeout=1_000)
         except Exception:
             continue
-    return "\n".join(parts)
+        if "待上传视频任务" not in text:
+            continue
+        rows = extract_video_counts(text)
+        if len(rows) == len(VIDEO_TYPES):
+            return rows
+    return []
 
 
 def extract_video_counts(text: str) -> list[tuple[str, int, int]]:
@@ -141,8 +145,8 @@ def fetch_video_counts() -> list[tuple[str, int, int]]:
             deadline = time.monotonic() + PAGE_WAIT_SECONDS
             while time.monotonic() < deadline:
                 last_url = page.url
-                rows = extract_video_counts(page_text(page))
-                if len(rows) == len(VIDEO_TYPES):
+                rows = video_rows_from_page(page)
+                if rows:
                     return rows
                 if issue := page_access_issue(page):
                     raise RuntimeError(f"Video management page requires manual action: {issue}")
