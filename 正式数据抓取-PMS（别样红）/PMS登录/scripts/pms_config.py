@@ -19,10 +19,19 @@ def _positive_int(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _same_host_base(port: int) -> str:
+    """Use the login host for related PMS services when their URLs are omitted."""
+    parsed = urlsplit(LOGIN_BASE_URL)
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"Invalid PMS login base URL: {LOGIN_BASE_URL}")
+    return f"{parsed.scheme or 'https'}://{host}:{port}"
+
+
 LOGIN_BASE_URL = _url("PMS_LOGIN_BASE_URL", "https://xingfeng.beyondh.com:8101")
-REPORT_BASE_URL = _url("PMS_REPORT_BASE_URL", "https://xingfeng.beyondh.com:8081")
-SERVICE_API_BASE_URL = _url("PMS_SERVICE_API_BASE_URL", "https://xingfeng.beyondh.com:8077")
-FORECAST_API_BASE_URL = _url("PMS_FORECAST_API_BASE_URL", "https://xingfeng.beyondh.com:8111")
+REPORT_BASE_URL = _url("PMS_REPORT_BASE_URL", _same_host_base(8081))
+SERVICE_API_BASE_URL = _url("PMS_SERVICE_API_BASE_URL", _same_host_base(8077))
+FORECAST_API_BASE_URL = _url("PMS_FORECAST_API_BASE_URL", _same_host_base(8111))
 
 LOGIN_URL = f"{LOGIN_BASE_URL}/login"
 NAVIGATION_TIMEOUT_MS = _positive_int("PMS_NAVIGATION_TIMEOUT_MS", 60_000)

@@ -11,6 +11,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from pms_config import (
     ACTION_TIMEOUT_MS,
@@ -167,8 +168,11 @@ def ensure_hotel_name(*, force: bool = False) -> str:
 
 
 def add_cookies_to_context(context, cookies: dict[str, str]) -> None:
+    domain = urlsplit(REPORT_BASE_URL).hostname
+    if not domain:
+        raise ValueError(f"PMS report URL has no hostname: {REPORT_BASE_URL}")
     cookie_list = [
-        {"name": key, "value": value, "domain": "xingfeng.beyondh.com", "path": "/"}
+        {"name": key, "value": value, "domain": domain, "path": "/"}
         for key, value in cookies.items()
     ]
     context.add_cookies(cookie_list)

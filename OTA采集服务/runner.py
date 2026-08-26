@@ -105,6 +105,20 @@ def load_settings() -> dict[str, Any]:
     return settings
 
 
+def backfill_pms_hotel_name(hotel_name: Any) -> bool:
+    """Save an automatically identified PMS hotel name only when configuration is blank."""
+    name = str(hotel_name or "").strip()
+    if not name:
+        return False
+    settings = load_settings()
+    pms = settings.setdefault("pms", {})
+    if str(pms.get("hotel_name") or "").strip():
+        return False
+    pms["hotel_name"] = name
+    save_json(CONFIG_PATH, settings)
+    return True
+
+
 def project_path(value: Any, default: str | Path = ".") -> Path:
     path = Path(str(value or default))
     return (path if path.is_absolute() else PROJECT_ROOT / path).resolve()

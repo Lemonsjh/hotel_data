@@ -34,7 +34,7 @@ except Exception as e:
     _hotel_name = _configured_hotel_name or ""
 
 if not _hotel_name:
-    raise RuntimeError("PMS 酒店名称为空，请先刷新登录会话或配置 pms.hotel_name")
+    print("⚠️ PMS 酒店名称为空，将继续 ETL；hotel_name 字段将写入空值")
 
 
 def session_org_id() -> str:

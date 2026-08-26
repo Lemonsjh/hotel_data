@@ -178,10 +178,12 @@ def main() -> int:
             return 1
 
     hotel_name = pms_utils.ensure_hotel_name()
-    if not hotel_name:
-        print("❌ 无法从 PMS 获取酒店名称，请检查 pms.hotel_name 配置")
-        return 1
-    os.environ["PMS_HOTEL_NAME"] = hotel_name
+    if hotel_name:
+        if runner.backfill_pms_hotel_name(hotel_name):
+            print(f"✅ 已自动回填 PMS 酒店名称: {hotel_name}")
+        os.environ["PMS_HOTEL_NAME"] = hotel_name
+    else:
+        print("⚠️ 未识别到 PMS 酒店名称，将继续采集；可在配置页补充名称用于展示")
     
     # 抓取所有报表（调用修复版脚本）
     print("\n📊 开始抓取报表数据...")

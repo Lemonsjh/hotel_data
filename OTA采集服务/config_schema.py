@@ -201,7 +201,7 @@ CONFIG_SECTIONS = [
             ("pms.code_dir", "代码目录", False, True),
             ("pms.entry_script", "入口脚本", False, True),
             ("pms.timeout_seconds", "超时（秒）", False, True),
-            ("pms.login_base_url", "登录地址", False, True),
+            ("pms.login_base_url", "登录地址", False, False),
             ("pms.report_base_url", "报表地址", False, True),
             ("pms.service_api_base_url", "业务接口地址", False, True),
             ("pms.forecast_api_base_url", "房态接口地址", False, True),
