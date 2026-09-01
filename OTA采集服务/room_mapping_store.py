@@ -78,6 +78,18 @@ def pms_room_type_names(data: dict[str, Any]) -> list[str]:
     return result
 
 
+def _merge_pms_names(existing: set[str], requested: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in [*sorted(existing), *requested]:
+        name = str(value or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        result.append(name)
+    return result
+
+
 def validate(data: dict[str, Any]) -> str | None:
     pms_names = pms_room_type_names(data)
     missing = []
@@ -522,15 +534,23 @@ def save_group(
     original_id: str,
 ) -> dict[str, Any]:
     data = dict(data)
-    pms_names = pms_room_type_names(data)
-    if not pms_names:
+    requested_pms_names = pms_room_type_names(data)
+    if not requested_pms_names:
         raise ValueError("至少选择一个 PMS 房型")
-    data[PMS_ALIASES_FIELD] = pms_names
-    data["pms_room_type_name"] = pms_names[0]
 
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
         old_hotel_id = original_hotel_id or data["hotel_id"]
-        old_aliases = _collect_aliases(cur, old_hotel_id, original_id)
+        lookup_id = original_id or data["room_type_id"]
+        old_aliases = _collect_aliases(
+            cur, old_hotel_id, lookup_id, active_only=False
+        )
+        pms_names = requested_pms_names
+        if not original_id:
+            pms_names = _merge_pms_names(
+                old_aliases[PMS_PLATFORM], requested_pms_names
+            )
+        data[PMS_ALIASES_FIELD] = pms_names
+        data["pms_room_type_name"] = pms_names[0]
         _assert_no_conflicts(cur, data, original_id, pms_names)
 
         if original_id:
