@@ -31,10 +31,9 @@ def _form_data() -> dict[str, Any]:
         if name and name not in seen:
             seen.add(name)
             pms_names.append(name)
-    if not pms_names:
-        legacy_name = str(request.form.get("pms_room_type_name", "")).strip()
-        if legacy_name:
-            pms_names.append(legacy_name)
+    selected_name = str(request.form.get("pms_room_type_name", "")).strip()
+    if selected_name and selected_name not in seen:
+        pms_names.append(selected_name)
     data[store.PMS_ALIASES_FIELD] = pms_names
     data["pms_room_type_name"] = pms_names[0] if pms_names else ""
     return data
@@ -53,35 +52,6 @@ def _select(name: str, label: str, options: list[str], current: Any) -> str:
         f"<div class='field'><label for='{esc(name)}'>{esc(label)}</label>"
         f"<select id='{esc(name)}' name='{esc(name)}' required>"
         f"{''.join(choices)}</select></div>"
-    )
-
-
-def _multi_select(
-    name: str,
-    label: str,
-    options: list[str],
-    current_values: Any,
-) -> str:
-    selected_values = {
-        str(value).strip()
-        for value in (current_values or [])
-        if str(value or "").strip()
-    }
-    values = list(options)
-    for value in sorted(selected_values):
-        if value not in values:
-            values.insert(0, value)
-    choices = []
-    for value in values:
-        selected = " selected" if value in selected_values else ""
-        choices.append(f"<option value='{esc(value)}'{selected}>{esc(value)}</option>")
-    size = min(max(len(values), 4), 8)
-    return (
-        f"<div class='field'><label for='{esc(name)}'>{esc(label)}</label>"
-        f"<select id='{esc(name)}' name='{esc(name)}' multiple required size='{size}'>"
-        f"{''.join(choices)}</select>"
-        "<div class='muted' style='margin-top:6px'>可同时选择多个 PMS 房型；Windows 可按住 Ctrl 进行多选。</div>"
-        "</div>"
     )
 
 
@@ -115,15 +85,23 @@ def _render_form(
     editing: bool,
 ) -> str:
     cancel = " <a class='button secondary' href='/room-mappings'>取消编辑</a>" if editing else ""
-    selected_pms = item.get(store.PMS_ALIASES_FIELD) or (
-        [item.get("pms_room_type_name")] if item.get("pms_room_type_name") else []
+    aliases = item.get(store.PMS_ALIASES_FIELD) or []
+    current_pms = item.get("pms_room_type_name") or (aliases[0] if aliases else "")
+    preserved_aliases = (
+        "".join(
+            f"<input type='hidden' name='{esc(store.PMS_ALIASES_FIELD)}' value='{esc(value)}'>"
+            for value in aliases
+            if str(value or "").strip()
+        )
+        if editing
+        else ""
     )
     return f"""
     <section class="panel">
       <div class="panel-heading">
         <div>
           <h2 style="margin:0 0 6px">{'编辑' if editing else '新增'}统一房型</h2>
-          <div class="muted">多个 PMS 房型可以共享同一个统一房型 ID；美团和携程继续使用各自对应房型。</div>
+          <div class="muted">三个平台可使用不同酒店名，所选房型共享统一房型 ID。</div>
         </div>
         <span class="pill idle">PMS ↔ 美团 ↔ 携程</span>
       </div>
@@ -132,6 +110,7 @@ def _render_form(
                value="{esc(item.get('room_type_id') if editing else '')}">
         <input type="hidden" name="original_hotel_id"
                value="{esc(item.get('hotel_id') if editing else '')}">
+        {preserved_aliases}
         {_input("hotel_id", item.get("hotel_id", ""), "例如 puyue")}
         {_input("pms_hotel_name", item.get("pms_hotel_name", ""), "自动同步，可手动修改")}
         {_input("hotel_name", item.get("hotel_name", ""), "美团酒店展示名称")}
@@ -140,10 +119,10 @@ def _render_form(
         {_input(
             "room_type_name",
             item.get("room_type_name", ""),
-            "选填；留空时使用第一个 PMS 房型名称",
+            "选填；留空时使用 PMS 房型名称",
             False,
         )}
-        {_multi_select(store.PMS_ALIASES_FIELD, "PMS 房型名称（可多选）", pms_names, selected_pms)}
+        {_select("pms_room_type_name", store.LABELS["pms_room_type_name"], pms_names, current_pms)}
         {_select("meituan_room_type_name", store.LABELS["meituan_room_type_name"], meituan_names, item.get("meituan_room_type_name"))}
         {_datalist_input("ctrip_room_type_name", item.get("ctrip_room_type_name", ""), ctrip_names, False)}
         <div class="field" style="grid-column:1/-1">
@@ -208,7 +187,7 @@ def _render_page(
     <section class="panel">
       <div class="panel-heading">
         <div><h2 style="margin:0 0 6px">统一房型映射</h2>
-        <div class="muted">每一行代表一个内部房型；PMS 可有多个原始房型名称，共享同一个统一房型 ID。</div></div>
+        <div class="muted">每一行代表一个内部房型及其 PMS、美团、携程对应名称。</div></div>
         <span class="pill idle">{len(groups)} 个房型</span>
       </div>
       <div class="table-wrap" style="margin-top:14px"><table>
