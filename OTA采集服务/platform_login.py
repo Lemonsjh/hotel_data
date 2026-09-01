@@ -139,6 +139,45 @@ def stop_login_process(pid: Any) -> None:
     )
 
 
+def profile_edge_root_pids(platform: str) -> list[int]:
+    """Return only root Edge processes using this platform's dedicated profile."""
+    command = """
+$agentProfile = [regex]::Escape($args[0].ToLower())
+$matches = @(Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" |
+  Where-Object { $_.CommandLine -and $_.CommandLine.ToLower() -match $agentProfile })
+$ids = @($matches | ForEach-Object { [int]$_.ProcessId })
+$matches | Where-Object { $ids -notcontains [int]$_.ParentProcessId } |
+  ForEach-Object { $_.ProcessId }
+"""
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command, str(profile_path(platform))],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [int(value) for value in completed.stdout.split() if value.isdigit()]
+
+
+def stop_profile_edge_processes(platform: str) -> None:
+    """Close orphaned Edge trees for the platform-specific login profile only."""
+    for pid in profile_edge_root_pids(platform):
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+
 def cancel(platform: str) -> bool:
     info = require_platform(platform)
     pid = read_status(platform).get("pid")
@@ -158,6 +197,7 @@ def cancel(platform: str) -> bool:
     if login_process_alive(pid):
         write_status(platform, "failed", f"无法关闭{info['label']}登录助手", pid=pid)
         return False
+    stop_profile_edge_processes(platform)
     stop_path(platform).unlink(missing_ok=True)
     write_status(platform, "cancelled", f"{info['label']}登录助手已关闭", pid=0)
     return True
@@ -170,6 +210,8 @@ def start(platform: str, settings: dict[str, Any], switch_account: bool = False)
     if login_process_alive(old_pid):
         if not cancel(platform):
             raise RuntimeError(f"无法结束旧的{info['label']}登录助手，请在任务管理器中结束该进程后重试")
+    else:
+        stop_profile_edge_processes(platform)
 
     stop_path(platform).unlink(missing_ok=True)
     write_status(platform, "starting", f"正在打开{info['label']}登录窗口", pid=0)
@@ -431,6 +473,7 @@ def run(platform: str, switch_account: bool = False) -> int:
         write_status(platform, "failed", f"{type(exc).__name__}: {exc}")
         return 2
     finally:
+        stop_profile_edge_processes(platform)
         stop_path(platform).unlink(missing_ok=True)
         status = read_status(platform)
         if status.get("pid"):

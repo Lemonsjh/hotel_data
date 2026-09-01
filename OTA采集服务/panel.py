@@ -289,7 +289,7 @@ def start_platform_login(platform: str):
         switch_account = request.form.get("login_mode") == "switch"
         platform_login.start(platform, settings, switch_account=switch_account)
         label = platform_login.PLATFORMS[platform]["label"]
-        return redirect(url_for("config_page", notice=f"{label}登录窗口已打开，请在Edge中手动登录"))
+        return redirect(url_for("config_page", notice=f"正在启动{label}登录窗口，请在Edge中手动登录"))
     except Exception as exc:
         return redirect(url_for("config_page", error=str(exc)))
 

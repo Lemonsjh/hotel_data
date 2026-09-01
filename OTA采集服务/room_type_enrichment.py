@@ -186,8 +186,8 @@ def _update_alias(
     name_column = _name_column(table)
     room_rows = _room_rows(table)
     if platform == "pms_byh":
-        mapping_name = "pms_room_type_name"
-        mapping_filter = "1=1"
+        mapping_name = "source_room_type_name"
+        mapping_filter = "source_platform='pms_byh' AND source_product_id=''"
         mapping_params = ()
     else:
         mapping_name = "source_room_type_name"

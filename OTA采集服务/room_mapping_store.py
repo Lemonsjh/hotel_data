@@ -251,6 +251,36 @@ def get_group(
     )
 
 
+def list_pms_mapping_rows(settings: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return one management row per PMS source mapping, not per unified ID."""
+    groups = {
+        (str(item["hotel_id"]), str(item["room_type_id"])): item
+        for item in list_groups(settings)
+    }
+    sql = """
+    SELECT hotel_id, room_type_id, source_room_type_name, is_active, updated_at
+    FROM hotel_room_type_mapping
+    WHERE source_platform=%s AND source_product_id=''
+      AND source_room_type_name<>'' AND mapping_status<>'REJECTED'
+    ORDER BY updated_at DESC, id DESC
+    """
+    with price_tasks.connection(settings) as conn, conn.cursor() as cur:
+        cur.execute(sql, (PMS_PLATFORM,))
+        aliases = cur.fetchall()
+
+    rows = []
+    for alias in aliases:
+        group = groups.get((str(alias["hotel_id"]), str(alias["room_type_id"])))
+        if not group:
+            continue
+        row = dict(group)
+        row["pms_room_type_name"] = alias["source_room_type_name"]
+        row["is_active"] = int(alias["is_active"] or 0)
+        row["updated_at"] = alias["updated_at"]
+        rows.append(row)
+    return rows
+
+
 def _insert_base(cur, data: dict[str, Any], platform: str, source_name: str) -> None:
     ota_hotel_name = (
         data["hotel_name"] if platform == MEITUAN_PLATFORM else data["ctrip_hotel_name"]
@@ -601,18 +631,19 @@ def save_group(
     }
 
 
-def set_active(
-    settings: dict[str, Any], hotel_id: str, room_type_id: str, active: bool
+def set_pms_alias_active(
+    settings: dict[str, Any], hotel_id: str, room_type_id: str, pms_room_type_name: str, active: bool
 ) -> dict[str, Any] | None:
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
-        aliases = _collect_aliases(cur, hotel_id, room_type_id, active_only=False)
         cur.execute(
             """
             UPDATE hotel_room_type_mapping SET is_active=%s
             WHERE hotel_id=%s AND room_type_id=%s
+              AND source_platform=%s AND source_product_id=''
+              AND BINARY source_room_type_name=BINARY %s
               AND mapping_status<>'REJECTED'
             """,
-            (1 if active else 0, hotel_id, room_type_id),
+            (1 if active else 0, hotel_id, room_type_id, PMS_PLATFORM, pms_room_type_name),
         )
         conn.commit()
         if cur.rowcount == 0:
@@ -620,7 +651,7 @@ def set_active(
     return {
         "hotel_ids": {hotel_id},
         "room_type_ids": {room_type_id},
-        "aliases": aliases,
+        "aliases": {PMS_PLATFORM: {pms_room_type_name}, MEITUAN_PLATFORM: set(), CTRIP_PLATFORM: set()},
         "target_hotel_id": hotel_id,
     }
 

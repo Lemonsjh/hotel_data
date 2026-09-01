@@ -134,12 +134,10 @@ def _render_form(
 
 
 def _pms_alias_html(item: dict[str, Any]) -> str:
-    aliases = item.get(store.PMS_ALIASES_FIELD) or []
-    if not aliases and item.get("pms_room_type_name"):
-        aliases = [item["pms_room_type_name"]]
-    if not aliases:
+    name = str(item.get("pms_room_type_name") or "").strip()
+    if not name:
         return '<span class="muted">未选择</span>'
-    return "<br>".join(esc(value) for value in aliases)
+    return esc(name)
 
 
 def _render_rows(groups: list[dict[str, Any]]) -> str:
@@ -163,6 +161,7 @@ def _render_rows(groups: list[dict[str, Any]]) -> str:
                 <form method="post" action="/room-mappings/toggle">
                   <input type="hidden" name="hotel_id" value="{esc(item["hotel_id"])}">
                   <input type="hidden" name="room_type_id" value="{esc(item["room_type_id"])}">
+                  <input type="hidden" name="pms_room_type_name" value="{esc(item["pms_room_type_name"])}">
                   <input type="hidden" name="active" value="{'0' if active else '1'}">
                   <button class="secondary compact" type="submit">{'停用' if active else '启用'}</button>
                 </form>
@@ -174,7 +173,7 @@ def _render_rows(groups: list[dict[str, Any]]) -> str:
 
 
 def _render_page(
-    page_func, groups, item, pms_names, meituan_names, ctrip_names, editing
+    page_func, mapping_rows, item, pms_names, meituan_names, ctrip_names, editing
 ) -> str:
     messages = ""
     if request.args.get("notice"):
@@ -187,13 +186,13 @@ def _render_page(
     <section class="panel">
       <div class="panel-heading">
         <div><h2 style="margin:0 0 6px">统一房型映射</h2>
-        <div class="muted">每一行代表一个内部房型及其 PMS、美团、携程对应名称。</div></div>
-        <span class="pill idle">{len(groups)} 个房型</span>
+        <div class="muted">每一行代表一条 PMS 房型映射；同一统一房型可有多行。</div></div>
+        <span class="pill idle">{len(mapping_rows)} 条 PMS 映射</span>
       </div>
       <div class="table-wrap" style="margin-top:14px"><table>
         <tr><th>统一房型</th><th>PMS 房型</th><th>美团房型</th><th>携程房型</th>
         <th>状态</th><th>更新时间</th><th>操作</th></tr>
-        {_render_rows(groups)}
+        {_render_rows(mapping_rows)}
       </table></div>
     </section>
     """
@@ -205,7 +204,7 @@ def register(app, page_func) -> None:
     def room_mappings_page() -> str:
         settings = runner.load_settings()
         try:
-            groups = store.list_groups(settings)
+            mapping_rows = store.list_pms_mapping_rows(settings)
             pms_hotels, pms_names, meituan_names, ctrip_names = store.room_options(settings)
             hotel_id = str(request.args.get("hotel_id", "")).strip()
             room_id = str(request.args.get("edit", "")).strip()
@@ -224,7 +223,7 @@ def register(app, page_func) -> None:
                     item[store.PMS_ALIASES_FIELD] = [item["pms_room_type_name"]]
             return _render_page(
                 page_func,
-                groups,
+                mapping_rows,
                 item or default,
                 pms_names,
                 meituan_names,
@@ -267,10 +266,11 @@ def register(app, page_func) -> None:
     def room_mappings_toggle():
         settings = runner.load_settings()
         try:
-            change = store.set_active(
+            change = store.set_pms_alias_active(
                 settings,
                 str(request.form.get("hotel_id", "")).strip(),
                 str(request.form.get("room_type_id", "")).strip(),
+                str(request.form.get("pms_room_type_name", "")).strip(),
                 request.form.get("active") == "1",
             )
             if change:
