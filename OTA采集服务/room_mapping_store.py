@@ -17,6 +17,7 @@ PRODUCT_PLATFORMS = {
     CTRIP_PLATFORM: ("携程", "ctrip"),
 }
 OTA_BASE_LABELS = (*PRODUCT_PLATFORMS[MEITUAN_PLATFORM], *PRODUCT_PLATFORMS[CTRIP_PLATFORM])
+PMS_ALIASES_FIELD = "pms_room_type_names"
 FIELDS = (
     "hotel_id",
     "pms_hotel_name",
@@ -46,17 +47,44 @@ LABELS = {
 }
 
 
-def defaults(settings: dict[str, Any]) -> dict[str, str]:
+def defaults(settings: dict[str, Any]) -> dict[str, Any]:
     return {
         "hotel_id": str(settings.get("hotel", {}).get("hotel_id", "")).strip(),
         "pms_hotel_name": str(settings.get("pms", {}).get("hotel_name", "")).strip(),
         "hotel_name": str(settings.get("meituan", {}).get("hotel_name", "")).strip(),
         "ctrip_hotel_name": str(settings.get("ctrip", {}).get("hotel_name", "")).strip(),
+        "pms_room_type_name": "",
+        PMS_ALIASES_FIELD: [],
     }
 
 
-def validate(data: dict[str, str]) -> str | None:
-    missing = [LABELS[name] for name in REQUIRED_FIELDS if not data.get(name)]
+def pms_room_type_names(data: dict[str, Any]) -> list[str]:
+    raw = data.get(PMS_ALIASES_FIELD)
+    if isinstance(raw, (list, tuple, set)):
+        values = raw
+    elif raw:
+        values = [raw]
+    else:
+        values = [data.get("pms_room_type_name", "")]
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        name = str(value or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        result.append(name)
+    return result
+
+
+def validate(data: dict[str, Any]) -> str | None:
+    pms_names = pms_room_type_names(data)
+    missing = []
+    for name in REQUIRED_FIELDS:
+        present = bool(pms_names) if name == "pms_room_type_name" else bool(data.get(name))
+        if not present:
+            missing.append(LABELS[name])
     if missing:
         return "请填写：" + "、".join(missing)
     if data.get("ctrip_room_type_name") and not data.get("ctrip_hotel_name"):
@@ -122,21 +150,24 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
            pms_room_type_name, ota_hotel_name, source_platform, source_room_type_name,
            is_active, updated_at
     FROM hotel_room_type_mapping
-    WHERE (source_product_id='' AND source_platform IN (%s,%s,%s,%s))
+    WHERE mapping_status<>'REJECTED'
+      AND ((source_product_id='' AND source_platform IN (%s,%s,%s,%s,%s))
        OR (source_product_id<>'' AND is_active=1
-           AND source_platform IN (%s,%s,%s,%s))
+           AND source_platform IN (%s,%s,%s,%s)))
     ORDER BY updated_at DESC, id DESC
     """
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
         cur.execute(
             sql,
             (
+                PMS_PLATFORM,
                 *OTA_BASE_LABELS,
                 *PRODUCT_PLATFORMS[MEITUAN_PLATFORM],
                 *PRODUCT_PLATFORMS[CTRIP_PLATFORM],
             ),
         )
         rows = list(cur.fetchall())
+
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         key = (str(row["hotel_id"]), str(row["room_type_id"]))
@@ -150,6 +181,7 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
                 "room_type_id": row["room_type_id"],
                 "room_type_name": row["room_type_name"],
                 "pms_room_type_name": "",
+                PMS_ALIASES_FIELD: set(),
                 "meituan_room_type_name": "",
                 "ctrip_room_type_name": "",
                 "is_active": 0,
@@ -160,7 +192,8 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
         if row["pms_hotel_name"]:
             group["pms_hotel_name"] = row["pms_hotel_name"]
         if row.get("pms_room_type_name"):
-            group["pms_room_type_name"] = row["pms_room_type_name"]
+            group[PMS_ALIASES_FIELD].add(str(row["pms_room_type_name"]))
+
         platform = next(
             (
                 logical
@@ -171,17 +204,26 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
         )
         if platform == PMS_PLATFORM:
             group["pms_hotel_name"] = row["pms_hotel_name"]
-            group["pms_room_type_name"] = row["source_room_type_name"]
+            if row["source_room_type_name"]:
+                group[PMS_ALIASES_FIELD].add(str(row["source_room_type_name"]))
         elif platform == MEITUAN_PLATFORM:
             group["hotel_name"] = row["ota_hotel_name"]
             group["meituan_room_type_name"] = row["source_room_type_name"]
         elif platform == CTRIP_PLATFORM:
             group["ctrip_hotel_name"] = row["ota_hotel_name"]
             group["ctrip_room_type_name"] = row["source_room_type_name"]
+
         group["is_active"] = max(int(group["is_active"]), int(row["is_active"] or 0))
         if row["updated_at"] and row["updated_at"] > group["updated_at"]:
             group["updated_at"] = row["updated_at"]
-    return sorted(groups.values(), key=lambda item: item["updated_at"], reverse=True)
+
+    result = []
+    for group in groups.values():
+        aliases = sorted(group[PMS_ALIASES_FIELD])
+        group[PMS_ALIASES_FIELD] = aliases
+        group["pms_room_type_name"] = aliases[0] if aliases else ""
+        result.append(group)
+    return sorted(result, key=lambda item: item["updated_at"], reverse=True)
 
 
 def get_group(
@@ -197,7 +239,7 @@ def get_group(
     )
 
 
-def _insert_base(cur, data: dict[str, str], platform: str, source_name: str) -> None:
+def _insert_base(cur, data: dict[str, Any], platform: str, source_name: str) -> None:
     ota_hotel_name = (
         data["hotel_name"] if platform == MEITUAN_PLATFORM else data["ctrip_hotel_name"]
     )
@@ -229,6 +271,36 @@ def _insert_base(cur, data: dict[str, str], platform: str, source_name: str) -> 
             platform,
             ota_hotel_name,
             source_name,
+            source_name,
+        ),
+    )
+
+
+def _insert_pms_alias(cur, data: dict[str, Any], source_name: str) -> None:
+    cur.execute(
+        """
+        INSERT INTO hotel_room_type_mapping (
+            hotel_id, pms_hotel_name, room_type_id, room_type_name,
+            pms_room_type_name, source_platform, ota_hotel_name,
+            source_room_type_name, ota_room_type_name, source_product_id,
+            source_product_name, rate_plan_name, product_cipher,
+            mapping_status, match_rule, match_confidence, is_active
+        ) VALUES (%s,%s,%s,%s,%s,%s,'',%s,'','','','','',
+                  'CONFIRMED','MANUAL',1.00,1)
+        ON DUPLICATE KEY UPDATE
+            pms_hotel_name=VALUES(pms_hotel_name),
+            room_type_name=VALUES(room_type_name),
+            pms_room_type_name=VALUES(pms_room_type_name),
+            mapping_status='CONFIRMED', match_rule='MANUAL',
+            match_confidence=1.00, review_note=NULL, is_active=1
+        """,
+        (
+            data["hotel_id"],
+            data["pms_hotel_name"],
+            data["room_type_id"],
+            data["room_type_name"],
+            source_name,
+            PMS_PLATFORM,
             source_name,
         ),
     )
@@ -267,9 +339,120 @@ def _collect_aliases(
     return aliases
 
 
+def _assert_no_conflicts(
+    cur,
+    data: dict[str, Any],
+    original_id: str,
+    pms_names: list[str],
+) -> None:
+    old_id = original_id or str(data["room_type_id"])
+    new_id = str(data["room_type_id"])
+
+    for source_name in pms_names:
+        cur.execute(
+            """
+            SELECT source_room_type_name, room_type_id
+            FROM hotel_room_type_mapping
+            WHERE hotel_id=%s AND is_active=1 AND mapping_status<>'REJECTED'
+              AND (
+                    (source_platform=%s AND source_product_id=''
+                     AND BINARY source_room_type_name=BINARY %s)
+                 OR BINARY pms_room_type_name=BINARY %s
+              )
+              AND room_type_id NOT IN (%s,%s)
+            LIMIT 1
+            """,
+            (
+                data["hotel_id"],
+                PMS_PLATFORM,
+                source_name,
+                source_name,
+                old_id,
+                new_id,
+            ),
+        )
+        conflict = cur.fetchone()
+        if conflict:
+            raise ValueError(f"{source_name} 已映射到房型 {conflict['room_type_id']}")
+
+    for platform, room_field in (
+        (MEITUAN_PLATFORM, "meituan_room_type_name"),
+        (CTRIP_PLATFORM, "ctrip_room_type_name"),
+    ):
+        source_name = str(data.get(room_field) or "").strip()
+        if not source_name:
+            continue
+        labels = PRODUCT_PLATFORMS[platform]
+        cur.execute(
+            """
+            SELECT source_room_type_name, room_type_id
+            FROM hotel_room_type_mapping
+            WHERE hotel_id=%s AND is_active=1 AND mapping_status<>'REJECTED'
+              AND source_platform IN (%s,%s)
+              AND BINARY source_room_type_name=BINARY %s
+              AND room_type_id NOT IN (%s,%s)
+            LIMIT 1
+            """,
+            (data["hotel_id"], *labels, source_name, old_id, new_id),
+        )
+        conflict = cur.fetchone()
+        if conflict:
+            raise ValueError(f"{source_name} 已映射到房型 {conflict['room_type_id']}")
+
+
+def _sync_pms_alias_rows(
+    cur,
+    data: dict[str, Any],
+    original_hotel_id: str,
+    original_id: str,
+    pms_names: list[str],
+) -> None:
+    old_hotel_id = original_hotel_id or str(data["hotel_id"])
+    if original_id:
+        cur.execute(
+            """
+            UPDATE hotel_room_type_mapping
+            SET hotel_id=%s,room_type_id=%s,room_type_name=%s,
+                pms_hotel_name=%s,pms_room_type_name=source_room_type_name
+            WHERE hotel_id=%s AND room_type_id=%s
+              AND source_platform=%s AND source_product_id=''
+              AND mapping_status<>'REJECTED'
+            """,
+            (
+                data["hotel_id"],
+                data["room_type_id"],
+                data["room_type_name"],
+                data["pms_hotel_name"],
+                old_hotel_id,
+                original_id,
+                PMS_PLATFORM,
+            ),
+        )
+
+    for source_name in pms_names:
+        _insert_pms_alias(cur, data, source_name)
+
+    placeholders = ",".join(["%s"] * len(pms_names))
+    cur.execute(
+        f"""
+        UPDATE hotel_room_type_mapping
+        SET mapping_status='REJECTED', is_active=0
+        WHERE hotel_id=%s AND room_type_id=%s
+          AND source_platform=%s AND source_product_id=''
+          AND source_room_type_name NOT IN ({placeholders})
+        """,
+        (
+            data["hotel_id"],
+            data["room_type_id"],
+            PMS_PLATFORM,
+            *pms_names,
+        ),
+    )
+
+
 def _sync_product_rows(
     cur,
-    data: dict[str, str],
+    data: dict[str, Any],
     original_hotel_id: str,
     original_id: str,
 ) -> None:
@@ -334,43 +517,22 @@ def _sync_product_rows(
 
 def save_group(
     settings: dict[str, Any],
-    data: dict[str, str],
+    data: dict[str, Any],
     original_hotel_id: str,
     original_id: str,
 ) -> dict[str, Any]:
+    data = dict(data)
+    pms_names = pms_room_type_names(data)
+    if not pms_names:
+        raise ValueError("至少选择一个 PMS 房型")
+    data[PMS_ALIASES_FIELD] = pms_names
+    data["pms_room_type_name"] = pms_names[0]
+
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
         old_hotel_id = original_hotel_id or data["hotel_id"]
         old_aliases = _collect_aliases(cur, old_hotel_id, original_id)
-        cur.execute(
-            """
-            SELECT source_room_type_name, room_type_id
-            FROM hotel_room_type_mapping
-            WHERE hotel_id=%s AND is_active=1
-              AND ((source_product_id='' AND source_platform IN (%s,%s,%s,%s)
-                    AND BINARY pms_room_type_name=BINARY %s)
-                OR (source_platform IN (%s,%s)
-                    AND BINARY source_room_type_name=BINARY %s)
-                OR (source_platform IN (%s,%s)
-                    AND BINARY source_room_type_name=BINARY %s))
-              AND room_type_id NOT IN (%s,%s) LIMIT 1
-            """,
-            (
-                data["hotel_id"],
-                *OTA_BASE_LABELS,
-                data["pms_room_type_name"],
-                *PRODUCT_PLATFORMS[MEITUAN_PLATFORM],
-                data["meituan_room_type_name"],
-                *PRODUCT_PLATFORMS[CTRIP_PLATFORM],
-                data["ctrip_room_type_name"],
-                original_id or data["room_type_id"],
-                data["room_type_id"],
-            ),
-        )
-        conflict = cur.fetchone()
-        if conflict:
-            raise ValueError(
-                f"{conflict['source_room_type_name']} 已映射到房型 {conflict['room_type_id']}"
-            )
+        _assert_no_conflicts(cur, data, original_id, pms_names)
+
         if original_id:
             cur.execute(
                 """
@@ -391,19 +553,26 @@ def save_group(
                     *OTA_BASE_LABELS,
                 ),
             )
+
+        _sync_pms_alias_rows(cur, data, original_hotel_id, original_id, pms_names)
         _insert_base(cur, data, MEITUAN_PLATFORM, data["meituan_room_type_name"])
         if data["ctrip_room_type_name"]:
             _insert_base(cur, data, CTRIP_PLATFORM, data["ctrip_room_type_name"])
         _sync_product_rows(cur, data, original_hotel_id, original_id)
         conn.commit()
+
     new_aliases = {
-        PMS_PLATFORM: {data["pms_room_type_name"]},
+        PMS_PLATFORM: set(pms_names),
         MEITUAN_PLATFORM: {data["meituan_room_type_name"]},
-        CTRIP_PLATFORM: {data["ctrip_room_type_name"]} if data["ctrip_room_type_name"] else set(),
+        CTRIP_PLATFORM: (
+            {data["ctrip_room_type_name"]} if data["ctrip_room_type_name"] else set()
+        ),
     }
     return {
         "hotel_ids": {old_hotel_id, data["hotel_id"]},
-        "room_type_ids": {value for value in (original_id, data["room_type_id"]) if value},
+        "room_type_ids": {
+            value for value in (original_id, data["room_type_id"]) if value
+        },
         "aliases": {
             platform: old_aliases[platform] | new_aliases[platform]
             for platform in BASE_PLATFORMS
