@@ -36,6 +36,15 @@ class RoomMappingAliasTests(unittest.TestCase):
             ["豪华大床房A", "豪华大床房B"],
         )
 
+    def test_existing_aliases_are_kept_when_same_room_id_is_reused(self):
+        self.assertEqual(
+            self.store._merge_pms_names(
+                {"豪华大床房A"},
+                ["豪华大床房B"],
+            ),
+            ["豪华大床房A", "豪华大床房B"],
+        )
+
     def test_validation_accepts_multiple_pms_aliases_without_legacy_single_value(self):
         data = {
             "hotel_id": "HT01",
