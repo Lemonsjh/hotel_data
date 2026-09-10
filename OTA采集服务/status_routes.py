@@ -23,7 +23,7 @@ from panel_common import (
 def register(app) -> None:
     @app.get("/")
     def index() -> str:
-        status = runner.load_status()
+        status = runner.reconcile_stale_run()
         settings = runner.load_settings()
         scheduler = manual_scheduler_status()
         price_scheduler = price_scheduler_status()

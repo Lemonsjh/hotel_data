@@ -159,7 +159,7 @@ def request_manual_scheduler_stop() -> None:
 
 
 def run_background(args: list[str]) -> bool:
-    status = runner.load_status()
+    status = runner.reconcile_stale_run()
     if status.get("last_run_status") in {"starting", "running", "stopping"}:
         return False
 
@@ -176,13 +176,15 @@ def run_background(args: list[str]) -> bool:
         status.setdefault("tasks", {})[name] = runner.pending_result(name)
     runner.save_json(runner.STATUS_PATH, status)
     try:
-        subprocess.Popen(
+        process = subprocess.Popen(
             [sys.executable, str(runner.ROOT / "runner.py"), *args],
             cwd=str(runner.ROOT),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+        status["run_process_pid"] = process.pid
+        runner.save_json(runner.STATUS_PATH, status)
     except OSError as exc:
         status.update(last_run_status="failed", last_run_finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         for name in task_names:

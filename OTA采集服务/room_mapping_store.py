@@ -348,6 +348,36 @@ def _insert_pms_alias(cur, data: dict[str, Any], source_name: str) -> None:
     )
 
 
+def _replace_ota_base_rows(
+    cur,
+    data: dict[str, Any],
+    original_hotel_id: str,
+    original_id: str,
+) -> None:
+    """Keep one editable OTA room-type selection per platform and unified ID."""
+    old_hotel_id = original_hotel_id or data["hotel_id"]
+    platform_fields = (
+        (MEITUAN_PLATFORM, "meituan_room_type_name"),
+        (CTRIP_PLATFORM, "ctrip_room_type_name"),
+    )
+    for platform, room_field in platform_fields:
+        source_name = str(data[room_field] or "").strip()
+        labels = PRODUCT_PLATFORMS[platform]
+        if original_id:
+            cur.execute(
+                """
+                UPDATE hotel_room_type_mapping
+                SET mapping_status='REJECTED', is_active=0
+                WHERE hotel_id=%s AND room_type_id=%s
+                  AND source_product_id='' AND source_platform IN (%s,%s)
+                  AND (%s='' OR BINARY source_room_type_name<>BINARY %s)
+                """,
+                (old_hotel_id, original_id, *labels, source_name, source_name),
+            )
+        if source_name:
+            _insert_base(cur, data, platform, source_name)
+
+
 def _collect_aliases(
     cur, hotel_id: str, room_type_id: str, *, active_only: bool = True
 ) -> dict[str, set[str]]:
@@ -605,9 +635,7 @@ def save_group(
             )
 
         _sync_pms_alias_rows(cur, data, original_hotel_id, original_id, pms_names)
-        _insert_base(cur, data, MEITUAN_PLATFORM, data["meituan_room_type_name"])
-        if data["ctrip_room_type_name"]:
-            _insert_base(cur, data, CTRIP_PLATFORM, data["ctrip_room_type_name"])
+        _replace_ota_base_rows(cur, data, original_hotel_id, original_id)
         _sync_product_rows(cur, data, original_hotel_id, original_id)
         conn.commit()
 

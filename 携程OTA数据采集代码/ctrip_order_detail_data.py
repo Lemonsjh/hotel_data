@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -109,19 +110,37 @@ def request_payload(start: date, end: date, page_index: int, captured_at: dateti
 def fetch_orders(client: FlowBrowserClient, start: date, end: date, captured_at: datetime) -> list[dict[str, Any]]:
     orders_by_form_id: dict[str, dict[str, Any]] = {}
     previous_ids: set[str] = set()
-    for page_index in range(1, MAX_PAGES + 1):
-        payload = client.post_json(API_URL, request_payload(start, end, page_index, captured_at))
-        status = payload.get("resStatus") or {}
-        if status and status.get("rcode") not in (0, "0", 200, "200"):
-            raise RuntimeError(f"Ctrip order-list request failed: {status.get('rmsg') or 'unknown error'}")
-        items = payload.get("orderList")
-        if not isinstance(items, list):
-            raise RuntimeError("Ctrip order-list response is invalid")
+    for page_index in range(MAX_PAGES):
+        items: list[Any] | None = None
+        for attempt in range(2):
+            payload = client.post_json(API_URL, request_payload(start, end, page_index, captured_at))
+            if not isinstance(payload, dict):
+                raise RuntimeError(f"Ctrip order-list response is invalid on page {page_index}: non-object payload")
+            status = payload.get("resStatus") or payload.get("ResponseStatus") or {}
+            if isinstance(status, dict) and status.get("rcode") not in (None, 0, "0", 200, "200"):
+                raise RuntimeError(f"Ctrip order-list request failed: {status.get('rmsg') or 'unknown error'}")
+            candidate = payload.get("orderList")
+            if isinstance(candidate, list):
+                items = candidate
+                break
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            keys = ",".join(sorted(str(key) for key in payload))
+            code = status.get("rcode") if isinstance(status, dict) else "unknown"
+            raise RuntimeError(
+                f"Ctrip order-list response is invalid on page {page_index}: rcode={code}, keys={keys}"
+            )
+        if items is None:
+            raise RuntimeError(f"Ctrip order-list response is invalid on page {page_index}")
         page_items = [item for item in items if isinstance(item, dict) and item.get("formId") not in (None, "")]
         page_ids = {str(item["formId"]) for item in page_items}
         if not page_items or page_ids == previous_ids:
             break
         orders_by_form_id.update({str(item["formId"]): item for item in page_items})
+        total = int_value(payload.get("total"))
+        if total is not None and (page_index + 1) * PAGE_SIZE >= total:
+            break
         if len(page_items) < PAGE_SIZE:
             break
         previous_ids = page_ids

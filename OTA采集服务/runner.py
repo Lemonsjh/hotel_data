@@ -148,6 +148,55 @@ def load_status() -> dict[str, Any]:
     )
 
 
+def process_alive(pid: Any) -> bool:
+    """Return whether a recorded background runner process still exists."""
+    try:
+        process_id = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if process_id <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, process_id)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(process_id, 0)
+    except OSError:
+        return False
+    return True
+
+
+def reconcile_stale_run() -> dict[str, Any]:
+    """Finish a run whose background process disappeared without updating status."""
+    status = load_status()
+    if status.get("last_run_status") not in {"starting", "running", "stopping"}:
+        return status
+    if process_alive(status.get("run_process_pid")):
+        return status
+
+    cancelled = status.get("last_run_status") == "stopping" or RUN_STOP_PATH.exists()
+    state = "cancelled" if cancelled else "failed"
+    message = "已由用户中断" if cancelled else "采集进程已退出，未返回完成状态"
+    for name in status.get("last_run_tasks") or []:
+        task = status.setdefault("tasks", {}).get(name, {})
+        if task.get("status") in {"pending", "running", "starting", "stopping"}:
+            task.update(
+                status=state,
+                finished_at=now_text(),
+                error_summary=message,
+            )
+    status.update(last_run_status=state, last_run_finished_at=now_text())
+    status.pop("run_process_pid", None)
+    status.pop("stop_requested_at", None)
+    save_json(STATUS_PATH, status)
+    return status
+
+
 def run_stop_requested() -> bool:
     return RUN_STOP_PATH.exists()
 
@@ -446,6 +495,7 @@ def run_once(task_names: list[str] | None = None) -> dict[str, Any]:
         status["last_run_status"] = "cancelled" if cancelled else (
             "success" if all(item["status"] == "success" for item in results) else "partial_failed"
         )
+        status.pop("run_process_pid", None)
         status.pop("stop_requested_at", None)
         save_json(STATUS_PATH, status)
         return status
