@@ -15,7 +15,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, EXTRA_HEADERS, PLATFORM_SCOPE, USER_AGENT
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ota_mysql_writer import OUTPUT_DIR, sync_ctrip_metric_history
+from ota_mysql_writer import OUTPUT_DIR, sync_ctrip_business_metrics_hourly, sync_ctrip_metric_history
 
 
 ENDPOINTS = {
@@ -35,6 +35,24 @@ HEADERS = [
     "business_date",
     "metric_code",
     "hotel_name",
+    "metric_group",
+    "metric_name",
+    "metric_value",
+    "metric_unit",
+    "compare_label",
+    "compare_value",
+    "competitor_rank",
+    "peer_average",
+]
+
+HOURLY_HEADERS = [
+    "hotel_id",
+    "hotel_name",
+    "platform_scope",
+    "business_date",
+    "snapshot_time",
+    "snapshot_hour",
+    "metric_code",
     "metric_group",
     "metric_name",
     "metric_value",
@@ -251,9 +269,7 @@ class CtripBusinessClient(CtripClient):
     def query_all(self) -> dict[str, Any]:
         yesterday = (datetime.now().date() - timedelta(days=1)).strftime("%Y-%m-%d")
         data = {
-            name: self.post_json(path, {})
-            for name, path in ENDPOINTS.items()
-            if name not in {"order_loss", "flow_data", "management_data", "management_data_realtime"}
+            "visitor_title": self.optional_post_json(ENDPOINTS["visitor_title"], {}),
         }
         data["management_data"] = self.post_json(
             ENDPOINTS["management_data"],
@@ -572,6 +588,44 @@ def normalize_rows(payload: dict[str, Any], captured_at: datetime, hotel_name: s
     return rows
 
 
+def build_hourly_metric_rows(payload: dict[str, Any], captured_at: datetime, hotel_name: str) -> list[list[Any]]:
+    """将携程今日实时经营指标转换为按整点保存的长表快照。"""
+    snapshot_hour = captured_at.replace(minute=0, second=0, microsecond=0)
+    realtime_rows = management_data_rows(
+        payload, captured_at, captured_at.date(), hotel_name, realtime=True
+    )
+    return [
+        [
+            HOTEL_ID,
+            item[3],
+            PLATFORM_SCOPE,
+            item[1],
+            item[0],
+            snapshot_hour,
+            item[2],
+            item[4],
+            item[5],
+            item[6],
+            item[7],
+            item[8],
+            item[9],
+            item[10],
+            item[11],
+        ]
+        for item in realtime_rows
+    ]
+
+
+def save_hourly_snapshot(payload: dict[str, Any], captured_at: datetime, hotel_name: str) -> int:
+    rows = build_hourly_metric_rows(payload, captured_at, hotel_name)
+    if not rows:
+        print("WARN 携程实时经营接口未返回有效指标，跳过小时快照写入")
+        return 0
+    write_standard_json(OUTPUT_DIR / "ctrip_ota_business_metrics_hourly.json", HOURLY_HEADERS, rows)
+    sync_ctrip_business_metrics_hourly(HOURLY_HEADERS, rows)
+    return len(rows)
+
+
 def deduplicate_rows(rows: list[list[Any]]) -> list[list[Any]]:
     """同一营业日和指标按组装顺序保留最后一条。"""
     unique: dict[tuple[Any, Any], list[Any]] = {}
@@ -626,9 +680,11 @@ def main() -> None:
         payload = sample_payload()
     else:
         payload = CtripBusinessClient(args.cookie).query_all()
-    rows = normalize_rows(payload, captured_at, hotel_name=args.hotel_name or None)
+    hotel_name = extract_hotel_name(payload, override_name=args.hotel_name or None)
+    rows = normalize_rows(payload, captured_at, hotel_name=hotel_name)
     output = save_rows(rows, Path(args.output))
-    print(f"OK 携程经营指标行数={len(rows)} 输出={output}")
+    hourly_count = save_hourly_snapshot(payload, captured_at, hotel_name)
+    print(f"OK 携程经营指标行数={len(rows)} 实时小时指标行数={hourly_count} 输出={output}")
 
 
 if __name__ == "__main__":

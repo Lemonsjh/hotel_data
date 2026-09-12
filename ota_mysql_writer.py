@@ -227,6 +227,19 @@ def sync_ctrip_metric_history(
     )
 
 
+def sync_ctrip_business_metrics_hourly(
+    headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 60
+) -> None:
+    """携程今日实时经营指标按酒店、平台、小时和指标编码保存。"""
+    sync_metric_history_table(
+        "ctrip_ota_business_metrics_hourly",
+        headers,
+        rows,
+        {"hotel_id", "platform_scope", "snapshot_hour", "metric_code"},
+        retention_days,
+    )
+
+
 def sync_monthly_history(
     table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]], retention_days: int = 30
 ) -> None:

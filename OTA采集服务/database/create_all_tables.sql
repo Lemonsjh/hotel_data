@@ -50,6 +50,31 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_business_metrics` (
   KEY `idx_ctrip_business_date` (`hotel_id`,`business_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Table: ctrip_ota_business_metrics_hourly
+CREATE TABLE IF NOT EXISTS `ctrip_ota_business_metrics_hourly` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `hotel_id` varchar(100) NOT NULL,
+  `hotel_name` varchar(255) DEFAULT NULL,
+  `platform_scope` varchar(20) NOT NULL DEFAULT 'ctrip',
+  `business_date` date NOT NULL,
+  `snapshot_time` datetime NOT NULL,
+  `snapshot_hour` datetime NOT NULL,
+  `metric_code` varchar(64) NOT NULL,
+  `metric_group` varchar(100) DEFAULT NULL,
+  `metric_name` varchar(100) NOT NULL,
+  `metric_value` decimal(18,4) DEFAULT NULL,
+  `metric_unit` varchar(50) DEFAULT NULL,
+  `compare_label` varchar(100) DEFAULT NULL,
+  `compare_value` varchar(100) DEFAULT NULL,
+  `competitor_rank` varchar(100) DEFAULT NULL COMMENT '同行排名',
+  `peer_average` varchar(100) DEFAULT NULL COMMENT '同行均值',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_ctrip_business_hourly` (`hotel_id`,`platform_scope`,`snapshot_hour`,`metric_code`),
+  KEY `idx_ctrip_business_hourly_date` (`hotel_id`,`business_date`),
+  KEY `idx_ctrip_business_hourly_snapshot` (`snapshot_time`),
+  KEY `idx_ctrip_business_hourly_metric` (`hotel_id`,`metric_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- Table: ctrip_ota_competition_metrics_30d
 CREATE TABLE IF NOT EXISTS `ctrip_ota_competition_metrics_30d` (
   `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
