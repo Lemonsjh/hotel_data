@@ -176,7 +176,10 @@ def reconcile_stale_run() -> dict[str, Any]:
     status = load_status()
     if status.get("last_run_status") not in {"starting", "running", "stopping"}:
         return status
-    if process_alive(status.get("run_process_pid")):
+    run_process_pid = status.get("run_process_pid")
+    # 定时调度器直接执行 runner.py，不会写入该 PID。没有可核验的
+    # 后台 PID 时不能将仍在运行的定时批次误判为已退出。
+    if not run_process_pid or process_alive(run_process_pid):
         return status
 
     cancelled = status.get("last_run_status") == "stopping" or RUN_STOP_PATH.exists()

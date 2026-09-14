@@ -38,6 +38,7 @@ class StaleRunRecoveryTests(unittest.TestCase):
                 self.runner.STATUS_PATH,
                 {
                     "last_run_status": "stopping",
+                    "run_process_pid": 12345,
                     "last_run_tasks": ["pms_fetch"],
                     "tasks": {"pms_fetch": self.runner.pending_result("pms_fetch")},
                 },
@@ -47,6 +48,32 @@ class StaleRunRecoveryTests(unittest.TestCase):
                     status = self.runner.reconcile_stale_run()
                 self.assertEqual(status["last_run_status"], "cancelled")
                 self.assertEqual(status["tasks"]["pms_fetch"]["status"], "cancelled")
+            finally:
+                self.runner.STATUS_PATH, self.runner.RUN_STOP_PATH = old_status, old_stop
+
+    def test_reconcile_keeps_scheduler_run_without_background_pid(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            old_status, old_stop = self.runner.STATUS_PATH, self.runner.RUN_STOP_PATH
+            self.runner.STATUS_PATH = state_dir / "status.json"
+            self.runner.RUN_STOP_PATH = state_dir / "collection_run.stop"
+            self.runner.save_json(
+                self.runner.STATUS_PATH,
+                {
+                    "last_run_status": "running",
+                    "last_run_tasks": ["ctrip_business"],
+                    "tasks": {
+                        "ctrip_business": {
+                            **self.runner.pending_result("ctrip_business"),
+                            "status": "running",
+                        }
+                    },
+                },
+            )
+            try:
+                status = self.runner.reconcile_stale_run()
+                self.assertEqual(status["last_run_status"], "running")
+                self.assertEqual(status["tasks"]["ctrip_business"]["status"], "running")
             finally:
                 self.runner.STATUS_PATH, self.runner.RUN_STOP_PATH = old_status, old_stop
 
