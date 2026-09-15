@@ -4,7 +4,7 @@ from typing import Any
 
 import pymysql
 
-from mapping_product_sync import sync_meituan_products
+from mapping_product_sync import sync_ctrip_products, sync_meituan_products
 import price_tasks
 
 
@@ -585,6 +585,7 @@ def _sync_product_rows(
             ),
         )
     sync_meituan_products(cur)
+    sync_ctrip_products(cur)
 
 
 def save_group(

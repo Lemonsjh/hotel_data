@@ -443,7 +443,27 @@ def query_price_setting(
 def get_current_price(setting_data: dict[str, Any], product_id: str) -> float | None:
     setting_map = setting_data["roomPriceSettingMap"]
     info = setting_map[product_id]
-    return find_number(info, ("price", "salePrice", "originalPrice"), None)
+    if not isinstance(info, dict):
+        return None
+
+    def direct_price(value: Any) -> float | None:
+        if not isinstance(value, dict):
+            return None
+        for key in ("price", "salePrice", "originalPrice"):
+            try:
+                return float(value[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+        return None
+
+    price = direct_price(info.get("firstDayPriceInfo"))
+    if price is not None:
+        return price
+    for item in info.get("priceInfo") or []:
+        price = direct_price(item)
+        if price is not None:
+            return price
+    return direct_price(info)
 
 
 def build_room_price_infos(rows: list[dict[str, Any]], setting_map: dict[str, Any]) -> list[dict[str, Any]]:

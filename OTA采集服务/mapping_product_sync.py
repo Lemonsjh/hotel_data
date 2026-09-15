@@ -4,6 +4,7 @@ from typing import Any
 
 
 MEITUAN_LABELS = ("美团", "meituan")
+CTRIP_LABELS = ("携程", "ctrip")
 
 
 def sync_meituan_products(cur: Any) -> dict[str, int]:
@@ -32,6 +33,8 @@ def sync_meituan_products(cur: Any) -> dict[str, int]:
             m.source_product_name=COALESCE(g.ota_product_name,''),
             m.rate_plan_name=COALESCE(g.rate_plan_name,''),
             m.is_hour_room=IF(COALESCE(g.ota_product_name,'') REGEXP '-[0-9]+([.][0-9]+)?小时-',1,0),
+            m.mapping_status='AUTO',
+            m.match_rule='ROOM_NAME',
             m.last_seen_at=COALESCE(g.snapshot_time,m.last_seen_at),
             m.is_active=1
         WHERE m.source_platform IN (%s,%s) AND m.source_product_id<>''
@@ -54,7 +57,7 @@ def sync_meituan_products(cur: Any) -> dict[str, int]:
                b.pms_room_type_name,
                %s,b.ota_hotel_name,g.room_type_name,g.room_type_name,
                CAST(g.ota_product_id AS CHAR),COALESCE(g.ota_product_name,''),
-               COALESCE(g.rate_plan_name,''),'AUTO','ROOM_ID',1.00,
+               COALESCE(g.rate_plan_name,''),'AUTO','ROOM_NAME',1.00,
                IF(COALESCE(g.ota_product_name,'') REGEXP '-[0-9]+([.][0-9]+)?小时-',1,0),
                1,COALESCE(g.snapshot_time,CURRENT_TIMESTAMP)
         FROM meituan_ota_goods_price_mapping g
@@ -70,6 +73,8 @@ def sync_meituan_products(cur: Any) -> dict[str, int]:
             source_product_name=VALUES(source_product_name),
             rate_plan_name=VALUES(rate_plan_name),
             is_hour_room=VALUES(is_hour_room),
+            mapping_status='AUTO',
+            match_rule='ROOM_NAME',
             last_seen_at=VALUES(last_seen_at),
             is_active=1
         """,
@@ -87,6 +92,91 @@ def sync_meituan_products(cur: Any) -> dict[str, int]:
         WHERE m.source_platform IN (%s,%s) AND m.source_product_id<>''
           AND m.hotel_id IN (
               SELECT hotel_id FROM meituan_ota_goods_price_mapping
+              WHERE hotel_id IS NOT NULL AND hotel_id<>''
+          )
+          AND g.id IS NULL
+        """,
+        labels,
+    )
+    return {"updated": updated, "inserted_or_refreshed": inserted, "deactivated": cur.rowcount}
+
+
+def sync_ctrip_products(cur: Any) -> dict[str, int]:
+    """Refresh current Ctrip product rows from the latest goods snapshot."""
+    labels = CTRIP_LABELS
+    cur.execute(
+        """
+        UPDATE hotel_room_type_mapping m
+        JOIN ctrip_ota_goods_price_mapping g
+          ON BINARY g.hotel_id=BINARY m.hotel_id
+         AND BINARY CAST(g.ota_product_id AS CHAR)=BINARY m.source_product_id
+        SET m.source_room_type_name=g.room_type_name,
+            m.ota_room_type_name=g.room_type_name,
+            m.source_product_name=COALESCE(g.ota_product_name,''),
+            m.product_cipher=COALESCE(g.product_cipher,''),
+            m.price_editable_flag=g.price_editable_flag,
+            m.is_hour_room=COALESCE(g.is_hour_room,0),
+            m.mapping_status='AUTO',
+            m.match_rule='ROOM_NAME',
+            m.last_seen_at=COALESCE(g.snapshot_time,m.last_seen_at),
+            m.is_active=1
+        WHERE m.source_platform IN (%s,%s) AND m.source_product_id<>''
+        """,
+        labels,
+    )
+    updated = cur.rowcount
+
+    cur.execute(
+        """
+        INSERT INTO hotel_room_type_mapping (
+            hotel_id,pms_hotel_name,room_type_id,room_type_name,pms_room_type_name,
+            source_platform,ota_hotel_name,source_room_type_name,ota_room_type_name,
+            source_product_id,source_product_name,rate_plan_name,product_cipher,
+            price_editable_flag,mapping_status,match_rule,match_confidence,
+            is_hour_room,is_active,last_seen_at
+        )
+        SELECT g.hotel_id,
+               b.pms_hotel_name,
+               b.room_type_id,b.room_type_name,
+               b.pms_room_type_name,
+               %s,b.ota_hotel_name,g.room_type_name,g.room_type_name,
+               CAST(g.ota_product_id AS CHAR),COALESCE(g.ota_product_name,''),'',
+               COALESCE(g.product_cipher,''),g.price_editable_flag,
+               'AUTO','ROOM_NAME',1.00,COALESCE(g.is_hour_room,0),
+               1,COALESCE(g.snapshot_time,CURRENT_TIMESTAMP)
+        FROM ctrip_ota_goods_price_mapping g
+        JOIN hotel_room_type_mapping b
+          ON BINARY b.hotel_id=BINARY g.hotel_id
+         AND b.source_platform IN (%s,%s)
+         AND b.source_product_id='' AND b.is_active=1
+         AND BINARY b.source_room_type_name=BINARY g.room_type_name
+        WHERE g.ota_product_id IS NOT NULL AND g.ota_product_id<>''
+        ON DUPLICATE KEY UPDATE
+            pms_hotel_name=VALUES(pms_hotel_name),
+            pms_room_type_name=VALUES(pms_room_type_name),
+            source_product_name=VALUES(source_product_name),
+            product_cipher=VALUES(product_cipher),
+            price_editable_flag=VALUES(price_editable_flag),
+            is_hour_room=VALUES(is_hour_room),
+            mapping_status='AUTO',
+            match_rule='ROOM_NAME',
+            last_seen_at=VALUES(last_seen_at),
+            is_active=1
+        """,
+        (labels[1], *labels),
+    )
+    inserted = cur.rowcount
+
+    cur.execute(
+        """
+        UPDATE hotel_room_type_mapping m
+        LEFT JOIN ctrip_ota_goods_price_mapping g
+          ON BINARY g.hotel_id=BINARY m.hotel_id
+         AND BINARY CAST(g.ota_product_id AS CHAR)=BINARY m.source_product_id
+        SET m.is_active=0
+        WHERE m.source_platform IN (%s,%s) AND m.source_product_id<>''
+          AND m.hotel_id IN (
+              SELECT hotel_id FROM ctrip_ota_goods_price_mapping
               WHERE hotel_id IS NOT NULL AND hotel_id<>''
           )
           AND g.id IS NULL

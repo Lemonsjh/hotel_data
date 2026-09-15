@@ -429,6 +429,16 @@ def first_error_line(output: str) -> str:
 
 def enrich_room_type_ids(name: str, settings: dict[str, Any], log_path: Path) -> None:
     try:
+        product_message = ""
+        if name == "ctrip_goods_price":
+            import mapping_product_sync
+            import price_tasks
+
+            with price_tasks.connection(settings) as conn, conn.cursor() as cur:
+                product_stats = mapping_product_sync.sync_ctrip_products(cur)
+                conn.commit()
+            product_message = f"[room_mapping] ctrip_products={product_stats}\n"
+
         import room_type_enrichment
 
         stats = room_type_enrichment.enrich_for_task(settings, name)
@@ -437,7 +447,7 @@ def enrich_room_type_ids(name: str, settings: dict[str, Any], log_path: Path) ->
         matched = sum(
             item["matched_by_product"] + item["matched_by_name"] for item in stats.values()
         )
-        message = f"\n[room_type_id] tables={len(stats)} matched={matched}\n"
+        message = f"\n{product_message}[room_type_id] tables={len(stats)} matched={matched}\n"
     except Exception as exc:
         message = f"\n[room_type_id] warning: {exc}\n"
     with log_path.open("a", encoding="utf-8") as file:
