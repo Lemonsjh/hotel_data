@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import time
 from datetime import datetime
@@ -30,15 +29,10 @@ PREFERRED_CLUB_MENU_POINT = (110, 458)
 PREFERRED_CLUB_MENU_TEXT = "优享会"
 BUSINESS_TRAVEL_MENU_POINT = (110, 503)
 BUSINESS_TRAVEL_MENU_TEXT = "商旅专享价"
-INFORMATION_MENU_POINT = (110, 435)
-PICTURE_VIDEO_MENU_POINT = (110, 571)
 VIDEO_TAB_POINT = (340, 167)
 TRAVEL_PHOTO_TAB_TEXT = "\u65c5\u62cd"
 EMPTY_DATA_TEXT = "\u6682\u65e0\u6570\u636e"
 MY_UPLOADS_TEXT = "\u6211\u7684\u4e0a\u4f20"
-LISTING_MANAGEMENT_TEXT = "\u6302\u724c\u7ba1\u7406"
-LISTING_PASS_TEXT = "\u6302\u724c\u901a"
-LISTING_SIGNUP_SELECTOR = 'button[he-click="Sign_Up_Now"]'
 POINTS_PAGE_MARKERS = ("积分可抵", "积分膨胀", "十倍积分")
 PREFERRED_CLUB_PAGE_MARKERS = ("体验优享会计划说明", "优享会酒店附加协议")
 BUSINESS_TRAVEL_PAGE_MARKERS = ("商旅专享说明", "企业间对公结算")
@@ -148,26 +142,42 @@ def hourly_room_status() -> tuple[int, int]:
 
 def information_completeness_score(page: Any) -> float:
     page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(4_000)
+    ensure_logged_in(page)
     dismiss_overlays(page)
-    page.mouse.click(*INFORMATION_MENU_POINT)
-    deadline = time.monotonic() + 20
-    pattern = re.compile(r"\u4fe1\u606f\u5206\s*([0-9]+(?:\.[0-9]+)?)\s*%?")
-    while time.monotonic() < deadline:
-        match = pattern.search(page.locator("body").inner_text(timeout=1_000))
-        if match:
-            return float(match.group(1))
-        page.wait_for_timeout(500)
-    raise RuntimeError("Ctrip information page did not return an information score")
+    home = information_submenu(page, "信息首页")
+    with page.expect_response(lambda response: "/23942/getHotelInfoScoreItems" in response.url, timeout=30_000) as captured:
+        home.click(timeout=10_000)
+    return information_score_from_payload(captured.value.json())
+
+
+def information_submenu(page: Any, text: str) -> Any:
+    item = page.get_by_text(text, exact=True).first
+    if not item.is_visible():
+        page.get_by_text("信息维护", exact=True).first.click(timeout=10_000)
+    return item
+
+
+def information_score_from_payload(payload: Any) -> float:
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        raise RuntimeError("Ctrip information-score response failed")
+    score_info = payload.get("scoreInfo")
+    score = score_info.get("currentScore") if isinstance(score_info, dict) else None
+    if isinstance(score, bool) or score is None:
+        raise RuntimeError("Ctrip information-score response is missing currentScore")
+    try:
+        value = float(score)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Ctrip information-score response has invalid currentScore") from exc
+    if not 0 <= value <= 100:
+        raise RuntimeError("Ctrip information-score response has invalid currentScore")
+    return value
 
 
 def homepage_video_status(page: Any) -> int:
     page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
     page.wait_for_timeout(4_000)
     dismiss_overlays(page)
-    page.mouse.click(*INFORMATION_MENU_POINT)
-    page.wait_for_timeout(700)
-    page.mouse.click(*PICTURE_VIDEO_MENU_POINT)
+    information_submenu(page, "图片视频").click(timeout=10_000)
     page.wait_for_timeout(2_500)
     page.mouse.click(*VIDEO_TAB_POINT)
     deadline = time.monotonic() + 20
@@ -200,31 +210,6 @@ def travel_photo_status(page: Any) -> int:
     raise RuntimeError("Ctrip travel-photo tab did not return a recognized status")
 
 
-def listing_pass_status(page: Any) -> int:
-    page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(4_000)
-    dismiss_overlays(page)
-    management = page.get_by_text(LISTING_MANAGEMENT_TEXT, exact=True)
-    if not management.count():
-        raise RuntimeError("Ctrip home page did not return a listing-management entry")
-    management.last.click(timeout=10_000)
-    page.wait_for_timeout(1_500)
-    listing_pass = page.get_by_text(LISTING_PASS_TEXT, exact=True)
-    if not listing_pass.count():
-        raise RuntimeError("Ctrip listing-management page did not return a listing-pass entry")
-    listing_pass.last.click(timeout=10_000)
-
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        signup = page.locator(LISTING_SIGNUP_SELECTOR)
-        if signup.count() and any(item.is_visible() for item in signup.all()):
-            return 0
-        if LISTING_PASS_TEXT in page.locator("body").inner_text(timeout=1_000):
-            return 1
-        page.wait_for_timeout(500)
-    raise RuntimeError("Ctrip listing-pass page did not return a recognized status")
-
-
 def collect_one(name: str, func: Any) -> tuple[Any | None, str | None]:
     try:
         return func(), None
@@ -255,7 +240,6 @@ def collect_statuses() -> dict[str, tuple[Any | None, str | None]]:
                 "information": collect_one("information_completeness", lambda: information_completeness_score(page)),
                 "homepage_video": collect_one("homepage_video", lambda: homepage_video_status(page)),
                 "travel_photo": collect_one("travel_photo", lambda: travel_photo_status(page)),
-                "listing_pass": collect_one("listing_pass", lambda: listing_pass_status(page)),
             }
         finally:
             browser.close()
@@ -289,7 +273,6 @@ def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[A
         status_row(hotel_id, captured_at, "hourly_room", "\u949f\u70b9\u623f", (hourly_enabled, hourly_error), "ENABLED", "DISABLED", room_type_count=hourly_room_count),
         status_row(hotel_id, captured_at, "travel_photo", TRAVEL_PHOTO_TAB_TEXT, results["travel_photo"], "UPLOADED", "NOT_UPLOADED"),
         status_row(hotel_id, captured_at, "homepage_video", "\u9996\u9875\u89c6\u9891", results["homepage_video"], "UPLOADED", "NOT_UPLOADED"),
-        status_row(hotel_id, captured_at, "listing_pass", LISTING_PASS_TEXT, results["listing_pass"], "JOINED", "NOT_JOINED"),
         status_row(hotel_id, captured_at, "information_completeness", "\u4fe1\u606f\u5b8c\u6574\u5ea6", (information_enabled, information_error), "COMPLETE", "INCOMPLETE", metric_value=information_score, metric_unit="%"),
     ]
     return [row for row in candidates if row is not None]
