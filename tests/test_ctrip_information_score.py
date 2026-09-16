@@ -65,18 +65,38 @@ class CtripInformationScoreTests(unittest.TestCase):
         video_menu = MagicMock()
         video_menu.is_visible.return_value = False
         parent_menu = MagicMock()
-        page.get_by_text.side_effect = lambda text, exact: SimpleNamespace(
-            first=video_menu if text == "图片视频" else parent_menu,
-        )
-        title = page.locator.return_value
-        title.count.return_value = 1
-        title.first.inner_text.return_value = "主视频"
-        title.first.locator.return_value.locator.return_value.count.return_value = 1
+        page.expect_response.return_value.__enter__.return_value.value.json.return_value = {
+            "code": 200, "data": {"mainVideo": None, "backVideoList": None, "videoQuantity": None},
+        }
         with patch.object(self.module, "dismiss_overlays"):
-            self.assertEqual(self.module.homepage_video_status(page), 1)
+            page.get_by_text.side_effect = lambda text, exact: SimpleNamespace(
+                first=video_menu if text == "图片视频" else parent_menu,
+            )
+            self.assertEqual(self.module.homepage_video_status(page), 0)
         parent_menu.click.assert_called_once()
         video_menu.click.assert_called_once()
         page.mouse.click.assert_called_once_with(*self.module.VIDEO_TAB_POINT)
+        response = SimpleNamespace(url="https://ebooking.ctrip.com/ebkovsproduct/api/video/queryDetailAreaVideo")
+        self.assertTrue(page.expect_response.call_args.args[0](response))
+
+    def test_detail_video_status_ignores_room_videos(self):
+        self.assertEqual(self.module.detail_video_status({
+            "code": 200, "data": {"mainVideo": None, "backVideoList": None, "videoQuantity": None},
+        }), 0)
+
+    def test_detail_video_status_detects_main_video(self):
+        self.assertEqual(self.module.detail_video_status({
+            "code": 200, "data": {"mainVideo": {"id": 1}, "backVideoList": []},
+        }), 1)
+
+    def test_detail_video_status_rejects_ambiguous_or_failed_response(self):
+        for payload in (
+            {"code": 500, "data": {"mainVideo": None}},
+            {"code": 200, "data": {"mainVideo": None, "backVideoList": [{"id": 2}]}},
+            {"code": 200, "data": {"mainVideo": None, "videoQuantity": 1}},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(RuntimeError):
+                self.module.detail_video_status(payload)
 
     def test_promotion_rows_exclude_listing_pass(self):
         results = {key: (0, None) for key in (

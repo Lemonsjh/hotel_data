@@ -179,15 +179,24 @@ def homepage_video_status(page: Any) -> int:
     dismiss_overlays(page)
     information_submenu(page, "图片视频").click(timeout=10_000)
     page.wait_for_timeout(2_500)
-    page.mouse.click(*VIDEO_TAB_POINT)
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        title = page.locator("div.currentUsingTitle-mfgIVI")
-        if title.count() and title.first.inner_text(timeout=1_000).strip() == "主视频":
-            container = title.first.locator("xpath=..")
-            return int(bool(container.locator("div.videoLeftWrapper-PnlzeB img").count()))
-        page.wait_for_timeout(500)
-    raise RuntimeError("Ctrip video page did not return a main-video section")
+    with page.expect_response(
+        lambda response: "/ebkovsproduct/api/video/queryDetailAreaVideo" in response.url,
+        timeout=20_000,
+    ) as captured:
+        page.mouse.click(*VIDEO_TAB_POINT)
+    return detail_video_status(captured.value.json())
+
+
+def detail_video_status(payload: Any) -> int:
+    if not isinstance(payload, dict) or payload.get("code") != 200 or not isinstance(payload.get("data"), dict):
+        raise RuntimeError("Ctrip detail-video response is invalid")
+    data = payload["data"]
+    if data.get("mainVideo"):
+        return 1
+    if (data.get("mainVideo") is None and not data.get("backVideoList")
+            and data.get("videoQuantity") in (None, 0, "0")):
+        return 0
+    raise RuntimeError("Ctrip detail-video response has no recognizable main-video status")
 
 
 def travel_photo_status(page: Any) -> int:
