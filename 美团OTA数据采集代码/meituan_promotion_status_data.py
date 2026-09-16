@@ -413,6 +413,27 @@ def save_status(hotel_id: str, code: str, name: str, status: str) -> None:
         connection.close()
 
 
+def save_initial_public_welfare_closed(hotel_id: str) -> bool:
+    import pymysql
+
+    connection = pymysql.connect(**DB_CONFIG)
+    try:
+        with connection.cursor() as cursor:
+            inserted = cursor.execute(
+                """INSERT IGNORE INTO meituan_ota_promotion_status
+                   (hotel_id, promotion_code, promotion_name, status, snapshot_time)
+                   VALUES (%s, %s, %s, 'CLOSED', %s)""",
+                (hotel_id, PUBLIC_WELFARE_CODE, PUBLIC_WELFARE_NAME, datetime.now()),
+            )
+        connection.commit()
+        return bool(inserted)
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Collect Meituan promotion status data")
     parser.add_argument("--force", action="store_true", help="ignore the 10-14 hour automatic cooldown")
@@ -460,6 +481,12 @@ def main() -> int:
                     status = check()
                     save_status(hotel_id, code, name, status)
                 except Exception as exc:
+                    if (code == PUBLIC_WELFARE_CODE and isinstance(exc, RuntimeError)
+                            and str(exc) == "Public welfare page did not return a recognized status"
+                            and save_initial_public_welfare_closed(hotel_id)):
+                        print("public_welfare_traffic status unrecognized; initial CLOSED row inserted")
+                        results.append((code, name, "CLOSED"))
+                        continue
                     message = f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')[:300]}"
                     failures.append((code, name, message))
                     print(f"{code} check failed; previous database status retained: {message}")

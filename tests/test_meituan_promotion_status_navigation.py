@@ -4,6 +4,8 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -112,6 +114,19 @@ class PromotionStatusNavigationTests(unittest.TestCase):
         self.module.wait_for_workbench_wrapper(page, 1_000)
 
         self.assertEqual(page.url, "https://me.meituan.com/ebooking/merchant/ebIframe")
+
+    def test_unrecognized_public_welfare_only_inserts_when_absent(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        with patch.dict(sys.modules, {"pymysql": SimpleNamespace(connect=lambda **_kwargs: connection)}):
+            cursor.execute.return_value = 1
+            self.assertTrue(self.module.save_initial_public_welfare_closed("hotel-1"))
+            cursor.execute.return_value = 0
+            self.assertFalse(self.module.save_initial_public_welfare_closed("hotel-1"))
+        query, params = cursor.execute.call_args.args
+        self.assertIn("INSERT IGNORE", query)
+        self.assertEqual(params[1:3], ("public_welfare_traffic", "公益流量"))
+        self.assertEqual(connection.commit.call_count, 2)
 
 
 if __name__ == "__main__":
