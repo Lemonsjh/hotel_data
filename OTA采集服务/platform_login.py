@@ -38,10 +38,12 @@ PLATFORMS = {
     },
 }
 STATE_DIR = runner.ROOT / "state"
-KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
-KERNEL32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
-KERNEL32.OpenProcess.restype = ctypes.c_void_p
-KERNEL32.CloseHandle.argtypes = [ctypes.c_void_p]
+KERNEL32 = None
+if os.name == "nt":
+    KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    KERNEL32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    KERNEL32.OpenProcess.restype = ctypes.c_void_p
+    KERNEL32.CloseHandle.argtypes = [ctypes.c_void_p]
 
 
 class LoginCancelled(RuntimeError):
@@ -92,6 +94,8 @@ def write_status(platform: str, status: str, message: str, **fields: Any) -> Non
 
 
 def process_alive(pid: Any) -> bool:
+    if KERNEL32 is None:
+        return False
     try:
         handle = KERNEL32.OpenProcess(0x1000, 0, int(pid))
     except (TypeError, ValueError):

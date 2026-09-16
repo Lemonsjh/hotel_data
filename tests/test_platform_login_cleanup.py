@@ -14,6 +14,10 @@ import platform_login
 
 
 class PlatformLoginCleanupTests(unittest.TestCase):
+    def test_process_alive_is_safe_without_windows_api(self):
+        with patch.object(platform_login, "KERNEL32", None):
+            self.assertFalse(platform_login.process_alive(60192))
+
     def test_profile_edge_roots_reads_only_returned_pids(self):
         with patch.object(platform_login.subprocess, "run", return_value=SimpleNamespace(stdout="60192\n42380\n")):
             self.assertEqual(platform_login.profile_edge_root_pids("meituan"), [60192, 42380])
