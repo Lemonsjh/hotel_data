@@ -4,13 +4,13 @@ import argparse
 import json
 import os
 import random
-import re
 import sys
 import tempfile
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -22,15 +22,12 @@ from ota_mysql_writer import DB_CONFIG
 
 
 VIDEO_URL = "https://me.meituan.com/ebooking/merchant/i/hasVpoiSelect?biz=universal&page=videomanage"
-VIDEO_TYPES = (
-    ("room_type_video", "\u623f\u578b\u89c6\u9891"),
-    ("hotel_preview_video", "\u9152\u5e97\u9884\u89c8\u89c6\u9891"),
-    ("room_type_preview_video", "\u623f\u578b\u9884\u89c8\u89c6\u9891"),
-)
+VIDEO_TASK_PATH = "/gw/tdc/hubble/eb/hotel/video/poi/video/task"
 PAGE_WAIT_SECONDS = 20
 COOLDOWN_MIN_HOURS = 22.0
 COOLDOWN_MAX_HOURS = 26.0
 COOLDOWN_REASONS = {"success", "failure"}
+LEGACY_VIDEO_TYPES = ("hotel_preview_video", "room_type_preview_video")
 
 
 def profile_path() -> Path:
@@ -103,27 +100,45 @@ def mark_schedule_success(success_at: datetime) -> None:
     save_schedule_state(state)
 
 
-def video_rows_from_page(page: object) -> list[tuple[str, int, int]]:
-    for frame in page.frames:
-        try:
-            text = frame.locator("body").inner_text(timeout=1_000)
-        except Exception:
-            continue
-        if "待上传视频任务" not in text:
-            continue
-        rows = extract_video_counts(text)
-        if len(rows) == len(VIDEO_TYPES):
-            return rows
-    return []
+def is_video_task_response(response: Any) -> bool:
+    try:
+        return response.request.method == "GET" and urlparse(response.url).path == VIDEO_TASK_PATH
+    except Exception:
+        return False
 
 
-def extract_video_counts(text: str) -> list[tuple[str, int, int]]:
-    rows = []
-    for code, label in VIDEO_TYPES:
-        match = re.search(rf"{re.escape(label)}\s*(\d+)\s*/\s*(\d+)", text)
-        if match:
-            rows.append((code, int(match.group(1)), int(match.group(2))))
-    return rows
+def _payload_int(data: dict[str, Any], field: str) -> int:
+    if field not in data:
+        raise RuntimeError(f"Meituan video task response missing field: {field}")
+    try:
+        value = int(data[field])
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Meituan video task field is not an integer: {field}") from exc
+    if value < 0:
+        raise RuntimeError(f"Meituan video task field is negative: {field}")
+    return value
+
+
+def video_rows_from_payload(payload: Any) -> list[tuple[str, int, int]]:
+    if not isinstance(payload, dict) or payload.get("status") != 0 or not isinstance(payload.get("data"), dict):
+        raise RuntimeError("Meituan video task response is invalid")
+
+    data = payload["data"]
+    has_hotel_official = _payload_int(data, "hasHotelOfficial")
+    has_hotel_official_preview = _payload_int(data, "hasHotelOfficialPreview")
+    room_video_count = _payload_int(data, "hasRoomVideoOnlineRealRoomNum")
+    online_room_count = _payload_int(data, "onlineRealRoomNum")
+
+    if has_hotel_official not in (0, 1):
+        raise RuntimeError("Meituan video task hasHotelOfficial must be 0 or 1")
+    if has_hotel_official_preview not in (0, 1):
+        raise RuntimeError("Meituan video task hasHotelOfficialPreview must be 0 or 1")
+
+    return [
+        ("hotel_official_video", has_hotel_official, 1),
+        ("hotel_official_preview_video", has_hotel_official_preview, 1),
+        ("room_type_video", room_video_count, online_room_count),
+    ]
 
 
 def fetch_video_counts() -> list[tuple[str, int, int]]:
@@ -141,19 +156,31 @@ def fetch_video_counts() -> list[tuple[str, int, int]]:
             if cookies:
                 context.add_cookies(cookies)
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto(VIDEO_URL, wait_until="domcontentloaded", timeout=60_000)
-            deadline = time.monotonic() + PAGE_WAIT_SECONDS
-            while time.monotonic() < deadline:
-                last_url = page.url
-                rows = video_rows_from_page(page)
-                if rows:
-                    return rows
-                if issue := page_access_issue(page):
-                    raise RuntimeError(f"Video management page requires manual action: {issue}")
-                page.wait_for_timeout(500)
+            responses: list[Any] = []
+
+            def on_response(response: Any) -> None:
+                if is_video_task_response(response):
+                    responses.append(response)
+
+            page.on("response", on_response)
+            try:
+                page.goto(VIDEO_URL, wait_until="domcontentloaded", timeout=60_000)
+                deadline = time.monotonic() + PAGE_WAIT_SECONDS
+                while time.monotonic() < deadline:
+                    last_url = page.url
+                    if responses:
+                        response = responses[-1]
+                        if response.status != 200:
+                            raise RuntimeError(f"Meituan video task API failed: HTTP {response.status}")
+                        return video_rows_from_payload(response.json())
+                    if issue := page_access_issue(page):
+                        raise RuntimeError(f"Video management page requires manual action: {issue}")
+                    page.wait_for_timeout(500)
+            finally:
+                page.remove_listener("response", on_response)
         finally:
             context.close()
-    raise RuntimeError(f"Video management page did not return all upload counts: url={last_url}")
+    raise RuntimeError(f"Video management page did not return the video task API response: url={last_url}")
 
 
 def save_video_counts(hotel_id: str, rows: list[tuple[str, int, int]]) -> None:
@@ -162,6 +189,11 @@ def save_video_counts(hotel_id: str, rows: list[tuple[str, int, int]]) -> None:
     connection = pymysql.connect(**DB_CONFIG)
     try:
         with connection.cursor() as cursor:
+            cursor.execute(
+                """DELETE FROM meituan_ota_video_upload_status
+                   WHERE hotel_id=%s AND video_type IN (%s, %s)""",
+                (hotel_id, *LEGACY_VIDEO_TYPES),
+            )
             cursor.executemany(
                 """INSERT INTO meituan_ota_video_upload_status
                    (hotel_id, video_type, uploaded_count, required_count, status)
