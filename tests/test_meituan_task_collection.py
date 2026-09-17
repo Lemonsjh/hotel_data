@@ -5,6 +5,7 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -34,22 +35,6 @@ class _Response:
         return self.payload
 
 
-class _Frame:
-    def __init__(self, text: str):
-        self.text = text
-
-    def locator(self, _selector):
-        return self
-
-    def inner_text(self, timeout):
-        return self.text
-
-
-class _Page:
-    def __init__(self, *texts: str):
-        self.frames = [_Frame(text) for text in texts]
-
-
 class MeituanTaskCollectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -72,15 +57,48 @@ class MeituanTaskCollectionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "status=303; message=登录状态失效"):
                 self.scan.request_page(date(2026, 8, 1), date(2026, 8, 2), 1)
 
-    def test_video_counts_are_read_from_the_loaded_video_frame(self):
-        page = _Page(
-            "页面框架",
-            "待上传视频任务\n房型视频 8/12\n酒店预览视频 0/1\n房型预览视频 0/12",
-        )
+    def test_video_rows_are_read_from_task_api_payload(self):
+        payload = {
+            "status": 0,
+            "data": {
+                "hasHotelOfficial": 1,
+                "hasHotelOfficialPreview": 0,
+                "hasRoomVideoOnlineRealRoomNum": 7,
+                "onlineRealRoomNum": 10,
+            },
+        }
         self.assertEqual(
-            self.video.video_rows_from_page(page),
-            [("room_type_video", 8, 12), ("hotel_preview_video", 0, 1), ("room_type_preview_video", 0, 12)],
+            self.video.video_rows_from_payload(payload),
+            [
+                ("hotel_official_video", 1, 1),
+                ("hotel_official_preview_video", 0, 1),
+                ("room_type_video", 7, 10),
+            ],
         )
+
+    def test_video_task_response_matches_only_get_endpoint(self):
+        response = SimpleNamespace(
+            url="https://tdc.meituan.com/gw/tdc/hubble/eb/hotel/video/poi/video/task?poiId=1879794992&mtgsig=signed",
+            request=SimpleNamespace(method="GET"),
+        )
+        self.assertTrue(self.video.is_video_task_response(response))
+        response.request.method = "POST"
+        self.assertFalse(self.video.is_video_task_response(response))
+
+    def test_video_task_payload_rejects_failed_or_missing_data(self):
+        with self.assertRaises(RuntimeError):
+            self.video.video_rows_from_payload({"status": 1, "data": {}})
+        with self.assertRaisesRegex(RuntimeError, "hasHotelOfficialPreview"):
+            self.video.video_rows_from_payload(
+                {
+                    "status": 0,
+                    "data": {
+                        "hasHotelOfficial": 1,
+                        "hasRoomVideoOnlineRealRoomNum": 7,
+                        "onlineRealRoomNum": 10,
+                    },
+                }
+            )
 
 
 if __name__ == "__main__":
