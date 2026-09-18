@@ -44,6 +44,7 @@ TASK_LABELS = {
     "ctrip_order_loss": "携程流失订单",
     "ctrip_joined_rights": "携程已报名权益",
     "ctrip_promotion_status": "携程活动开通状态",
+    "ctrip_video_upload_status": "携程视频上传情况",
     "ctrip_user_profile": "携程用户画像",
     "ctrip_psi_score": "携程PSI评分",
     "ctrip_promotion_performance": "携程近30天推广效果",

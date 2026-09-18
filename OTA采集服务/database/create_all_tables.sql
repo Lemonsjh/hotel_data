@@ -255,6 +255,32 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_activity` (
   KEY `idx_ctrip_promotion_activity` (`activity_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Table: ctrip_ota_promotion_activity_performance
+CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_activity_performance` (
+  `hotel_id` varchar(64) NOT NULL,
+  `hotel_name` varchar(255) DEFAULT NULL,
+  `platform_scope` varchar(20) NOT NULL DEFAULT 'ctrip',
+  `period_start_date` date NOT NULL,
+  `period_end_date` date NOT NULL,
+  `snapshot_time` datetime NOT NULL,
+  `promotion_switch` varchar(8) DEFAULT NULL,
+  `total_campaign_quantity` bigint DEFAULT NULL,
+  `total_quantity` bigint DEFAULT NULL,
+  `comp_avg_total_quantity` decimal(18,4) DEFAULT NULL,
+  `total_quantity_yoy_pct` decimal(10,2) DEFAULT NULL,
+  `comp_avg_quantity_yoy_pct` decimal(10,2) DEFAULT NULL,
+  `campaign_id` bigint unsigned NOT NULL,
+  `campaign_name` varchar(255) DEFAULT NULL,
+  `campaign_quantity` bigint DEFAULT NULL,
+  `campaign_quantity_yoy_pct` decimal(10,2) DEFAULT NULL,
+  `campaign_gmv` decimal(18,2) DEFAULT NULL,
+  `campaign_gmv_yoy_pct` decimal(10,2) DEFAULT NULL,
+  `discount_amt` decimal(18,2) DEFAULT NULL,
+  PRIMARY KEY (`hotel_id`,`platform_scope`,`campaign_id`),
+  KEY `idx_ctrip_promotion_activity_performance_snapshot` (`hotel_id`,`snapshot_time`),
+  KEY `idx_ctrip_promotion_activity_performance_period` (`hotel_id`,`period_end_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- Table: ctrip_ota_promotion_performance_30d
 CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_performance_30d` (
   `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -294,7 +320,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_status` (
   `metric_value` decimal(10,2) DEFAULT NULL,
   `metric_unit` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `status` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `status_detail` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `status_detail` text COLLATE utf8mb4_unicode_ci,
   `room_type_count` int unsigned DEFAULT NULL,
   `orders_30d` int unsigned DEFAULT NULL,
   `snapshot_time` datetime NOT NULL,
@@ -303,6 +329,18 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_status` (
   PRIMARY KEY (`hotel_id`,`platform_scope`,`activity_code`),
   KEY `idx_ctrip_promotion_status_snapshot` (`hotel_id`,`snapshot_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Table: ctrip_ota_video_upload_status
+CREATE TABLE IF NOT EXISTS `ctrip_ota_video_upload_status` (
+  `hotel_id` varchar(64) NOT NULL,
+  `video_type` varchar(32) NOT NULL,
+  `uploaded_count` int unsigned NOT NULL DEFAULT '0',
+  `required_count` int unsigned NOT NULL DEFAULT '0',
+  `status` varchar(16) NOT NULL,
+  `snapshot_time` datetime NOT NULL COMMENT '采集时间',
+  PRIMARY KEY (`hotel_id`,`video_type`),
+  KEY `idx_ctrip_video_upload_snapshot` (`hotel_id`,`snapshot_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- Table: ctrip_ota_psi_metric
 CREATE TABLE IF NOT EXISTS `ctrip_ota_psi_metric` (
@@ -1162,7 +1200,9 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_video_upload_status` (
   `uploaded_count` int unsigned NOT NULL DEFAULT '0',
   `required_count` int unsigned NOT NULL DEFAULT '0',
   `status` varchar(16) NOT NULL,
-  PRIMARY KEY (`hotel_id`,`video_type`)
+  `snapshot_time` datetime DEFAULT NULL COMMENT '采集时间',
+  PRIMARY KEY (`hotel_id`,`video_type`),
+  KEY `idx_meituan_video_upload_snapshot` (`hotel_id`,`snapshot_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- Table: meituan_price_task

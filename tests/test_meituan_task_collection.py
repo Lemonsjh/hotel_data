@@ -6,7 +6,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +99,16 @@ class MeituanTaskCollectionTests(unittest.TestCase):
                     },
                 }
             )
+
+    def test_video_save_updates_all_rows_with_one_snapshot_time(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        rows = [("hotel_official_video", 1, 1), ("room_type_video", 7, 10)]
+        with patch.dict(sys.modules, {"pymysql": SimpleNamespace(connect=lambda **_kwargs: connection)}):
+            self.video.save_video_counts("hotel-1", rows)
+        _query, values = cursor.executemany.call_args.args
+        self.assertEqual([value[-1] for value in values][0], [value[-1] for value in values][1])
+        self.assertIn("snapshot_time", cursor.executemany.call_args.args[0])
 
 
 if __name__ == "__main__":

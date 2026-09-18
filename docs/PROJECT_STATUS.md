@@ -42,10 +42,10 @@ MySQL 统一存储
 
 ## 3. 当前任务规模
 
-`OTA采集服务/runner.py` 当前注册 30 个统一调度任务：
+`OTA采集服务/runner.py` 当前注册 31 个统一调度任务：
 
 - 美团：15 个任务。
-- 携程：14 个任务。
+- 携程：15 个任务。
 - PMS：1 个统一 `pms_fetch` 任务。
 
 ### 美团当前统一调度任务
@@ -75,12 +75,13 @@ MySQL 统一存储
 - 订单流失 `ctrip_order_loss`
 - 已加入权益 `ctrip_joined_rights`
 - 促销开通状态 `ctrip_promotion_status`
+- 视频上传情况 `ctrip_video_upload_status`：详情页、房型、列表页视频快照
 - 用户画像 `ctrip_user_profile`
 - PSI 分数 `ctrip_psi_score`
 - 推广效果 `ctrip_promotion_performance`
 - 评价 `ctrip_review`
 - 评价明细 `ctrip_review_detail`
-- 活动 `ctrip_promotion`
+- 活动 `ctrip_promotion`：同时刷新 `ctrip_ota_promotion_activity_performance` 最近 30 天活动效果快照
 - 商品价格 `ctrip_goods_price`
 
 `ctrip_order_detail` 的订单接口采用零基页码，并按响应中的 `total` 判断末页，

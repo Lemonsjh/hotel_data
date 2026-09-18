@@ -20,6 +20,9 @@ from ota_mysql_writer import OUTPUT_DIR, sync_metric_history_table
 TABLE_NAME = "ctrip_ota_promotion_status"
 HOME_URL = "https://ebooking.ctrip.com/home/mainland?microJump=true"
 HOTEL_HIGHLIGHTS_URL = "https://ebooking.ctrip.com/hotelinfo/ebooking/hoteltag?microJump=true"
+QUICK_CHECK_INN_URL = "https://ebooking.ctrip.com/ebkfinance/settlement/settlementQuickCheckInn/sendEmail"
+SHORT_TAGS_URL = "https://ebooking.ctrip.com/restapi/soa2/23942/queryShortTags"
+HOTEL_TAGS_URL = "https://ebooking.ctrip.com/restapi/soa2/23942/getHotelTags"
 APPLY_SELECTOR = 'button[he-click="connectEquity_submit"]'
 PROMOTION_MENU_POINT = (110, 235)
 PROMOTION_MENU_TEXT = "促销推广"
@@ -29,7 +32,6 @@ PREFERRED_CLUB_MENU_POINT = (110, 458)
 PREFERRED_CLUB_MENU_TEXT = "优享会"
 BUSINESS_TRAVEL_MENU_POINT = (110, 503)
 BUSINESS_TRAVEL_MENU_TEXT = "商旅专享价"
-VIDEO_TAB_POINT = (340, 167)
 TRAVEL_PHOTO_TAB_TEXT = "\u65c5\u62cd"
 EMPTY_DATA_TEXT = "\u6682\u65e0\u6570\u636e"
 MY_UPLOADS_TEXT = "\u6211\u7684\u4e0a\u4f20"
@@ -140,6 +142,43 @@ def hourly_room_status() -> tuple[int, int]:
     return int(bool(room_types)), len(room_types)
 
 
+def short_tag_names_from_payload(payload: Any) -> str:
+    if not isinstance(payload, dict) or payload.get("resStatus", {}).get("rcode") != 200:
+        raise RuntimeError("Ctrip short-tags response failed")
+    tags = payload.get("shortTags")
+    if not isinstance(tags, list):
+        raise RuntimeError("Ctrip short-tags response is missing shortTags")
+    names = [
+        str(tag.get("tagName")).strip()
+        for tag in tags
+        if isinstance(tag, dict) and tag.get("canDelete") is False and str(tag.get("tagName") or "").strip()
+    ]
+    return "，".join(names)
+
+
+def listing_short_tags() -> str:
+    client = CtripGoodsClient(COOKIE)
+    response = client.session.get(SHORT_TAGS_URL, timeout=30)
+    response.raise_for_status()
+    return short_tag_names_from_payload(response.json())
+
+
+def recommendation_words_from_payload(payload: Any) -> str:
+    if not isinstance(payload, dict) or payload.get("resStatus", {}).get("rcode") != 200:
+        raise RuntimeError("Ctrip hotel-tags response failed")
+    comment_clause = payload.get("ugcCommentClause")
+    info = comment_clause.get("info") if isinstance(comment_clause, dict) else None
+    clause = info.get("clause") if isinstance(info, dict) else None
+    return str(clause or "").strip()
+
+
+def listing_recommendation_words() -> str:
+    client = CtripGoodsClient(COOKIE)
+    response = client.session.get(HOTEL_TAGS_URL, timeout=30)
+    response.raise_for_status()
+    return recommendation_words_from_payload(response.json())
+
+
 def information_completeness_score(page: Any) -> float:
     page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
     ensure_logged_in(page)
@@ -173,32 +212,6 @@ def information_score_from_payload(payload: Any) -> float:
     return value
 
 
-def homepage_video_status(page: Any) -> int:
-    page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(4_000)
-    dismiss_overlays(page)
-    information_submenu(page, "图片视频").click(timeout=10_000)
-    page.wait_for_timeout(2_500)
-    with page.expect_response(
-        lambda response: "/ebkovsproduct/api/video/queryDetailAreaVideo" in response.url,
-        timeout=20_000,
-    ) as captured:
-        page.mouse.click(*VIDEO_TAB_POINT)
-    return detail_video_status(captured.value.json())
-
-
-def detail_video_status(payload: Any) -> int:
-    if not isinstance(payload, dict) or payload.get("code") != 200 or not isinstance(payload.get("data"), dict):
-        raise RuntimeError("Ctrip detail-video response is invalid")
-    data = payload["data"]
-    if data.get("mainVideo"):
-        return 1
-    if (data.get("mainVideo") is None and not data.get("backVideoList")
-            and data.get("videoQuantity") in (None, 0, "0")):
-        return 0
-    raise RuntimeError("Ctrip detail-video response has no recognizable main-video status")
-
-
 def travel_photo_status(page: Any) -> int:
     page.goto(HOTEL_HIGHLIGHTS_URL, wait_until="domcontentloaded", timeout=60_000)
     page.wait_for_timeout(4_000)
@@ -217,6 +230,24 @@ def travel_photo_status(page: Any) -> int:
             return 1
         page.wait_for_timeout(500)
     raise RuntimeError("Ctrip travel-photo tab did not return a recognized status")
+
+
+def quick_check_inn_status(page: Any) -> int:
+    page.goto(QUICK_CHECK_INN_URL, wait_until="domcontentloaded", timeout=60_000)
+    ensure_logged_in(page)
+    page.wait_for_timeout(2_000)
+    body = page.locator("body").inner_text(timeout=3_000)
+    markers = ("请选择押金系数", "我已阅读并同意")
+    submit_or_application = ("立即提交加盟", "立即在线加盟")
+    if all(marker in body for marker in markers) and any(marker in body for marker in submit_or_application):
+        return 0
+    if (
+        "settlementQuickCheckInn" in page.url
+        and "闪住" in body
+        and not any(marker in body for marker in ("页面不存在", "无权限", "系统异常"))
+    ):
+        return 1
+    raise RuntimeError("Ctrip quick-check-inn page did not return a recognized status")
 
 
 def collect_one(name: str, func: Any) -> tuple[Any | None, str | None]:
@@ -246,9 +277,13 @@ def collect_statuses() -> dict[str, tuple[Any | None, str | None]]:
                 "preferred_club": collect_one("preferred_club", lambda: activity_enabled(page, PREFERRED_CLUB_MENU_POINT, PREFERRED_CLUB_PAGE_MARKERS, 'button[he-click="join_tplus"]', "立即报名")),
                 "business_travel": collect_one("business_travel", lambda: activity_enabled(page, BUSINESS_TRAVEL_MENU_POINT, BUSINESS_TRAVEL_PAGE_MARKERS, 'button[he-click="businesstravel_join"]', "立即加入")),
                 "hourly_room": collect_one("hourly_room", hourly_room_status),
+                "listing_short_tags": collect_one("listing_short_tags", listing_short_tags),
+                "listing_recommendation_words": collect_one(
+                    "listing_recommendation_words", listing_recommendation_words
+                ),
                 "information": collect_one("information_completeness", lambda: information_completeness_score(page)),
-                "homepage_video": collect_one("homepage_video", lambda: homepage_video_status(page)),
                 "travel_photo": collect_one("travel_photo", lambda: travel_photo_status(page)),
+                "quick_check_inn": collect_one("quick_check_inn", lambda: quick_check_inn_status(page)),
             }
         finally:
             browser.close()
@@ -275,13 +310,17 @@ def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[A
     hourly_enabled, hourly_room_count = (hourly_value or (None, None)) if not hourly_error else (None, None)
     information_score, information_error = results["information"]
     information_enabled = None if information_error else int(float(information_score) >= 100)
+    short_tags, short_tags_error = results["listing_short_tags"]
+    recommendation_words, recommendation_words_error = results["listing_recommendation_words"]
     candidates = [
         status_row(hotel_id, captured_at, "points_alliance", "\u79ef\u5206\u8054\u76df", results["points_alliance"], "JOINED", "NOT_JOINED"),
         status_row(hotel_id, captured_at, "preferred_club", "\u4f18\u4eab\u4f1a", results["preferred_club"], "JOINED", "NOT_JOINED", "UNKNOWN" if results["preferred_club"][0] else None),
         status_row(hotel_id, captured_at, "business_travel_price", "\u5546\u65c5\u4e13\u4eab\u4ef7", results["business_travel"], "JOINED", "NOT_JOINED"),
         status_row(hotel_id, captured_at, "hourly_room", "\u949f\u70b9\u623f", (hourly_enabled, hourly_error), "ENABLED", "DISABLED", room_type_count=hourly_room_count),
+        status_row(hotel_id, captured_at, "listing_short_tags", "\u5217\u8868\u9875\u77ed\u6807\u7b7e", (short_tags, short_tags_error), "CONFIGURED", "NOT_CONFIGURED", status_detail=short_tags),
+        status_row(hotel_id, captured_at, "listing_recommendation_words", "\u5217\u8868\u9875\u63a8\u8350\u8bcd", (recommendation_words, recommendation_words_error), "CONFIGURED", "NOT_CONFIGURED", status_detail=recommendation_words),
         status_row(hotel_id, captured_at, "travel_photo", TRAVEL_PHOTO_TAB_TEXT, results["travel_photo"], "UPLOADED", "NOT_UPLOADED"),
-        status_row(hotel_id, captured_at, "homepage_video", "\u9996\u9875\u89c6\u9891", results["homepage_video"], "UPLOADED", "NOT_UPLOADED"),
+        status_row(hotel_id, captured_at, "quick_check_inn", "\u95ea\u4f4f", results["quick_check_inn"], "joined", "not_joined"),
         status_row(hotel_id, captured_at, "information_completeness", "\u4fe1\u606f\u5b8c\u6574\u5ea6", (information_enabled, information_error), "COMPLETE", "INCOMPLETE", metric_value=information_score, metric_unit="%"),
     ]
     return [row for row in candidates if row is not None]

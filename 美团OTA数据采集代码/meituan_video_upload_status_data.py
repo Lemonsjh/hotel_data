@@ -186,6 +186,7 @@ def fetch_video_counts() -> list[tuple[str, int, int]]:
 def save_video_counts(hotel_id: str, rows: list[tuple[str, int, int]]) -> None:
     import pymysql
 
+    snapshot_time = datetime.now()
     connection = pymysql.connect(**DB_CONFIG)
     try:
         with connection.cursor() as cursor:
@@ -196,12 +197,13 @@ def save_video_counts(hotel_id: str, rows: list[tuple[str, int, int]]) -> None:
             )
             cursor.executemany(
                 """INSERT INTO meituan_ota_video_upload_status
-                   (hotel_id, video_type, uploaded_count, required_count, status)
-                   VALUES (%s, %s, %s, %s, %s)
+                   (hotel_id, video_type, uploaded_count, required_count, status, snapshot_time)
+                   VALUES (%s, %s, %s, %s, %s, %s)
                    ON DUPLICATE KEY UPDATE uploaded_count=VALUES(uploaded_count),
-                   required_count=VALUES(required_count), status=VALUES(status)""",
+                   required_count=VALUES(required_count), status=VALUES(status),
+                   snapshot_time=VALUES(snapshot_time)""",
                 [
-                    (hotel_id, code, uploaded, required, "COMPLETE" if uploaded >= required else "INCOMPLETE")
+                    (hotel_id, code, uploaded, required, "COMPLETE" if uploaded >= required else "INCOMPLETE", snapshot_time)
                     for code, uploaded, required in rows
                 ],
             )

@@ -13,6 +13,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from ctrip_config import COOKIE, EXTRA_HEADERS, PLATFORM_SCOPE, USER_AGENT
+from ctrip_promotion_activity_performance_data import collect_rows as collect_performance_rows
+from ctrip_promotion_activity_performance_data import sync_rows as sync_performance_rows
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import OUTPUT_DIR, sync_table
@@ -365,8 +367,12 @@ def main() -> None:
     payload = CtripPromotionClient(args.cookie).query_promotion_batch(args.promotion_url)
     summary_rows, detail_rows = normalize_rows(payload, captured_at)
     summary_path, detail_path = save_outputs(summary_rows, detail_rows, sync_db=args.sync_db)
+    performance_rows = collect_performance_rows(HOTEL_ID, captured_at, args.cookie)
+    if args.sync_db:
+        sync_performance_rows(performance_rows)
     print(f"OK \u643a\u7a0b\u6d3b\u52a8\u6570={len(summary_rows)} \u8f93\u51fa={summary_path}")
     print(f"OK \u643a\u7a0b\u6d3b\u52a8\u4ea7\u54c1\u660e\u7ec6\u6570={len(detail_rows)} \u8f93\u51fa={detail_path}")
+    print(f"OK \u643a\u7a0b\u4fc3\u9500\u6548\u679c\u6570={len(performance_rows)}")
 
 
 if __name__ == "__main__":

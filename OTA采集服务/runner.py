@@ -50,6 +50,7 @@ TASKS = {
     "ctrip_order_loss": ("ctrip", "ctrip_order_loss_data.py", []),
     "ctrip_joined_rights": ("ctrip", "ctrip_joined_rights_data.py", []),
     "ctrip_promotion_status": ("ctrip", "ctrip_promotion_status_data.py", []),
+    "ctrip_video_upload_status": ("ctrip", "ctrip_video_upload_status_data.py", []),
     "ctrip_user_profile": ("ctrip", "ctrip_user_profile_data.py", []),
     "ctrip_psi_score": ("ctrip", "ctrip_psi_score_data.py", []),
     "ctrip_promotion_performance": ("ctrip", "ctrip_promotion_performance_data.py", []),

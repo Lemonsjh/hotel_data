@@ -110,6 +110,7 @@
     "ctrip_order_loss": false,
     "ctrip_joined_rights": false,
     "ctrip_promotion_status": false,
+    "ctrip_video_upload_status": false,
     "ctrip_user_profile": false,
     "ctrip_psi_score": false,
     "ctrip_promotion_performance": false,
