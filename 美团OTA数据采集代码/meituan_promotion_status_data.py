@@ -302,6 +302,12 @@ def fetch_auto_order_status() -> str:
     raise RuntimeError("Auto order page did not return a recognized status")
 
 
+def public_welfare_page_status(states: list[str], body: str) -> str | None:
+    if PUBLIC_WELFARE_ACTIVE in states or "权益生效中" in body:
+        return "OPEN"
+    return "CLOSED" if body.strip() else None
+
+
 def fetch_public_welfare_status() -> str:
     local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     profile = local_app_data / "HotelAgent" / "browser_profiles" / "meituan"
@@ -322,10 +328,8 @@ def fetch_public_welfare_status() -> str:
                     try:
                         states = frame.locator("span.benefits-color-desc").all_text_contents()
                         body = frame.locator("body").inner_text(timeout=1_000)
-                        if PUBLIC_WELFARE_ACTIVE in states or "权益生效中" in body:
-                            return "OPEN"
-                        if "\u672a\u751f\u6548" in body or "\u5df2\u5931\u6548" in body:
-                            return "CLOSED"
+                        if status := public_welfare_page_status(states, body):
+                            return status
                     except Exception:
                         continue
                 page.wait_for_timeout(500)

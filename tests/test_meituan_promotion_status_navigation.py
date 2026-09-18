@@ -115,6 +115,11 @@ class PromotionStatusNavigationTests(unittest.TestCase):
 
         self.assertEqual(page.url, "https://me.meituan.com/ebooking/merchant/ebIframe")
 
+    def test_public_welfare_defaults_to_closed_after_page_content_loads(self):
+        self.assertEqual(self.module.public_welfare_page_status([], "公益流量服务说明"), "CLOSED")
+        self.assertEqual(self.module.public_welfare_page_status(["生效中"], "公益流量"), "OPEN")
+        self.assertEqual(self.module.public_welfare_page_status([], ""), None)
+
     def test_unrecognized_public_welfare_only_inserts_when_absent(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
