@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,7 @@ HOTEL_HIGHLIGHTS_URL = "https://ebooking.ctrip.com/hotelinfo/ebooking/hoteltag?m
 QUICK_CHECK_INN_URL = "https://ebooking.ctrip.com/ebkfinance/settlement/settlementQuickCheckInn/sendEmail"
 SHORT_TAGS_URL = "https://ebooking.ctrip.com/restapi/soa2/23942/queryShortTags"
 HOTEL_TAGS_URL = "https://ebooking.ctrip.com/restapi/soa2/23942/getHotelTags"
+POINTS_DASHBOARD_PATH = "/restapi/soa2/24267/QueryCoinPlusDashboardData"
 APPLY_SELECTOR = 'button[he-click="connectEquity_submit"]'
 PROMOTION_MENU_POINT = (110, 235)
 PROMOTION_MENU_TEXT = "促销推广"
@@ -94,6 +95,13 @@ def click_menu(page: Any, text: str, point: tuple[int, int]) -> None:
     page.mouse.click(*point)
 
 
+def has_visible_action_button(page: Any, selector: str, action_text: str) -> bool:
+    return any(
+        button.is_visible() and button.inner_text(timeout=1_000).strip() == action_text
+        for button in page.locator(selector).all()
+    )
+
+
 def open_promotion_page(page: Any, menu_point: tuple[int, int], menu_text: str) -> None:
     page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
     ensure_logged_in(page)
@@ -114,14 +122,79 @@ def activity_enabled(page: Any, menu_point: tuple[int, int], markers: tuple[str,
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         ensure_logged_in(page)
-        apply_buttons = page.locator(selector)
-        if any(button.is_visible() for button in apply_buttons.all()):
+        if has_visible_action_button(page, selector, apply_text):
             return 0
         body = page.locator("body").inner_text(timeout=1_000)
         if any(marker in body for marker in markers):
             return 1
         page.wait_for_timeout(500)
     raise RuntimeError(f"Ctrip promotion page did not return a recognized status: {markers[0]}")
+
+
+def rolling_30_day_range(today: date | None = None) -> tuple[date, date]:
+    end_date = (today or date.today()) - timedelta(days=1)
+    return end_date - timedelta(days=29), end_date
+
+
+def points_dashboard_orders_from_payload(payload: Any) -> int:
+    if not isinstance(payload, dict) or (payload.get("resStatus") or {}).get("rcode") != 200:
+        raise RuntimeError("Ctrip points-alliance dashboard response failed")
+    orders = payload.get("orders")
+    if isinstance(orders, bool):
+        raise RuntimeError("Ctrip points-alliance dashboard response has invalid orders")
+    try:
+        value = int(orders)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Ctrip points-alliance dashboard response is missing orders") from exc
+    if value < 0:
+        raise RuntimeError("Ctrip points-alliance dashboard response has invalid orders")
+    return value
+
+
+def points_dashboard_orders(page: Any, start_date: date, end_date: date) -> int:
+    result = page.evaluate(
+        """async ({path, startDate, endDate}) => {
+            const response = await fetch(path, {
+                method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json;charset=UTF-8'},
+                body: JSON.stringify({currency: 'CNY', startDate, endDate}),
+            });
+            return {status: response.status, text: await response.text()};
+        }""",
+        {"path": POINTS_DASHBOARD_PATH, "startDate": start_date.isoformat(), "endDate": end_date.isoformat()},
+    )
+    if not isinstance(result, dict) or result.get("status") != 200:
+        raise RuntimeError("Ctrip points-alliance dashboard API failed")
+    try:
+        payload = json.loads(str(result.get("text") or ""))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Ctrip points-alliance dashboard API did not return JSON") from exc
+    return points_dashboard_orders_from_payload(payload)
+
+
+def points_alliance_status(page: Any) -> dict[str, int | None]:
+    open_promotion_page(page, POINTS_ALLIANCE_MENU_POINT, POINTS_ALLIANCE_MENU_TEXT)
+    try:
+        start_date, end_date = rolling_30_day_range()
+        return {"enabled": 1, "orders_30d": points_dashboard_orders(page, start_date, end_date)}
+    except Exception as exc:
+        if has_visible_action_button(page, APPLY_SELECTOR, "立即报名"):
+            return {"enabled": 0, "orders_30d": None}
+        raise RuntimeError(f"Ctrip points-alliance dashboard is unavailable: {exc}") from exc
+
+
+def business_travel_status(page: Any) -> int:
+    open_promotion_page(page, BUSINESS_TRAVEL_MENU_POINT, BUSINESS_TRAVEL_MENU_TEXT)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        ensure_logged_in(page)
+        if has_visible_action_button(page, 'button[he-click="businesstravel_join"]', "立即加入"):
+            return 0
+        body = page.locator("body").inner_text(timeout=1_000)
+        if all(marker in body for marker in BUSINESS_TRAVEL_PAGE_MARKERS):
+            return 1
+        page.wait_for_timeout(500)
+    raise RuntimeError("Ctrip business-travel page did not return a recognized status")
 
 
 def enabled_flag(value: Any) -> bool:
@@ -273,9 +346,9 @@ def collect_statuses() -> dict[str, tuple[Any | None, str | None]]:
             page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
             ensure_logged_in(page)
             return {
-                "points_alliance": collect_one("points_alliance", lambda: activity_enabled(page, POINTS_ALLIANCE_MENU_POINT, POINTS_PAGE_MARKERS, APPLY_SELECTOR, "立即报名")),
+                "points_alliance": collect_one("points_alliance", lambda: points_alliance_status(page)),
                 "preferred_club": collect_one("preferred_club", lambda: activity_enabled(page, PREFERRED_CLUB_MENU_POINT, PREFERRED_CLUB_PAGE_MARKERS, 'button[he-click="join_tplus"]', "立即报名")),
-                "business_travel": collect_one("business_travel", lambda: activity_enabled(page, BUSINESS_TRAVEL_MENU_POINT, BUSINESS_TRAVEL_PAGE_MARKERS, 'button[he-click="businesstravel_join"]', "立即加入")),
+                "business_travel": collect_one("business_travel", lambda: business_travel_status(page)),
                 "hourly_room": collect_one("hourly_room", hourly_room_status),
                 "listing_short_tags": collect_one("listing_short_tags", listing_short_tags),
                 "listing_recommendation_words": collect_one(
@@ -292,7 +365,8 @@ def collect_statuses() -> dict[str, tuple[Any | None, str | None]]:
 def status_row(
     hotel_id: str, captured_at: datetime, code: str, name: str, result: tuple[Any | None, str | None],
     active_status: str, inactive_status: str, status_detail: str | None = None,
-    room_type_count: int | None = None, metric_value: float | None = None, metric_unit: str | None = None,
+    room_type_count: int | None = None, orders_30d: int | None = None,
+    metric_value: float | None = None, metric_unit: str | None = None,
 ) -> list[Any] | None:
     value, error = result
     if error:
@@ -300,12 +374,16 @@ def status_row(
         return None
     return [
         hotel_id, DEFAULT_HOTEL_NAME, "ctrip", code, name, int(bool(value)),
-        active_status if value else inactive_status, status_detail, room_type_count, None,
+        active_status if value else inactive_status, status_detail, room_type_count, orders_30d,
         captured_at, metric_value, metric_unit,
     ]
 
 
 def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[Any | None, str | None]]) -> list[list[Any]]:
+    points_value, points_error = results["points_alliance"]
+    points_data = points_value if isinstance(points_value, dict) else {"enabled": points_value, "orders_30d": None}
+    points_enabled = points_data.get("enabled")
+    points_orders = points_data.get("orders_30d")
     hourly_value, hourly_error = results["hourly_room"]
     hourly_enabled, hourly_room_count = (hourly_value or (None, None)) if not hourly_error else (None, None)
     information_score, information_error = results["information"]
@@ -313,7 +391,7 @@ def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[A
     short_tags, short_tags_error = results["listing_short_tags"]
     recommendation_words, recommendation_words_error = results["listing_recommendation_words"]
     candidates = [
-        status_row(hotel_id, captured_at, "points_alliance", "\u79ef\u5206\u8054\u76df", results["points_alliance"], "JOINED", "NOT_JOINED"),
+        status_row(hotel_id, captured_at, "points_alliance", "\u79ef\u5206\u8054\u76df", (points_enabled, points_error), "JOINED", "NOT_JOINED", orders_30d=points_orders),
         status_row(hotel_id, captured_at, "preferred_club", "\u4f18\u4eab\u4f1a", results["preferred_club"], "JOINED", "NOT_JOINED", "UNKNOWN" if results["preferred_club"][0] else None),
         status_row(hotel_id, captured_at, "business_travel_price", "\u5546\u65c5\u4e13\u4eab\u4ef7", results["business_travel"], "JOINED", "NOT_JOINED"),
         status_row(hotel_id, captured_at, "hourly_room", "\u949f\u70b9\u623f", (hourly_enabled, hourly_error), "ENABLED", "DISABLED", room_type_count=hourly_room_count),

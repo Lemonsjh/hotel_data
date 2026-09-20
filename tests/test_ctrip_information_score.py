@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -41,6 +41,45 @@ class CtripInformationScoreTests(unittest.TestCase):
                         {"success": True, "scoreInfo": {"currentScore": "not-a-score"}}):
                 with self.subTest(payload=payload), self.assertRaises(RuntimeError):
                     self.module.information_score_from_payload(payload)
+
+    def test_reads_points_alliance_orders_from_dashboard_payload(self):
+        payload = {"orders": 8, "resStatus": {"rcode": 200, "rmsg": ""}}
+        self.assertEqual(self.module.points_dashboard_orders_from_payload(payload), 8)
+        for invalid in ({"orders": -1, "resStatus": {"rcode": 200}}, {"orders": 8, "resStatus": {"rcode": 500}}):
+            with self.subTest(payload=invalid), self.assertRaises(RuntimeError):
+                self.module.points_dashboard_orders_from_payload(invalid)
+
+    def test_points_alliance_uses_previous_completed_30_days(self):
+        self.assertEqual(
+            self.module.rolling_30_day_range(date(2026, 9, 20)),
+            (date(2026, 8, 21), date(2026, 9, 19)),
+        )
+
+    def test_only_explicit_signup_button_is_not_joined_evidence(self):
+        button = MagicMock()
+        button.is_visible.return_value = True
+        button.inner_text.return_value = "已报名"
+        page = MagicMock()
+        page.locator.return_value.all.return_value = [button]
+        self.assertFalse(self.module.has_visible_action_button(page, self.module.APPLY_SELECTOR, "立即报名"))
+        button.inner_text.return_value = "立即报名"
+        self.assertTrue(self.module.has_visible_action_button(page, self.module.APPLY_SELECTOR, "立即报名"))
+
+    def test_business_travel_status_requires_the_full_page_marker_set(self):
+        page = MagicMock()
+        page.locator.return_value.all.return_value = []
+        page.locator.return_value.inner_text.return_value = "商旅专享说明 企业间对公结算"
+        with patch.object(self.module, "open_promotion_page"), patch.object(self.module, "ensure_logged_in"):
+            self.assertEqual(self.module.business_travel_status(page), 1)
+
+    def test_business_travel_signup_button_takes_precedence(self):
+        button = MagicMock()
+        button.is_visible.return_value = True
+        button.inner_text.return_value = "立即加入"
+        page = MagicMock()
+        page.locator.return_value.all.return_value = [button]
+        with patch.object(self.module, "open_promotion_page"), patch.object(self.module, "ensure_logged_in"):
+            self.assertEqual(self.module.business_travel_status(page), 0)
 
     def test_filters_non_deletable_listing_short_tags(self):
         payload = {
@@ -109,6 +148,17 @@ class CtripInformationScoreTests(unittest.TestCase):
         self.assertEqual(recommendation[7], "服务热情，设施齐全")
         quick_check_inn = next(row for row in rows if row[3] == "quick_check_inn")
         self.assertEqual(quick_check_inn[6], "not_joined")
+
+    def test_points_alliance_row_saves_dashboard_orders(self):
+        results = {key: (0, None) for key in (
+            "preferred_club", "business_travel", "travel_photo", "listing_short_tags", "listing_recommendation_words", "quick_check_inn",
+        )}
+        results.update(
+            points_alliance=({"enabled": 1, "orders_30d": 8}, None),
+            hourly_room=((0, 0), None), information=(96, None),
+        )
+        row = next(row for row in self.module.status_rows("hotel-1", datetime(2026, 9, 20), results) if row[3] == "points_alliance")
+        self.assertEqual((row[5], row[6], row[9]), (1, "JOINED", 8))
 
 if __name__ == "__main__":
     unittest.main()
