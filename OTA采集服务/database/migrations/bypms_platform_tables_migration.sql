@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS `bypms_channel_unit_mapping_snapshot` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `hotel_id` varchar(64) NOT NULL,
+  `hotel_name` varchar(255) NOT NULL DEFAULT '',
+  `source_platform` varchar(32) NOT NULL DEFAULT '宝寓PMS',
+  `snapshot_time` datetime(6) NOT NULL,
+  `snapshot_hour` datetime NOT NULL,
+  `channel` varchar(32) NOT NULL,
+  `channel_name` varchar(64) NOT NULL DEFAULT '',
+  `channel_unit_id` varchar(100) NOT NULL,
+  `channel_unit_name` varchar(500) NOT NULL DEFAULT '',
+  `channel_unit_state` varchar(16) NOT NULL DEFAULT '',
+  `relation_type` varchar(16) NOT NULL DEFAULT '',
+  `relation_id` varchar(64) NOT NULL DEFAULT '',
+  `bypms_room_type_name` varchar(255) NOT NULL DEFAULT '',
+  `is_base_relation` tinyint(1) NOT NULL DEFAULT 0,
+  `relation_count` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_bypms_channel_mapping_snapshot` (`hotel_id`,`snapshot_hour`,`channel`,`channel_unit_id`,`relation_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='宝寓PMS维护的OTA商品与宝寓房型关系快照';

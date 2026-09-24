@@ -58,6 +58,7 @@ def run_streamed(
     env: dict[str, str],
     timeout: int,
     log_path: Path,
+    append: bool = False,
     transform: Callable[[str], str],
     should_cancel: Callable[[], bool] | None = None,
 ) -> ProcessResult:
@@ -90,7 +91,7 @@ def run_streamed(
     tail: deque[str] = deque(maxlen=500)
     stream_closed = False
 
-    with log_path.open("w", encoding="utf-8") as log:
+    with log_path.open("a" if append else "w", encoding="utf-8") as log:
         while not stream_closed or process.poll() is None:
             if process.poll() is None and should_cancel and should_cancel():
                 stop_process_tree(process)

@@ -40,6 +40,7 @@
   },
   "pms": {
     "enabled": true,
+    "provider": "byh",
     "hotel_name": "",
     "username": "",
     "password": "",
@@ -53,6 +54,21 @@
     "navigation_timeout_ms": 60000,
     "action_timeout_ms": 15000,
     "api_timeout_seconds": 30
+  },
+  "bypms": {
+    "enabled": false,
+    "hotel_name": "",
+    "cookie": "",
+    "code_dir": "宝寓PMS数据采集代码",
+    "state_url": "https://www.bypms.cn/console/state/get",
+    "room_master_url": "",
+    "channel_mapping_url": "https://pms-api.bypms.cn/channel/api/v1/channel-unit/list",
+    "daily_report_url": "https://pms-api.bypms.cn/report/api/v1/daily-report/list",
+    "monthly_report_url": "https://pms-api.bypms.cn/report/api/v1/normal-report/list",
+    "contract_url": "https://pms-api.bypms.cn/core/api/v1/contract/get",
+    "classification_url": "https://www.bypms.cn/console/report/get",
+    "payment_url": "https://www.bypms.cn/console/finance/payment/get",
+    "timeout_seconds": 120
   },
   "mysql": {
     "host": "127.0.0.1",

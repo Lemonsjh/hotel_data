@@ -50,6 +50,7 @@ BAD_WORDS = (
     "\u9152\u5e97PMS",
     "\u9152\u5e97\u4fe1\u606f",
     "\u9152\u5e97\u4eae\u70b9",
+    "\u9152\u5e97\u70b9\u8bc4\u5206",
     "\u5957\u9910\u6309\u94ae",
     "HEUserHotelTag",
 )

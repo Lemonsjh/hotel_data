@@ -55,6 +55,11 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
                 except ValueError:
                     value = old
             set_path(settings, key, value)
+    provider = request.form.get("pms_provider")
+    if provider in {"byh", "bypms"}:
+        settings.setdefault("pms", {})["provider"] = provider
+        settings["pms"]["enabled"] = provider == "byh"
+        settings.setdefault("bypms", {})["enabled"] = provider == "bypms"
     settings.setdefault("tasks", {})
     for name in runner.TASKS:
         settings["tasks"][name] = request.form.get(f"task.{name}") == "on"
@@ -126,7 +131,7 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         (advanced if is_advanced else regular).append(config_control(settings, key, label, secret))
 
     section_key = section["key"]
-    badge = {"system": "CORE", "meituan": "MEI", "ctrip": "CTRIP", "pms": "PMS"}[section_key]
+    badge = {"system": "CORE", "meituan": "MEI", "ctrip": "CTRIP", "pms": "PMS", "bypms": "BYPMS"}[section_key]
     advanced_html = ""
     if advanced:
         advanced_html = (
@@ -155,7 +160,15 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<button type='submit' class='secondary compact' formaction='/detect-hotel/ctrip'>识别酒店</button>"
             "</div>"
         )
-    if section_key in {"meituan", "ctrip"}:
+    elif section_key == "bypms":
+        actions = (
+            "<div class='config-actions'>"
+            "<button type='submit' class='compact' formaction='/platform-login/bypms'>打开Edge登录</button>"
+            "<button type='submit' class='secondary compact' name='login_mode' value='switch' formaction='/platform-login/bypms'>切换账号</button>"
+            "<button type='submit' class='secondary compact' formaction='/platform-login/bypms/cancel'>关闭登录助手</button>"
+            "</div>"
+        )
+    if section_key in {"meituan", "ctrip", "bypms"}:
         login = platform_login.read_status(section_key)
         state = str(login.get("status") or "never")
         state_class = {"success": "good", "failed": "danger", "waiting": "warn", "syncing": "warn", "starting": "warn"}.get(state, "idle")
@@ -167,21 +180,44 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "</div>"
         )
 
+    heading_actions = actions
+    platform_actions = ""
+    if section_key in {"pms", "bypms"}:
+        heading_actions = pms_source_selector(settings)
+        if actions:
+            platform_actions = f"<div class='pms-platform-actions'>{actions}</div>"
+
     return f"""
-    <section class="panel config-card config-{esc(section_key)}">
+    <section class="panel config-card config-{esc(section_key)}" data-pms-card="{esc(section_key)}">
       <div class="config-heading">
         <div>
           <div class="config-kicker">{badge}</div>
           <h2>{esc(section['title'])}</h2>
         </div>
-        {actions}
+        {heading_actions}
       </div>
       <p class="config-hint">{esc(section['hint'])}</p>
+      {platform_actions}
       {login_html}
       <div class="config-grid">{''.join(regular)}</div>
       {advanced_html}
     </section>
     """
+
+
+def active_pms_provider(settings: dict[str, Any]) -> str:
+    return runner.active_pms_provider(settings)
+
+
+def pms_source_selector(settings: dict[str, Any]) -> str:
+    selected = active_pms_provider(settings)
+    return (
+        "<label class='pms-provider-select'><span>当前 PMS 平台</span>"
+        "<select name='pms_provider' aria-label='PMS 平台选择'>"
+        f"<option value='byh'{(' selected' if selected == 'byh' else '')}>别样红 PMS</option>"
+        f"<option value='bypms'{(' selected' if selected == 'bypms' else '')}>宝寓 PMS</option>"
+        "</select><small>切换后保留另一平台配置</small></label>"
+    )
 
 
 @app.get("/config")
@@ -202,17 +238,22 @@ def config_page() -> str:
             f"<span><strong>{esc(task_label(name))}</strong><small>{esc(name)}</small></span></label>"
         )
     sections = {section["key"]: config_section(settings, section) for section in CONFIG_SECTIONS}
-    section_groups = (
-        ("基础配置", ("system", "pms")),
-        ("OTA 平台", ("meituan", "ctrip")),
+    base_group = (
+        "<section class='config-group'><div class='config-group-heading'>基础配置</div>"
+        "<div class='config-layout'>"
+        f"{sections['system']}"
+        "<div class='pms-config-stack'>"
+        f"{sections['pms']}{sections['bypms']}"
+        "</div></div></section>"
     )
-    grouped_sections = "".join(
+    ota_group = "".join(
         "<section class='config-group'>"
         f"<div class='config-group-heading'>{title}</div>"
         f"<div class='config-layout'>{''.join(sections[key] for key in keys)}</div>"
         "</section>"
-        for title, keys in section_groups
+        for title, keys in (("OTA 平台", ("meituan", "ctrip")),)
     )
+    grouped_sections = base_group + ota_group
     body = f"""
 <form method="post" action="/config" class="config-form">
   {message_html}
@@ -253,6 +294,18 @@ async function refreshLoginStates() {{
   }}
 }}
 setInterval(refreshLoginStates, 2000);
+
+function selectPmsProvider(provider) {{
+  for (const select of document.querySelectorAll('select[name="pms_provider"]')) select.value = provider;
+  for (const card of document.querySelectorAll('[data-pms-card]')) {{
+    if (!['pms', 'bypms'].includes(card.dataset.pmsCard)) continue;
+    card.hidden = card.dataset.pmsCard !== (provider === 'byh' ? 'pms' : 'bypms');
+  }}
+}}
+for (const select of document.querySelectorAll('select[name="pms_provider"]')) {{
+  select.addEventListener('change', () => selectPmsProvider(select.value));
+}}
+selectPmsProvider(document.querySelector('select[name="pms_provider"]')?.value || 'byh');
 </script>"""
     return page("\u914d\u7f6e\u4e2d\u5fc3", body, "config")
 

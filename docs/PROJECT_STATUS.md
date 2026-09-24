@@ -46,7 +46,7 @@ MySQL 统一存储
 
 - 美团：15 个任务。
 - 携程：15 个任务。
-- PMS：1 个统一 `pms_fetch` 任务。
+- PMS：统一 `pms_fetch` 任务；别样红运行完整报表采集，宝寓按顺序运行当日房态和渠道房型关系采集。
 
 ### 美团当前统一调度任务
 
@@ -119,6 +119,22 @@ PMS 采集已经具备：
 - 报表间随机 2–5 秒等待。
 - 连续 3 个任务失败后的网络探测与全量任务熔断。
 - 手工 `--reports` 调试/补采入口。
+
+宝寓 PMS 以配置中的 `pms.provider=bypms` 启用；同一酒店实例只允许选择一个当前 PMS。配置页默认别样红，切换宝寓后只显示宝寓 Cookie 与接口配置。两种 PMS 共用“PMS 数据采集”任务开关和入口：别样红执行完整报表采集，宝寓依次采集当日房态、渠道房型关系、当月退房订单的 RS01 收房费流水、最近 30 个已结算营业日的 JY01 汇总数据、仅昨日和去年同期的 JL01 房型经营明细，以及最近 30 天的 JL11 房型分类汇总。宝寓 RS01 优先通过已保存的 `channel + channelUnitId` 渠道映射取得 PMS 房型，映射缺失或一对多时才按 `roomId` 查询房态主数据兜底；`business_date` 使用实际收款日 `occurTime`。RS01 的 `channel_unit_id` 保存 OTA 渠道商品/售卖单元 ID：宝寓写入接口的 `channelUnitId`，别样红未提供时保持为空。宝寓日报接口返回的 `companyName` 会在本地宝寓酒店名称为空时自动回填。宝寓当日房型库存按别样红兼容字段同时写入 `pms_room_type_forecast`（入住日期维度）和 `pms_room_type_hourly_status`（小时快照维度），两者均标记 `source_platform=PMS（宝寓）`；不保留宝寓订单房态原始表。宝寓综合日报的 `roomType` 明细写入 `jl01_room_type_performance_daily`，字段口径为已售间夜、入住率、房费、ADR 与 RevPAR；酒店汇总写入 `jy01_hotel_statistics_daily` 的“总营业指标”行，房费只采用入住日房费字段，不混入预订日收款。JL11 从 `/console/report/get` 的 `groupBy=roomType` 返回值采集最近 30 天的房型汇总，写入 `section=summary`；该接口未提供渠道、入住类型或客户类型分组，暂不填充其他 section。渠道房型关系按此前规则保留快照。房型映射的 PMS 来源也区分 `pms_byh` 与 `pms_bypms`，避免切换平台后同名房型被错误复用。
+
+宝寓房型主数据默认从 `https://www.bypms.cn/console/state/?tbl=day` 页面内嵌的 `var _ROOMS` 提取；也可通过 `bypms.room_master_url` 覆盖。页面/接口未返回房型主数据时，采集会保留既有库存快照，不会以不完整订单反推总房数。宝寓当日房态接口的 `contractPrice` 是该房间订单房费，`amount` 是实际入住晚数；采集按 `contractPrice / amount` 折算当天房费，并写入 FORECAST 的 `room_revenue`、`adr`、`revpar`。
+
+宝寓 JL01 的 `roomType` 明细中如出现名称恰好为“未指定房型”的占位项，采集层不将其写入房型经营表。2026-09-24 已清理 `hotel_zhiting` 中此前采集的 3 条零值占位行（2026-09-21 至 2026-09-23）。
+
+宝寓渠道快照采集成功后，会用 `_ROOMS` 房型主数据校验 PMS 关联，仅对一对一的美团、携程关系增量建立 `hotel_room_type_mapping`。统一 ID 在无既有宝寓 PMS 别名时直接使用数字形式的 `relation_id`；OTA `channelUnitId` 按房型 ID 关联商品表，商品 ID 单独保存。已有人工/停用或冲突关系不覆盖，重复采集无映射变更时不写表。此前自动生成的 `BYPMS-<relation_id>` 会在无纯数字 ID 冲突时，于同一事务内迁移映射表及同酒店各业务表的 `room_type_id`；如目标 ID 已存在则报错，不混用。2026-09-23 在 `hotel_zhiting` 实测首次写入 8 条 PMS 别名、13 条 OTA 房型及 6 条携程商品映射；随后按纯数字 ID 要求迁移了 8 个 ID、1414 条相关表记录，复采无增量且未重建旧格式。
+
+宝寓自动映射产生差异时，渠道采集器会立即按当前酒店范围调用统一房型 ID 补全；无映射差异不重复补历史数据。RS01 也纳入当前 PMS 来源的精确别名匹配。2026-09-23 对 `hotel_zhiting` 的既有 PMS 数据执行一次补全：JD01 361 行、JY03 房型维度 24 行、JL01 8 行、JL11 8 行、FORECAST 16 行、小时房态 32 行、RS01 678 行。JD01 无房型名及 JL01“未指定房型”各 1 行保留空 ID，经营总计及非房型维度不填房型 ID。
+
+宝寓 JL11 报表页面将 `roomCountSold` 和 `roomSoldPercent` 显示在“入住间夜”的“已售”和“入住率”列；采集层同时写入 `room_nights` / `occupancy_rate` 与 `overnight_room_count` / `overnight_occupancy_rate`，保留这两个标准字段的页面口径。
+
+宝寓 JY03 月度经营使用 `/report/api/v1/normal-report/list`：首次无宝寓 JY03 总表时查询本月、前两个月和去年对应三个月；日常只刷新本月。本月及去年同月按截至昨日的同日窗口比较，其他月份取完整自然月。接口无统计日期且无房量/间夜的月份视为无历史数据并跳过，绝不补零。`roomCount` 是月累计可用房量，`nightCount` 是已售间夜，房费采用 `contractIncomeTotalPrice`；房型、渠道、客源和入住类型分别保存为 JY03 分类行。宝寓渠道“美团酒店”规范为下游 S14 使用的“美团EBK”。该月度接口不产生 JL02 的日/月/年三列指标。
+
+宝寓 JD01 预订明细使用 `/core/api/v1/contract/get` 的 POST JSON 请求，按订单页实际请求体 `contractState=D`、`checkOut=一个自然月前的同日`、`_pidx`、`_pageSize=20` 完整翻页，只采集正常单。未传 `contractState` 会漏掉正常单 `D`。`contracts.id` 是 PMS 订单号，`createTime` 是下单时间；房型只取关联 `nights.roomTypeName`，不将渠道商品名 `unitName` 冒充 PMS 房型。`priceFang / amount` 折算每晚房价，`amount` 是晚数而非房数。接口成功且全部页完整后按酒店、来源、退房时间下限替换快照；空订单是合法结果。统一房型 ID 仍通过宝寓 PMS 精确别名映射补充。此前试采的 `P` 组行会在这个窗口内被正常单快照替换。
 
 ## 5. 数据库现状
 

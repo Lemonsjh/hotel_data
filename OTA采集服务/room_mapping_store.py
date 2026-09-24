@@ -8,10 +8,14 @@ from mapping_product_sync import sync_ctrip_products, sync_meituan_products
 import price_tasks
 
 
-PMS_PLATFORM = "pms_byh"
+PMS_BYH_PLATFORM = "pms_byh"
+PMS_BYPMS_PLATFORM = "pms_bypms"
+PMS_PLATFORM = PMS_BYH_PLATFORM
+BYPMS_SOURCE_LABEL = "PMS（宝寓）"
 MEITUAN_PLATFORM = "meituan"
 CTRIP_PLATFORM = "ctrip"
-BASE_PLATFORMS = (PMS_PLATFORM, MEITUAN_PLATFORM, CTRIP_PLATFORM)
+PMS_PLATFORMS = (PMS_BYH_PLATFORM, PMS_BYPMS_PLATFORM)
+BASE_PLATFORMS = (*PMS_PLATFORMS, MEITUAN_PLATFORM, CTRIP_PLATFORM)
 PRODUCT_PLATFORMS = {
     MEITUAN_PLATFORM: ("美团", "meituan"),
     CTRIP_PLATFORM: ("携程", "ctrip"),
@@ -47,10 +51,16 @@ LABELS = {
 }
 
 
+def active_pms_platform(settings: dict[str, Any]) -> str:
+    provider = str((settings.get("pms") or {}).get("provider") or "byh").strip().lower()
+    return PMS_BYPMS_PLATFORM if provider == "bypms" else PMS_BYH_PLATFORM
+
+
 def defaults(settings: dict[str, Any]) -> dict[str, Any]:
+    pms_key = "bypms" if active_pms_platform(settings) == PMS_BYPMS_PLATFORM else "pms"
     return {
         "hotel_id": str(settings.get("hotel", {}).get("hotel_id", "")).strip(),
-        "pms_hotel_name": str(settings.get("pms", {}).get("hotel_name", "")).strip(),
+        "pms_hotel_name": str(settings.get(pms_key, {}).get("hotel_name", "")).strip(),
         "hotel_name": str(settings.get("meituan", {}).get("hotel_name", "")).strip(),
         "ctrip_hotel_name": str(settings.get("ctrip", {}).get("hotel_name", "")).strip(),
         "pms_room_type_name": "",
@@ -116,11 +126,12 @@ def room_options(
     settings: dict[str, Any],
 ) -> tuple[list[str], list[str], list[str], list[str]]:
     hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
+    using_bypms = str((settings.get("pms") or {}).get("provider") or "byh") == "bypms"
     hotel_filter = " WHERE hotel_id=%s" if hotel_id else ""
     pms_params = (hotel_id, hotel_id) if hotel_id else ()
     forecast_filter = "WHERE hotel_id=%s AND" if hotel_id else "WHERE"
     forecast_params = (hotel_id,) if hotel_id else ()
-    pms_hotel_sql = f"""
+    byh_hotel_sql = f"""
     SELECT hotel_name AS name FROM (
         SELECT hotel_name, snapshot_time FROM kf11_room_status_snapshot{hotel_filter}
         UNION ALL
@@ -129,11 +140,20 @@ def room_options(
     GROUP BY hotel_name
     ORDER BY MAX(snapshot_time) DESC, COUNT(*) DESC, hotel_name
     """
-    pms_room_sql = f"""
+    byh_room_sql = f"""
     SELECT DISTINCT room_type_name AS name
     FROM pms_room_type_forecast
     {forecast_filter} room_type_name IS NOT NULL AND TRIM(room_type_name) <> ''
     ORDER BY room_type_name
+    """
+    bypms_filter = "WHERE source_platform=%s AND hotel_id=%s" if hotel_id else "WHERE source_platform=%s"
+    bypms_hotel_sql = f"""
+    SELECT hotel_name AS name FROM pms_room_type_forecast {bypms_filter}
+    GROUP BY hotel_name ORDER BY MAX(snapshot_time) DESC, hotel_name
+    """
+    bypms_room_sql = f"""
+    SELECT DISTINCT room_type_name AS name FROM pms_room_type_forecast
+    {bypms_filter} ORDER BY room_type_name
     """
     meituan_room_sql = """
     SELECT DISTINCT room_type_name AS name
@@ -148,6 +168,13 @@ def room_options(
     ORDER BY room_type_name
     """
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
+        pms_hotel_sql, pms_room_sql = (bypms_hotel_sql, bypms_room_sql) if using_bypms else (byh_hotel_sql, byh_room_sql)
+        pms_params = (
+            (BYPMS_SOURCE_LABEL, hotel_id)
+            if using_bypms and hotel_id
+            else ((BYPMS_SOURCE_LABEL,) if using_bypms else pms_params)
+        )
+        forecast_params = pms_params if using_bypms else forecast_params
         return (
             _query_names(cur, pms_hotel_sql, pms_params),
             _query_names(cur, pms_room_sql, forecast_params),
@@ -163,7 +190,7 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
            is_active, updated_at
     FROM hotel_room_type_mapping
     WHERE mapping_status<>'REJECTED'
-      AND ((source_product_id='' AND source_platform IN (%s,%s,%s,%s,%s))
+      AND ((source_product_id='' AND source_platform IN (%s,%s,%s,%s,%s,%s))
        OR (source_product_id<>'' AND is_active=1
            AND source_platform IN (%s,%s,%s,%s)))
     ORDER BY updated_at DESC, id DESC
@@ -172,7 +199,7 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
         cur.execute(
             sql,
             (
-                PMS_PLATFORM,
+                *PMS_PLATFORMS,
                 *OTA_BASE_LABELS,
                 *PRODUCT_PLATFORMS[MEITUAN_PLATFORM],
                 *PRODUCT_PLATFORMS[CTRIP_PLATFORM],
@@ -214,7 +241,7 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
             ),
             source_platform,
         )
-        if platform == PMS_PLATFORM:
+        if platform in PMS_PLATFORMS:
             group["pms_hotel_name"] = row["pms_hotel_name"]
             if row["source_room_type_name"]:
                 group[PMS_ALIASES_FIELD].add(str(row["source_room_type_name"]))
@@ -265,7 +292,7 @@ def list_pms_mapping_rows(settings: dict[str, Any]) -> list[dict[str, Any]]:
     ORDER BY updated_at DESC, id DESC
     """
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
-        cur.execute(sql, (PMS_PLATFORM,))
+        cur.execute(sql, (active_pms_platform(settings),))
         aliases = cur.fetchall()
 
     rows = []
@@ -318,7 +345,7 @@ def _insert_base(cur, data: dict[str, Any], platform: str, source_name: str) -> 
     )
 
 
-def _insert_pms_alias(cur, data: dict[str, Any], source_name: str) -> None:
+def _insert_pms_alias(cur, data: dict[str, Any], source_name: str, pms_platform: str) -> None:
     cur.execute(
         """
         INSERT INTO hotel_room_type_mapping (
@@ -342,7 +369,7 @@ def _insert_pms_alias(cur, data: dict[str, Any], source_name: str) -> None:
             data["room_type_id"],
             data["room_type_name"],
             source_name,
-            PMS_PLATFORM,
+            pms_platform,
             source_name,
         ),
     )
@@ -395,9 +422,11 @@ def _collect_aliases(
         (hotel_id, room_type_id),
     )
     for row in cur.fetchall():
-        if row["pms_room_type_name"]:
-            aliases[PMS_PLATFORM].add(str(row["pms_room_type_name"]))
         source_platform = str(row["source_platform"])
+        if source_platform in PMS_PLATFORMS and row["source_room_type_name"]:
+            aliases[source_platform].add(str(row["source_room_type_name"]))
+        elif row["pms_room_type_name"]:
+            aliases[PMS_PLATFORM].add(str(row["pms_room_type_name"]))
         logical_platform = next(
             (
                 platform
@@ -416,6 +445,7 @@ def _assert_no_conflicts(
     data: dict[str, Any],
     original_id: str,
     pms_names: list[str],
+    pms_platform: str,
 ) -> None:
     old_id = original_id or str(data["room_type_id"])
     new_id = str(data["room_type_id"])
@@ -436,7 +466,7 @@ def _assert_no_conflicts(
             """,
             (
                 data["hotel_id"],
-                PMS_PLATFORM,
+                pms_platform,
                 source_name,
                 source_name,
                 old_id,
@@ -478,6 +508,7 @@ def _sync_pms_alias_rows(
     original_hotel_id: str,
     original_id: str,
     pms_names: list[str],
+    pms_platform: str,
 ) -> None:
     old_hotel_id = original_hotel_id or str(data["hotel_id"])
     if original_id:
@@ -497,12 +528,12 @@ def _sync_pms_alias_rows(
                 data["pms_hotel_name"],
                 old_hotel_id,
                 original_id,
-                PMS_PLATFORM,
+                pms_platform,
             ),
         )
 
     for source_name in pms_names:
-        _insert_pms_alias(cur, data, source_name)
+        _insert_pms_alias(cur, data, source_name, pms_platform)
 
     placeholders = ",".join(["%s"] * len(pms_names))
     cur.execute(
@@ -516,7 +547,7 @@ def _sync_pms_alias_rows(
         (
             data["hotel_id"],
             data["room_type_id"],
-            PMS_PLATFORM,
+            pms_platform,
             *pms_names,
         ),
     )
@@ -599,6 +630,7 @@ def save_group(
     if not requested_pms_names:
         raise ValueError("至少选择一个 PMS 房型")
 
+    pms_platform = active_pms_platform(settings)
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
         old_hotel_id = original_hotel_id or data["hotel_id"]
         lookup_id = original_id or data["room_type_id"]
@@ -608,11 +640,11 @@ def save_group(
         pms_names = requested_pms_names
         if not original_id:
             pms_names = _merge_pms_names(
-                old_aliases[PMS_PLATFORM], requested_pms_names
+                old_aliases[pms_platform], requested_pms_names
             )
         data[PMS_ALIASES_FIELD] = pms_names
         data["pms_room_type_name"] = pms_names[0]
-        _assert_no_conflicts(cur, data, original_id, pms_names)
+        _assert_no_conflicts(cur, data, original_id, pms_names, pms_platform)
 
         if original_id:
             cur.execute(
@@ -635,13 +667,14 @@ def save_group(
                 ),
             )
 
-        _sync_pms_alias_rows(cur, data, original_hotel_id, original_id, pms_names)
+        _sync_pms_alias_rows(cur, data, original_hotel_id, original_id, pms_names, pms_platform)
         _replace_ota_base_rows(cur, data, original_hotel_id, original_id)
         _sync_product_rows(cur, data, original_hotel_id, original_id)
         conn.commit()
 
     new_aliases = {
-        PMS_PLATFORM: set(pms_names),
+        **{platform: set() for platform in PMS_PLATFORMS},
+        pms_platform: set(pms_names),
         MEITUAN_PLATFORM: {data["meituan_room_type_name"]},
         CTRIP_PLATFORM: (
             {data["ctrip_room_type_name"]} if data["ctrip_room_type_name"] else set()
@@ -663,6 +696,7 @@ def save_group(
 def set_pms_alias_active(
     settings: dict[str, Any], hotel_id: str, room_type_id: str, pms_room_type_name: str, active: bool
 ) -> dict[str, Any] | None:
+    pms_platform = active_pms_platform(settings)
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
         cur.execute(
             """
@@ -672,7 +706,7 @@ def set_pms_alias_active(
               AND BINARY source_room_type_name=BINARY %s
               AND mapping_status<>'REJECTED'
             """,
-            (1 if active else 0, hotel_id, room_type_id, PMS_PLATFORM, pms_room_type_name),
+            (1 if active else 0, hotel_id, room_type_id, pms_platform, pms_room_type_name),
         )
         conn.commit()
         if cur.rowcount == 0:
@@ -680,7 +714,12 @@ def set_pms_alias_active(
     return {
         "hotel_ids": {hotel_id},
         "room_type_ids": {room_type_id},
-        "aliases": {PMS_PLATFORM: {pms_room_type_name}, MEITUAN_PLATFORM: set(), CTRIP_PLATFORM: set()},
+        "aliases": {
+            **{platform: set() for platform in PMS_PLATFORMS},
+            pms_platform: {pms_room_type_name},
+            MEITUAN_PLATFORM: set(),
+            CTRIP_PLATFORM: set(),
+        },
         "target_hotel_id": hotel_id,
     }
 

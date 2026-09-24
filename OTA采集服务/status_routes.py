@@ -47,8 +47,8 @@ def register(app) -> None:
             item = tasks.get(name, {})
             state = item.get("status", "never_run")
             platform = runner.TASKS[name][0]
-            task_enabled = bool((settings.get("tasks") or {}).get(name, False)) and bool(
-                (settings.get(platform) or {}).get("enabled", True)
+            task_enabled = bool((settings.get("tasks") or {}).get(name, False)) and runner.task_is_available(
+                name, platform, settings
             )
             config_state = "已启用" if task_enabled else "已禁用"
             log = item.get("log_path", "")

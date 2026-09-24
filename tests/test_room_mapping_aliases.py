@@ -67,6 +67,16 @@ class RoomMappingAliasTests(unittest.TestCase):
             ["豪华双床房"],
         )
 
+    def test_active_pms_alias_namespace_follows_selected_provider(self):
+        self.assertEqual(
+            self.store.active_pms_platform({"pms": {"provider": "bypms"}}),
+            self.store.PMS_BYPMS_PLATFORM,
+        )
+        self.assertEqual(
+            self.store.active_pms_platform({"pms": {"provider": "byh"}}),
+            self.store.PMS_BYH_PLATFORM,
+        )
+
     def test_edit_replaces_old_ctrip_base_mapping_instead_of_keeping_it(self):
         calls = []
 

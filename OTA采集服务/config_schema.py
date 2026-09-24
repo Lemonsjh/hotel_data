@@ -22,6 +22,7 @@ TEXT_GROUPS = [
             ("meituan.hotel_name", "美团酒店名"),
             ("ctrip.hotel_name", "携程酒店名"),
             ("pms.hotel_name", "PMS 酒店名"),
+            ("bypms.hotel_name", "宝寓 PMS 酒店名"),
             ("pms.username", "PMS 账号"),
         ],
     ),
@@ -78,6 +79,21 @@ ADVANCED_TEXT_GROUPS = [
             ("pms.api_timeout_seconds", "接口超时（秒）"),
         ],
     ),
+    (
+        "宝寓 PMS",
+        [
+            ("bypms.code_dir", "宝寓 PMS 代码目录"),
+            ("bypms.state_url", "宝寓 PMS 房态接口"),
+            ("bypms.room_master_url", "宝寓 PMS 房型主数据地址（选填）"),
+            ("bypms.channel_mapping_url", "宝寓 PMS 渠道房型关系接口"),
+            ("bypms.daily_report_url", "宝寓 PMS 每日经营报表接口"),
+            ("bypms.monthly_report_url", "宝寓 PMS 月度经营报表接口"),
+            ("bypms.contract_url", "宝寓 PMS 预订合同接口"),
+            ("bypms.classification_url", "宝寓 PMS 房型分类报表接口"),
+            ("bypms.payment_url", "宝寓 PMS 收款流水接口"),
+            ("bypms.timeout_seconds", "宝寓 PMS 超时（秒）"),
+        ],
+    ),
 ]
 
 SECRET_GROUPS = [
@@ -87,6 +103,7 @@ SECRET_GROUPS = [
             ("meituan.eb_cookie", "美团 EB Cookie（经营/热词/部分后台接口）"),
             ("meituan.me_cookie", "美团 ME Cookie（评价评分/产品/调价页）"),
             ("ctrip.cookie", "携程 Cookie"),
+            ("bypms.cookie", "宝寓 PMS Cookie"),
         ],
     ),
     (
@@ -210,6 +227,25 @@ CONFIG_SECTIONS = [
             ("pms.api_timeout_seconds", "接口超时（秒）", False, True),
         ],
     },
+    {
+        "key": "bypms",
+        "title": "PMS（宝寓）",
+        "hint": "通过登录 Cookie 采集当日房态和 OTA 渠道房型关系；与别样红 PMS 互斥启用。",
+        "fields": [
+            ("bypms.hotel_name", "酒店名称", False, False),
+            ("bypms.cookie", "登录 Cookie", True, False),
+            ("bypms.code_dir", "代码目录", False, True),
+            ("bypms.state_url", "当日房态接口", False, True),
+            ("bypms.room_master_url", "房型主数据地址（选填）", False, True),
+            ("bypms.channel_mapping_url", "渠道房型关系接口", False, True),
+            ("bypms.daily_report_url", "每日经营报表接口", False, True),
+            ("bypms.monthly_report_url", "月度经营报表接口", False, True),
+            ("bypms.contract_url", "预订合同接口", False, True),
+            ("bypms.classification_url", "房型分类报表接口", False, True),
+            ("bypms.payment_url", "收款流水接口", False, True),
+            ("bypms.timeout_seconds", "超时（秒）", False, True),
+        ],
+    },
 ]
 
 NUMBER_FIELDS = {
@@ -230,6 +266,7 @@ NUMBER_FIELDS = {
     "pms.navigation_timeout_ms",
     "pms.action_timeout_ms",
     "pms.api_timeout_seconds",
+    "bypms.timeout_seconds",
 }
 
 SHORT_SECRET_FIELDS = {"mysql.password", "pms.password"}

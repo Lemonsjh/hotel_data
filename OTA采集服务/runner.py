@@ -25,6 +25,21 @@ CONFIG_PATH = ROOT / "config" / "settings.json"
 STATUS_PATH = ROOT / "state" / "status.json"
 LOG_DIR = ROOT / "logs"
 RUN_STOP_PATH = ROOT / "state" / "collection_run.stop"
+BYPMS_DEFAULTS = {
+    "enabled": False,
+    "hotel_name": "",
+    "cookie": "",
+    "code_dir": "宝寓PMS数据采集代码",
+    "state_url": "https://www.bypms.cn/console/state/get",
+    "room_master_url": "",
+    "channel_mapping_url": "https://pms-api.bypms.cn/channel/api/v1/channel-unit/list",
+    "daily_report_url": "https://pms-api.bypms.cn/report/api/v1/daily-report/list",
+    "monthly_report_url": "https://pms-api.bypms.cn/report/api/v1/normal-report/list",
+    "contract_url": "https://pms-api.bypms.cn/core/api/v1/contract/get",
+    "classification_url": "https://www.bypms.cn/console/report/get",
+    "payment_url": "https://www.bypms.cn/console/finance/payment/get",
+    "timeout_seconds": 120,
+}
 
 
 TASKS = {
@@ -96,6 +111,31 @@ def load_settings() -> dict[str, Any]:
         if name not in tasks:
             tasks[name] = False
             changed = True
+    pms = settings.setdefault("pms", {})
+    if pms.get("provider") not in {"byh", "bypms"}:
+        pms["provider"] = "bypms" if (settings.get("bypms") or {}).get("enabled") else "byh"
+        changed = True
+    bypms = settings.setdefault("bypms", {})
+    for name, value in BYPMS_DEFAULTS.items():
+        if name not in bypms:
+            bypms[name] = value
+            changed = True
+    selected = pms["provider"]
+    if selected == "byh" and bypms.get("enabled"):
+        bypms["enabled"] = False
+        changed = True
+    if selected == "bypms" and pms.get("enabled"):
+        pms["enabled"] = False
+        changed = True
+    legacy_bypms_tasks = ("bypms_room_status", "bypms_channel_mapping")
+    if selected == "bypms" and any(tasks.get(name) for name in legacy_bypms_tasks):
+        if not tasks.get("pms_fetch"):
+            tasks["pms_fetch"] = True
+            changed = True
+    for name in legacy_bypms_tasks:
+        if name in tasks:
+            tasks.pop(name)
+            changed = True
     retention = settings.setdefault("data_retention", {})
     for name, value in DEFAULT_RETENTION.items():
         if name not in retention:
@@ -118,6 +158,29 @@ def backfill_pms_hotel_name(hotel_name: Any) -> bool:
     pms["hotel_name"] = name
     save_json(CONFIG_PATH, settings)
     return True
+
+
+def backfill_bypms_hotel_name(hotel_name: Any) -> bool:
+    """Save the ByPMS API hotel name only when the configuration is blank."""
+    name = str(hotel_name or "").strip()
+    if not name:
+        return False
+    settings = load_settings()
+    bypms = settings.setdefault("bypms", {})
+    if str(bypms.get("hotel_name") or "").strip():
+        return False
+    bypms["hotel_name"] = name
+    save_json(CONFIG_PATH, settings)
+    return True
+
+
+def backfill_bypms_hotel_name_from_summary(settings: dict[str, Any]) -> bool:
+    summary_path = output_path(settings) / "bypms_daily_report_summary.json"
+    try:
+        summary = load_json(summary_path, {})
+    except (OSError, ValueError):
+        return False
+    return backfill_bypms_hotel_name(summary.get("hotel_name"))
 
 
 def project_path(value: Any, default: str | Path = ".") -> Path:
@@ -221,9 +284,36 @@ def enabled_tasks(settings: dict[str, Any]) -> list[str]:
     flags = settings.get("tasks") or {}
     result: list[str] = []
     for name, (platform, _script, _args) in TASKS.items():
-        if flags.get(name, False) and (settings.get(platform) or {}).get("enabled", True):
+        if flags.get(name, False) and task_is_available(name, platform, settings):
             result.append(name)
     return result
+
+
+def active_pms_provider(settings: dict[str, Any]) -> str:
+    provider = str((settings.get("pms") or {}).get("provider") or "byh").strip().lower()
+    return provider if provider in {"byh", "bypms"} else "byh"
+
+
+def task_is_available(name: str, platform: str, settings: dict[str, Any]) -> bool:
+    provider = active_pms_provider(settings)
+    if name == "pms_fetch":
+        config_key = "pms" if provider == "byh" else "bypms"
+        return (settings.get(config_key) or {}).get("enabled", provider == "byh")
+    return (settings.get(platform) or {}).get("enabled", True)
+
+
+def task_specs(name: str, settings: dict[str, Any]) -> list[tuple[str, str, list[str]]]:
+    if name == "pms_fetch" and active_pms_provider(settings) == "bypms":
+        return [
+            ("bypms", "bypms_room_status_data.py", []),
+            ("bypms", "bypms_channel_mapping_data.py", []),
+            ("bypms", "bypms_rs01_data.py", []),
+            ("bypms", "bypms_daily_report_data.py", []),
+            ("bypms", "bypms_jl11_data.py", []),
+            ("bypms", "bypms_jy03_data.py", []),
+            ("bypms", "bypms_jd01_data.py", []),
+        ]
+    return [TASKS[name]]
 
 
 def put_if(env: dict[str, str], key: str, value: Any) -> None:
@@ -248,6 +338,7 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     meituan = settings.get("meituan") or {}
     ctrip = settings.get("ctrip") or {}
     pms = settings.get("pms") or {}
+    bypms = settings.get("bypms") or {}
 
     put_if(env, "HOTEL_OTA_PROJECT_ROOT", PROJECT_ROOT)
     put_if(env, "HOTEL_OTA_OUTPUT_DIR", output_path(settings))
@@ -279,6 +370,17 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     put_if(env, "PMS_NAVIGATION_TIMEOUT_MS", pms.get("navigation_timeout_ms"))
     put_if(env, "PMS_ACTION_TIMEOUT_MS", pms.get("action_timeout_ms"))
     put_if(env, "PMS_API_TIMEOUT_SECONDS", pms.get("api_timeout_seconds"))
+    put_if(env, "BYPMS_HOTEL_NAME", bypms.get("hotel_name"))
+    put_if(env, "BYPMS_COOKIE", bypms.get("cookie"))
+    put_if(env, "BYPMS_STATE_URL", bypms.get("state_url"))
+    put_if(env, "BYPMS_ROOM_MASTER_URL", bypms.get("room_master_url"))
+    put_if(env, "BYPMS_CHANNEL_MAPPING_URL", bypms.get("channel_mapping_url"))
+    put_if(env, "BYPMS_DAILY_REPORT_URL", bypms.get("daily_report_url"))
+    put_if(env, "BYPMS_MONTHLY_REPORT_URL", bypms.get("monthly_report_url"))
+    put_if(env, "BYPMS_CONTRACT_URL", bypms.get("contract_url"))
+    put_if(env, "BYPMS_CLASSIFICATION_URL", bypms.get("classification_url"))
+    put_if(env, "BYPMS_PAYMENT_URL", bypms.get("payment_url"))
+    put_if(env, "BYPMS_TIMEOUT_SECONDS", bypms.get("timeout_seconds"))
 
     put_if(env, "MEITUAN_HOTEL_NAME", meituan.get("hotel_name"))
     put_if(env, "MEITUAN_POI_ID", meituan.get("poi_id"))
@@ -334,6 +436,9 @@ def script_path(settings: dict[str, Any], platform: str, filename: str) -> Path:
         pms = settings.get("pms") or {}
         code_dir = project_path(pms.get("code_dir"), "正式数据抓取-PMS（别样红）/PMS登录")
         return code_dir / (pms.get("entry_script") or filename)
+    if platform == "bypms":
+        bypms = settings.get("bypms") or {}
+        return project_path(bypms.get("code_dir"), "宝寓PMS数据采集代码") / filename
     key = "meituan_code_dir" if platform == "meituan" else "ctrip_code_dir"
     default = "美团OTA数据采集代码" if platform == "meituan" else "携程OTA数据采集代码"
     return project_path(paths.get(key), default) / filename
@@ -342,6 +447,8 @@ def script_path(settings: dict[str, Any], platform: str, filename: str) -> Path:
 def task_timeout(settings: dict[str, Any], platform: str) -> int:
     if platform == "pms":
         return int((settings.get("pms") or {}).get("timeout_seconds") or 900)
+    if platform == "bypms":
+        return int((settings.get("bypms") or {}).get("timeout_seconds") or 120)
     return int((settings.get("service") or {}).get("timeout_seconds") or 300)
 
 
@@ -349,10 +456,8 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
     if name not in TASKS:
         raise KeyError(f"Unknown task: {name}")
 
-    platform, filename, extra_args = TASKS[name]
+    platform, _filename, _extra_args = TASKS[name]
     py = str(python_path(settings))
-    script = script_path(settings, platform, filename)
-    timeout = task_timeout(settings, platform)
     base_dir = project_path((settings.get("paths") or {}).get("base_dir"), ".")
     started = now_text()
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -371,34 +476,57 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
     status.setdefault("tasks", {})[name] = result
     save_json(STATUS_PATH, status)
 
-    if not script.exists():
-        result.update(status="failed", finished_at=now_text(), error_summary=f"Script not found: {script}")
+    if not task_is_available(name, platform, settings):
+        result.update(
+            status="failed",
+            finished_at=now_text(),
+            error_summary=f"当前 PMS 平台为 {active_pms_provider(settings)}，此任务不可运行",
+        )
         save_json(STATUS_PATH, status)
         return result
 
-    command = [py, str(script), *extra_args]
+    specs = task_specs(name, settings)
+    resolved_specs = [
+        (item_platform, script_path(settings, item_platform, filename), extra_args)
+        for item_platform, filename, extra_args in specs
+    ]
+    missing = next((script for _platform, script, _args in resolved_specs if not script.exists()), None)
+    if missing:
+        result.update(status="failed", finished_at=now_text(), error_summary=f"Script not found: {missing}")
+        save_json(STATUS_PATH, status)
+        return result
+
     begin = datetime.now()
     try:
-        completed = run_streamed(
-            command,
-            cwd=str(script.parent if platform == "pms" else base_dir),
-            env=build_env(settings, platform),
-            timeout=timeout,
-            log_path=log_path,
-            transform=lambda line: sanitize(line, settings),
-            should_cancel=run_stop_requested,
-        )
-        output = completed.output_tail
-        result["return_code"] = completed.return_code
-        if completed.return_code == 0:
+        for index, (item_platform, script, extra_args) in enumerate(resolved_specs):
+            if index:
+                with log_path.open("a", encoding="utf-8") as log:
+                    log.write(f"\n\n=== PMS 子采集：{script.name} ===\n")
+            completed = run_streamed(
+                [py, str(script), *extra_args],
+                cwd=str(script.parent if item_platform == "pms" else base_dir),
+                env=build_env(settings, item_platform),
+                timeout=task_timeout(settings, item_platform),
+                log_path=log_path,
+                append=index > 0,
+                transform=lambda line: sanitize(line, settings),
+                should_cancel=run_stop_requested,
+            )
+            result["return_code"] = completed.return_code
+            if completed.return_code:
+                result["status"] = "failed"
+                result["error_summary"] = first_error_line(completed.output_tail) or f"{script.name}: return_code={completed.return_code}"
+                break
+            if item_platform == "bypms" and script.name == "bypms_daily_report_data.py":
+                if backfill_bypms_hotel_name_from_summary(settings):
+                    with log_path.open("a", encoding="utf-8") as log:
+                        log.write("ByPMS hotel name identified and saved to local configuration.\n")
+        else:
             result["status"] = "success"
             enrich_room_type_ids(name, settings, log_path)
-        else:
-            result["status"] = "failed"
-            result["error_summary"] = first_error_line(output) or f"return_code={completed.return_code}"
     except ProcessTimeoutError as exc:
         result["status"] = "failed"
-        result["error_summary"] = f"timeout after {timeout}s"
+        result["error_summary"] = f"timeout after {exc.timeout}s"
     except ProcessCancelledError:
         result["status"] = "cancelled"
         result["error_summary"] = "已由用户中断"
@@ -536,6 +664,13 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
             warnings.append("PMS username is empty.")
         if not pms.get("password"):
             warnings.append("PMS password is empty.")
+    bypms = settings.get("bypms") or {}
+    if bypms.get("enabled", False):
+        script = script_path(settings, "bypms", "bypms_room_status_data.py")
+        if not script.exists():
+            warnings.append(f"bypms entry script not found: {script}")
+        if not bypms.get("cookie"):
+            warnings.append("BYPMS_COOKIE is empty; Bypms collection cannot run.")
     if not (settings.get("meituan") or {}).get("me_cookie"):
         warnings.append("MEITUAN_ME_COOKIE is empty; Meituan collection cannot run.")
     if not (settings.get("ctrip") or {}).get("cookie"):

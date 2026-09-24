@@ -150,10 +150,11 @@ def insert_mysql(rows, conn=None):
         room_fee,
         operator_name,
         order_id,
+        channel_unit_id,
         snapshot_time
     ) VALUES (
         %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
     )
     ON DUPLICATE KEY UPDATE
         hotel_name = VALUES(hotel_name),
@@ -170,6 +171,7 @@ def insert_mysql(rows, conn=None):
         room_nights = VALUES(room_nights),
         room_fee = VALUES(room_fee),
         operator_name = VALUES(operator_name),
+        channel_unit_id = VALUES(channel_unit_id),
         snapshot_time = VALUES(snapshot_time),
         updated_at = CURRENT_TIMESTAMP
     """
@@ -198,6 +200,7 @@ def insert_mysql(rows, conn=None):
             r["room_fee"],
             r["operator_name"],
             r["order_id"],
+            r.get("channel_unit_id"),
             r["snapshot_time"]
         ))
         if cursor.rowcount == 1:

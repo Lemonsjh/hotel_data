@@ -11,16 +11,16 @@ import runner
 
 
 TABLES = {
-    "jd01_booking_detail": ("pms_byh", "exact"),
+    "jd01_booking_detail": ("pms_active", "exact"),
     "jd04_inhouse_extension": ("pms_byh", "exact"),
     "jy01_hotel_statistics_daily": ("pms_byh", "exact"),
-    "jy03_hotel_statistics_month": ("pms_byh", "exact"),
-    "jl01_room_type_performance_daily": ("pms_byh", "exact"),
-    "jl11_room_type_classification": ("pms_byh", "exact"),
-    "pms_room_type_forecast": ("pms_byh", "exact"),
-    "pms_room_type_hourly_status": ("pms_byh", "exact"),
+    "jy03_hotel_statistics_month": ("pms_active", "exact"),
+    "jl01_room_type_performance_daily": ("pms_active", "exact"),
+    "jl11_room_type_classification": ("pms_active", "exact"),
+    "pms_room_type_forecast": ("pms_active", "exact"),
+    "pms_room_type_hourly_status": ("pms_active", "exact"),
     "kf11_room_status_snapshot": ("pms_byh", "exact"),
-    "rs01_room_revenue_daily": ("pms_byh", "exact"),
+    "rs01_room_revenue_daily": ("pms_active", "exact"),
     "meituan_ota_goods_price_mapping": ("meituan", "product"),
     "ctrip_ota_goods_price_mapping": ("ctrip", "product"),
     "meituan_ota_activity_product_detail": ("meituan", "product"),
@@ -185,6 +185,8 @@ def _update_alias(
 ) -> int:
     name_column = _name_column(table)
     room_rows = _room_rows(table)
+    if platform == "pms_active":
+        return _update_active_pms_alias(cur, table, hotel_id)
     if platform == "pms_byh":
         mapping_name = "source_room_type_name"
         mapping_filter = "source_platform='pms_byh' AND source_product_id=''"
@@ -262,6 +264,35 @@ def _update_alias(
     return cur.rowcount
 
 
+def _update_active_pms_alias(cur, table: str, hotel_id: str) -> int:
+    scope, scope_params = _scope_sql(hotel_id)
+    name_column = _name_column(table)
+    cur.execute(
+        f"""
+        UPDATE `{table}` t
+        JOIN (
+          SELECT hotel_id, source_platform, source_room_type_name,
+                 MIN(room_type_id) AS room_type_id
+          FROM hotel_room_type_mapping
+          WHERE is_active=1 AND source_product_id='' AND source_room_type_name<>''
+            AND source_platform IN ('pms_byh','pms_bypms')
+          GROUP BY hotel_id, source_platform, source_room_type_name
+          HAVING COUNT(DISTINCT room_type_id)=1
+        ) m
+          ON BINARY t.hotel_id=BINARY m.hotel_id
+         AND BINARY t.`{name_column}`=BINARY m.source_room_type_name
+         AND (
+           (t.source_platform='PMS（宝寓）' AND m.source_platform='pms_bypms')
+           OR (t.source_platform<>'PMS（宝寓）' AND m.source_platform='pms_byh')
+         )
+        SET t.room_type_id=m.room_type_id
+        WHERE t.room_type_id IS NULL{_room_rows(table, 't')}{scope}
+        """,
+        scope_params,
+    )
+    return cur.rowcount
+
+
 def _clear_mapping_scope(
     cur, table: str, change: dict[str, Any]
 ) -> int:
@@ -269,7 +300,10 @@ def _clear_mapping_scope(
     name_column = _name_column(table)
     hotel_ids = sorted(value for value in change["hotel_ids"] if value)
     room_ids = sorted(value for value in change["room_type_ids"] if value)
-    aliases = sorted(value for value in change["aliases"].get(platform, ()) if value)
+    alias_platforms = ("pms_byh", "pms_bypms") if platform == "pms_active" else (platform,)
+    aliases = sorted(
+        value for key in alias_platforms for value in change["aliases"].get(key, ()) if value
+    )
     if not hotel_ids or (not room_ids and not aliases):
         return 0
     hotel_sql = ",".join(["%s"] * len(hotel_ids))
