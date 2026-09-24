@@ -302,6 +302,16 @@ def task_is_available(name: str, platform: str, settings: dict[str, Any]) -> boo
     return (settings.get(platform) or {}).get("enabled", True)
 
 
+def task_unavailable_reason(name: str, platform: str, settings: dict[str, Any]) -> str:
+    if task_is_available(name, platform, settings):
+        return ""
+    if name == "pms_fetch":
+        label = "宝寓 PMS" if active_pms_provider(settings) == "bypms" else "别样红 PMS"
+    else:
+        label = {"meituan": "美团", "ctrip": "携程"}.get(platform, platform)
+    return f"{label}采集已禁用，请先在配置页启用"
+
+
 def task_specs(name: str, settings: dict[str, Any]) -> list[tuple[str, str, list[str]]]:
     if name == "pms_fetch" and active_pms_provider(settings) == "bypms":
         return [
@@ -480,7 +490,7 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
         result.update(
             status="failed",
             finished_at=now_text(),
-            error_summary=f"当前 PMS 平台为 {active_pms_provider(settings)}，此任务不可运行",
+            error_summary=task_unavailable_reason(name, platform, settings),
         )
         save_json(STATUS_PATH, status)
         return result

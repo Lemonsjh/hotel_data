@@ -6,15 +6,45 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
+from flask import Flask
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "OTA采集服务"))
 
 import runner
+import status_routes
 from process_runner import ProcessResult
 
 
 class PmsProviderSelectionTests(TestCase):
+    def test_disabled_meituan_reports_its_own_reason(self):
+        settings = {"pms": {"provider": "bypms"}, "meituan": {"enabled": False}, "paths": {}}
+        self.assertEqual(
+            runner.task_unavailable_reason("meituan_business", "meituan", settings),
+            "美团采集已禁用，请先在配置页启用",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(runner, "LOG_DIR", Path(directory)), \
+                 patch.object(runner, "save_json"), \
+                 patch.object(runner, "run_streamed") as run_streamed:
+                result = runner.run_task("meituan_business", settings, {})
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_summary"], "美团采集已禁用，请先在配置页启用")
+        run_streamed.assert_not_called()
+
+    def test_manual_route_respects_platform_enabled_not_schedule_flag(self):
+        app = Flask(__name__)
+        status_routes.register(app)
+        settings = {"meituan": {"enabled": False}, "tasks": {"meituan_business": False}}
+        with patch.object(runner, "load_settings", return_value=settings), \
+             patch.object(status_routes, "run_background") as run_background:
+            self.assertEqual(app.test_client().post("/run/meituan_business").status_code, 302)
+            run_background.assert_not_called()
+            settings["meituan"]["enabled"] = True
+            self.assertEqual(app.test_client().post("/run/meituan_business").status_code, 302)
+            run_background.assert_called_once_with(["run-task", "meituan_business"])
+
     def test_bypms_hotel_name_is_backfilled_only_when_blank(self):
         settings = {"pms": {"provider": "bypms"}, "bypms": {"hotel_name": ""}, "tasks": {}}
         with patch.object(runner, "load_settings", return_value=settings), patch.object(runner, "save_json") as save:

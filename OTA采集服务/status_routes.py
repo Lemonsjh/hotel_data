@@ -47,9 +47,8 @@ def register(app) -> None:
             item = tasks.get(name, {})
             state = item.get("status", "never_run")
             platform = runner.TASKS[name][0]
-            task_enabled = bool((settings.get("tasks") or {}).get(name, False)) and runner.task_is_available(
-                name, platform, settings
-            )
+            unavailable_reason = runner.task_unavailable_reason(name, platform, settings)
+            task_enabled = bool((settings.get("tasks") or {}).get(name, False)) and not unavailable_reason
             config_state = "已启用" if task_enabled else "已禁用"
             log = item.get("log_path", "")
             log_link = f"<a class='button secondary' href='/log?path={esc(log)}'>日志</a>" if log else ""
@@ -61,7 +60,9 @@ def register(app) -> None:
                 f"<div class='meta'>配置：{config_state}<br>开始：{esc(item.get('started_at', '-'))}<br>"
                 f"耗时：{esc(item.get('duration_seconds', '-'))} s<br>"
                 f"错误：{esc(error)}</div>"
-                f"<div class='actions'><form method='post' action='/run/{esc(name)}'><button {'disabled' if is_running else ''}>运行</button></form>{log_link}</div>"
+                f"<div class='actions'><form method='post' action='/run/{esc(name)}'>"
+                f"<button {'disabled' if is_running or unavailable_reason else ''} "
+                f"title='{esc(unavailable_reason)}'>运行</button></form>{log_link}</div>"
                 "</article>"
             )
         running_names = [task_label(name) for name in run_names if tasks.get(name, {}).get("status") == "running"]
@@ -223,7 +224,7 @@ def register(app) -> None:
 
     @app.post("/run/<task>")
     def run_task(task: str):
-        if task in runner.TASKS:
+        if task in runner.TASKS and runner.task_is_available(task, runner.TASKS[task][0], runner.load_settings()):
             run_background(["run-task", task])
         return redirect(url_for("index"))
 
