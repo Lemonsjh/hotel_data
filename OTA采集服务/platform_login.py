@@ -28,6 +28,7 @@ PLATFORMS = {
     "meituan": {
         "label": "美团",
         "url": "https://me.meituan.com/ebooking/merchant/comment-manage-react",
+        "login_url": "https://me.meituan.com/login/index.html",
         # 旧的 /ebooking/hotel/dataCenter 已下线，会显示 404。
         # 工作台入口会根据当前账号跳转到可用的 EB 页面。
         "eb_url": "https://eb.meituan.com/ebooking/new-workbench/index.html",
@@ -352,6 +353,11 @@ def initial_login_page(context: Any, platform: str) -> Any:
     return page
 
 
+def initial_login_url(platform: str, had_session: bool) -> str:
+    info = PLATFORMS[platform]
+    return info.get("login_url", info["url"]) if not had_session else info["url"]
+
+
 def save_cookies(platform: str, context: Any) -> int:
     settings = runner.load_settings()
     section = settings.setdefault(platform, {})
@@ -428,7 +434,7 @@ def run(platform: str, switch_account: bool = False) -> int:
                 context.clear_cookies()
                 had_session = False
             page = initial_login_page(context, platform)
-            navigate(page, info["url"])
+            navigate(page, initial_login_url(platform, had_session))
 
             if platform == "meituan":
                 page = wait_for_auth(context, platform, {"mebsid"}, "请在Edge中完成美团登录")

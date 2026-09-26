@@ -14,6 +14,20 @@ import platform_login
 
 
 class PlatformLoginCleanupTests(unittest.TestCase):
+    def test_meituan_new_login_opens_direct_login_page(self):
+        self.assertEqual(
+            platform_login.initial_login_url("meituan", had_session=False),
+            "https://me.meituan.com/login/index.html",
+        )
+        self.assertEqual(
+            platform_login.initial_login_url("meituan", had_session=True),
+            "https://me.meituan.com/ebooking/merchant/comment-manage-react",
+        )
+        self.assertEqual(
+            platform_login.initial_login_url("ctrip", had_session=False),
+            platform_login.PLATFORMS["ctrip"]["url"],
+        )
+
     def test_process_alive_is_safe_without_windows_api(self):
         with patch.object(platform_login, "KERNEL32", None):
             self.assertFalse(platform_login.process_alive(60192))
