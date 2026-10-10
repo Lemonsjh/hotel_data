@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
-from meituan_config import MEITUAN_ME_COOKIE
+from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE
 from meituan_page_capture import browser_profile_lock, cookie_entries, page_access_issue
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -120,8 +120,13 @@ def _payload_int(data: dict[str, Any], field: str) -> int:
 
 
 def video_rows_from_payload(payload: Any) -> list[tuple[str, int, int]]:
-    if not isinstance(payload, dict) or payload.get("status") != 0 or not isinstance(payload.get("data"), dict):
+    if not isinstance(payload, dict):
         raise RuntimeError("Meituan video task response is invalid")
+    status = payload.get("status")
+    if status == 303:
+        raise RuntimeError("美团视频接口未登录（tdc.meituan.com，status=303）；请更新当前账号的 EB Cookie 或重新完成美团登录")
+    if status != 0 or not isinstance(payload.get("data"), dict):
+        raise RuntimeError(f"Meituan video task response is invalid: status={status}")
 
     data = payload["data"]
     has_hotel_official = _payload_int(data, "hasHotelOfficial")
@@ -141,7 +146,18 @@ def video_rows_from_payload(payload: Any) -> list[tuple[str, int, int]]:
     ]
 
 
+def video_browser_cookies() -> list[dict[str, str]]:
+    if not MEITUAN_ME_COOKIE or not MEITUAN_EB_COOKIE:
+        raise RuntimeError("美团视频采集需要当前账号的 me_cookie 和 eb_cookie，请先完成美团登录")
+    return (
+        cookie_entries(MEITUAN_ME_COOKIE, "https://me.meituan.com/")
+        + cookie_entries(MEITUAN_EB_COOKIE, "https://eb.meituan.com/")
+        + cookie_entries(MEITUAN_EB_COOKIE, "https://tdc.meituan.com/")
+    )
+
+
 def fetch_video_counts() -> list[tuple[str, int, int]]:
+    cookies = video_browser_cookies()
     last_url = VIDEO_URL
     with browser_profile_lock(), sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
@@ -152,9 +168,7 @@ def fetch_video_counts() -> list[tuple[str, int, int]]:
             locale="zh-CN",
         )
         try:
-            cookies = cookie_entries(MEITUAN_ME_COOKIE, "https://me.meituan.com/")
-            if cookies:
-                context.add_cookies(cookies)
+            context.add_cookies(cookies)
             page = context.pages[0] if context.pages else context.new_page()
             responses: list[Any] = []
 

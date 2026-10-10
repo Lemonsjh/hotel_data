@@ -100,6 +100,30 @@ class MeituanTaskCollectionTests(unittest.TestCase):
                 }
             )
 
+    def test_video_uses_current_eb_session_for_tdc_domain(self):
+        with patch.object(self.video, "MEITUAN_ME_COOKIE", "session=me-account; mebsid=me-token"), patch.object(
+            self.video, "MEITUAN_EB_COOKIE", "session=eb-account; ebbsid=eb-token"
+        ):
+            cookies = self.video.video_browser_cookies()
+        domains = {url: {item["name"]: item["value"] for item in cookies if item["url"] == url}
+                   for url in ("https://me.meituan.com/", "https://eb.meituan.com/", "https://tdc.meituan.com/")}
+        self.assertEqual(domains["https://tdc.meituan.com/"], domains["https://eb.meituan.com/"])
+        self.assertEqual(domains["https://tdc.meituan.com/"]["session"], "eb-account")
+        self.assertEqual(domains["https://me.meituan.com/"]["session"], "me-account")
+
+    def test_video_missing_eb_cookie_does_not_use_old_profile_session(self):
+        with patch.object(self.video, "MEITUAN_ME_COOKIE", "mebsid=me-token"), patch.object(
+            self.video, "MEITUAN_EB_COOKIE", ""
+        ), patch.object(self.video, "sync_playwright") as playwright:
+            with self.assertRaisesRegex(RuntimeError, "eb_cookie"):
+                self.video.fetch_video_counts()
+        playwright.assert_not_called()
+
+    def test_video_reports_tdc_login_failure_without_exposing_response(self):
+        with self.assertRaisesRegex(RuntimeError, r"tdc\.meituan\.com.*status=303") as caught:
+            self.video.video_rows_from_payload({"status": 303, "message": "secret-session-value", "data": None})
+        self.assertNotIn("secret-session-value", str(caught.exception))
+
     def test_video_save_updates_all_rows_with_one_snapshot_time(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
