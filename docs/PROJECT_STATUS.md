@@ -1,5 +1,9 @@
 # 项目当前进度（PROJECT_STATUS）
 
+## 2026-10-12：单元测试的 Linux 导入兼容
+
+`panel_common.py` 仅在 Windows 上加载 `kernel32`，修复 Linux CI 导入 `status_routes` 时因不存在 `ctypes.WinDLL` 而失败的问题。Windows 进程检测逻辑保留；非 Windows 环境不进行该原生进程检测。新增跨平台导入和进程句柄检查回归测试。
+
 > 最后整理：2026-09-01
 >
 > 本文档记录阶段性进度和近期关键变化。开始新的 Codex 会话时，请先读根目录 `AGENTS.md`，再读本文件，并重新确认当前 `master` HEAD。

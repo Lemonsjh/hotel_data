@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import html
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -16,10 +17,12 @@ MANUAL_STATUS_PATH = runner.ROOT / "state" / "manual_scheduler_status.json"
 MANUAL_PID_PATH = runner.ROOT / "state" / "manual_scheduler.pid"
 MANUAL_STOP_PATH = runner.ROOT / "state" / "manual_scheduler.stop"
 
-KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
-KERNEL32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
-KERNEL32.OpenProcess.restype = ctypes.c_void_p
-KERNEL32.CloseHandle.argtypes = [ctypes.c_void_p]
+KERNEL32 = None
+if os.name == "nt":
+    KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    KERNEL32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    KERNEL32.OpenProcess.restype = ctypes.c_void_p
+    KERNEL32.CloseHandle.argtypes = [ctypes.c_void_p]
 
 TASK_LABELS = {
     "meituan_business": "美团经营",
@@ -120,9 +123,12 @@ def page(title: str, body: str, active: str = "status") -> str:
 
 
 def process_alive(pid: Any) -> bool:
-    if not pid:
+    if not pid or KERNEL32 is None:
         return False
-    handle = KERNEL32.OpenProcess(0x1000, False, int(pid))
+    try:
+        handle = KERNEL32.OpenProcess(0x1000, False, int(pid))
+    except (TypeError, ValueError):
+        return False
     if not handle:
         return False
     KERNEL32.CloseHandle(handle)
