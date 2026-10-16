@@ -49,7 +49,6 @@ TASKS = {
     "meituan_promotion_status": ("meituan", "meituan_promotion_status_data.py", []),
     "meituan_video_upload_status": ("meituan", "meituan_video_upload_status_data.py", []),
     "meituan_promotion_performance": ("meituan", "meituan_promotion_performance_data.py", []),
-    "meituan_exposure_source": ("meituan", "meituan_exposure_source_data.py", []),
     "meituan_order_loss": ("meituan", "meituan_order_loss_data.py", []),
     "meituan_scan_order": ("meituan", "meituan_scan_order_data.py", []),
     "meituan_user_source": ("meituan", "meituan_user_source_data.py", []),
@@ -107,6 +106,9 @@ def load_settings() -> dict[str, Any]:
     settings = require_valid_settings(load_json(CONFIG_PATH, {}), CONFIG_PATH)
     tasks = settings.setdefault("tasks", {})
     changed = False
+    if "meituan_exposure_source" in tasks:
+        tasks.pop("meituan_exposure_source")
+        changed = True
     for name in TASKS:
         if name not in tasks:
             tasks[name] = False

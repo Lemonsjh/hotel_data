@@ -1,5 +1,15 @@
 # 项目当前进度（PROJECT_STATUS）
 
+## 2026-10-16：移除美团每日入住间夜榜任务
+
+按要求删除每日入住间夜榜的任务注册、面板名称、默认配置和采集脚本（含旧曝光来源兼容入口）。加载旧配置时清除 `meituan_exposure_source` 开关；不再采集入住间夜榜，也不恢复旧曝光来源任务。数据库表及已有历史数据保留，不执行删表。此前生成的压缩包是移除前版本，未自动覆盖。
+
+## 2026-10-15：曝光来源任务替换为每日入住间夜榜
+
+保留 `meituan_exposure_source` 配置键，显示为“美团每日入住间夜榜”，运行 `meituan_roomnight_rank_data.py`。从 `/api/v1/ebooking/business/peer/rank/data/detail` 以 GET、`rankType=P_RZ`、`dateRange=1`、起止同日采集，使用当前配置的 poiId、partnerId 和 EB Cookie。默认采集上海时间昨日；可通过 `--start-date`、`--end-date` 逐日补采，不包含当天。保存全部上榜酒店的排名、原始 percent、可空 dataValue、活动及当前酒店标记到 `meituan_ota_roomnight_rank_daily`；percent 不解释为酒店入住率或推算市场份额。相同酒店/日期/查询酒店/榜单在事务内整体替换，失败回滚，空榜或结构异常不清旧数据，不自动重试。旧曝光来源两张表保留且不再写入。已有数据库需执行同名迁移 SQL 建新表。
+
+当前配置实测 GET 查询 2026-10-14 成功返回 21 家酒店，其中当前酒店 1 条（仅验证取数，未写业务数据）。`hotel_zhiting` 已执行新表迁移，其他部署库需单独应用迁移；旧脚本入口兼容转发到新采集器。
+
 ## 2026-10-12：单元测试的 Linux 导入兼容
 
 `panel_common.py` 仅在 Windows 上加载 `kernel32`，修复 Linux CI 导入 `status_routes` 时因不存在 `ctypes.WinDLL` 而失败的问题。Windows 进程检测逻辑保留；非 Windows 环境不进行该原生进程检测。新增跨平台导入和进程句柄检查回归测试。
@@ -46,9 +56,9 @@ MySQL 统一存储
 
 ## 3. 当前任务规模
 
-`OTA采集服务/runner.py` 当前注册 31 个统一调度任务：
+`OTA采集服务/runner.py` 当前注册 30 个统一调度任务：
 
-- 美团：15 个任务。
+- 美团：14 个任务。
 - 携程：15 个任务。
 - PMS：统一 `pms_fetch` 任务；别样红运行完整报表采集，宝寓按顺序运行当日房态和渠道房型关系采集。
 
@@ -60,7 +70,6 @@ MySQL 统一存储
 - 促销开通状态 `meituan_promotion_status`
 - 视频上传状态 `meituan_video_upload_status`
 - 近 30 天推广效果 `meituan_promotion_performance`
-- 曝光来源 `meituan_exposure_source`
 - 订单流失 `meituan_order_loss`
 - 扫码订单 `meituan_scan_order`
 - 用户来源 `meituan_user_source`

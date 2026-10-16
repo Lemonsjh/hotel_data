@@ -18,6 +18,20 @@ from process_runner import ProcessResult
 
 
 class PmsProviderSelectionTests(TestCase):
+    def test_retired_roomnight_task_is_not_registered_or_scheduled(self):
+        self.assertNotIn("meituan_exposure_source", runner.TASKS)
+        settings = {"meituan": {"enabled": True}, "tasks": {"meituan_exposure_source": True}}
+        self.assertNotIn("meituan_exposure_source", runner.enabled_tasks(settings))
+
+    def test_loading_settings_removes_retired_roomnight_switch(self):
+        settings = {"pms": {"provider": "byh"}, "tasks": {"meituan_exposure_source": True}}
+        with patch.object(runner, "require_valid_settings", return_value=settings), \
+             patch.object(runner, "load_json", return_value=settings), \
+             patch.object(runner, "save_json") as save:
+            loaded = runner.load_settings()
+        self.assertNotIn("meituan_exposure_source", loaded["tasks"])
+        save.assert_called_once()
+
     def test_disabled_meituan_reports_its_own_reason(self):
         settings = {"pms": {"provider": "bypms"}, "meituan": {"enabled": False}, "paths": {}}
         self.assertEqual(

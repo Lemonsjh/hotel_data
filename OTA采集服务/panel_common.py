@@ -31,7 +31,6 @@ TASK_LABELS = {
     "meituan_promotion_status": "美团促销开通状态",
     "meituan_video_upload_status": "美团视频上传情况",
     "meituan_promotion_performance": "美团近30天推广效果",
-    "meituan_exposure_source": "美团曝光来源",
     "meituan_order_loss": "美团流失订单",
     "meituan_scan_order": "美团扫码订单明细",
     "meituan_user_source": "美团用户来源",
