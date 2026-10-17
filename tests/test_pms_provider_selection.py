@@ -25,10 +25,14 @@ class PmsProviderSelectionTests(TestCase):
 
     def test_loading_settings_removes_retired_roomnight_switch(self):
         settings = {"pms": {"provider": "byh"}, "tasks": {"meituan_exposure_source": True}}
-        with patch.object(runner, "require_valid_settings", return_value=settings), \
-             patch.object(runner, "load_json", return_value=settings), \
-             patch.object(runner, "save_json") as save:
-            loaded = runner.load_settings()
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            config_path = Path(directory) / "settings.json"
+            config_path.write_text("{}", encoding="utf-8")
+            with patch.object(runner, "CONFIG_PATH", config_path), \
+                 patch.object(runner, "require_valid_settings", return_value=settings), \
+                 patch.object(runner, "load_json", return_value=settings), \
+                 patch.object(runner, "save_json") as save:
+                loaded = runner.load_settings()
         self.assertNotIn("meituan_exposure_source", loaded["tasks"])
         save.assert_called_once()
 
@@ -99,6 +103,7 @@ class PmsProviderSelectionTests(TestCase):
             with patch.object(runner, "LOG_DIR", Path(directory)), \
                  patch.object(runner, "save_json"), \
                  patch.object(runner, "enrich_room_type_ids"), \
+                 patch.object(runner, "backfill_bypms_hotel_name_from_summary"), \
                  patch.object(runner, "run_streamed", side_effect=lambda command, **_: (calls.append(command) or ProcessResult(0, "ok"))):
                 result = runner.run_task("pms_fetch", settings, {})
 
