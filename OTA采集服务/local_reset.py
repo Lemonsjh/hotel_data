@@ -37,7 +37,7 @@ def default_settings() -> dict[str, Any]:
     settings.setdefault("price_scheduler", {})["enabled"] = False
     settings.setdefault("reply_scheduler", {})["enabled"] = False
     settings.setdefault("promotion_scheduler", {})["enabled"] = False
-    settings["tasks"] = {name: False for name in runner.TASKS}
+    settings["tasks"] = {name: True for name in runner.TASKS}
     return settings
 
 
