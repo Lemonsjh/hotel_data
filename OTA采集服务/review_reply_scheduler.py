@@ -67,6 +67,8 @@ def wait_until(target: datetime) -> bool:
 
 
 def run_executor(settings: dict[str, Any], max_tasks: int) -> int:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     script = runner.script_path(settings, "meituan", "meituan_review_reply_task.py")
     if not script.exists():
         raise FileNotFoundError(f"Reply executor not found: {script}")

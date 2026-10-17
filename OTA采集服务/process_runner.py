@@ -63,6 +63,8 @@ def run_streamed(
     should_cancel: Callable[[], bool] | None = None,
 ) -> ProcessResult:
     """运行子进程，将合并输出逐行写入日志，并仅保留有限尾部。"""
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     process = subprocess.Popen(
         command,
         cwd=cwd,

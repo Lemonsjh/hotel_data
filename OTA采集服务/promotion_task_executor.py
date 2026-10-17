@@ -7,6 +7,8 @@ import runner
 
 
 def run(max_tasks: int) -> int:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     settings = runner.load_settings()
     promotion_controls.fail_interrupted_control_tasks(settings)
     tasks = promotion_controls.claim_control_tasks(settings, max_tasks)

@@ -1,0 +1,51 @@
+name: Build release update
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. v1.0.0 (must be a new version)'
+        required: true
+        type: string
+      publish:
+        description: 'Publish an official GitHub Release after tests pass'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-portable.txt
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - name: Build code-only update
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: python updater/build_release.py --version "$RELEASE_VERSION" --output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hotel-collector-update
+          path: |
+            dist/hotel-collector-update.zip
+            dist/hotel-collector-update.sha256
+          if-no-files-found: error
+      - name: Publish official release (explicit opt-in)
+        if: ${{ inputs.publish && github.ref == 'refs/heads/master' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          gh release create "$RELEASE_VERSION" \
+            dist/hotel-collector-update.zip dist/hotel-collector-update.sha256 \
+            --target "$COMMIT_SHA" --title "$RELEASE_VERSION" --generate-notes

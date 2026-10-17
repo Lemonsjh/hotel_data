@@ -60,6 +60,9 @@ function Resolve-PythonPath($Settings) {
 }
 
 function Start-ManualService {
+    if (Test-Path -LiteralPath (Join-Path $ProjectRoot 'updater\pending.json')) {
+        throw 'An update is active or needs recovery. Finish it before starting services.'
+    }
     $settings = Read-Settings
     $pythonPath = Resolve-PythonPath $settings
     $browserPath = Join-Path $ProjectRoot "runtime\playwright-browsers"

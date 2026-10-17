@@ -277,6 +277,8 @@ def run(hotel_id: str, limit: int, task_id: int | None) -> int:
 
 
 def main() -> int:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     parser = argparse.ArgumentParser(description="Process pending Meituan review reply tasks.")
     parser.add_argument("--hotel-id", default=os.environ.get("HOTEL_ID", ""))
     parser.add_argument("--max-tasks", type=int, default=10)

@@ -77,6 +77,8 @@ def wait_until(target: datetime) -> bool:
 
 
 def run_executor(max_tasks: int) -> int:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     maintain_logs(LOG_PATH.parent, LOG_PATH)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()

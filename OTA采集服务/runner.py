@@ -615,6 +615,8 @@ def cancelled_result(name: str) -> dict[str, Any]:
 
 
 def run_once(task_names: list[str] | None = None) -> dict[str, Any]:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     settings = load_settings()
     status = load_status()
     tasks = task_names or enabled_tasks(settings)

@@ -76,6 +76,8 @@ def release_process(pid: int) -> None:
 
 
 def run_collection() -> int:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     maintain_logs(LOG_PATH.parent, LOG_PATH)
     RUN_STOP_PATH.unlink(missing_ok=True)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)

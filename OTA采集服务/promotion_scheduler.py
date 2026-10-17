@@ -85,6 +85,8 @@ def wait_until(target: datetime) -> bool:
 
 
 def run_executor(settings: dict[str, Any], max_tasks: int) -> int:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     maintain_logs(LOG_PATH.parent, LOG_PATH)
     with LOG_PATH.open("a", encoding="utf-8") as log:
         log.write(f"\n[{now_text()}] pending promotion control scan started\n")

@@ -165,6 +165,8 @@ def request_manual_scheduler_stop() -> None:
 
 
 def run_background(args: list[str]) -> bool:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     status = runner.reconcile_stale_run()
     if status.get("last_run_status") in {"starting", "running", "stopping"}:
         return False

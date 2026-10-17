@@ -161,6 +161,8 @@ def execute_task(settings: dict[str, Any], platform: str, task: dict[str, Any], 
 
 
 def run_once(platforms: list[str], max_tasks: int) -> int:
+    from update_guard import ensure_not_updating
+    ensure_not_updating()
     settings = runner.load_settings()
     price_tasks.LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = price_tasks.LOG_DIR / f"{datetime.now():%Y%m%d}_price_executor.log"

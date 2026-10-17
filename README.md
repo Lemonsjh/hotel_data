@@ -20,6 +20,16 @@ MySQL 统一存储
 运营分析 / 评价回复 / 调价任务
 ```
 
+## 一键代码更新（GitHub Releases）
+
+部署目录包含 `一键更新.bat`、`update_guard.py` 和 `updater/` 时，可双击入口检查并确认安装公开仓库的最新正式 Release，不需要 Git 或 Token。此前发出的旧部署包需先补装更新器。
+
+- 只替换白名单内的本地程序文件，不覆盖酒店配置、Cookie、浏览器资料、日志、采集数据和运行环境；不连接或迁移数据库。
+- 有采集、调价、回复等业务正在运行时拒绝更新。校验通过、业务空闲后才停服，备份、安装并检查，失败回退代码，恢复此前运行的组件。
+- Python/依赖不匹配时停止，另行安装运行环境。更新器不从 master 源码包直接覆盖程序。
+- 发布者通过 GitHub Actions 的 **Build release update** 工作流构建；默认只上传测试包，明确勾选 publish 且在 master 上执行才创建正式 Release。
+- 中断恢复：确认没有更新进程后移除本项目 `updater/update.lock`，执行 `runtime\python.exe updater\update.py --recover`；不要删除备份目录或酒店数据。
+
 ## 主要能力
 
 ### 美团 OTA
