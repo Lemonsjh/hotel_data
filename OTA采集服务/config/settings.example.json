@@ -70,6 +70,22 @@
     "payment_url": "https://www.bypms.cn/console/finance/payment/get",
     "timeout_seconds": 120
   },
+  "foxhis": {
+    "enabled": false,
+    "hotel_name": "",
+    "username": "",
+    "password": "",
+    "code_dir": "OTA采集服务/foxhis_pms",
+    "isql_path": "",
+    "interfaces_file": "",
+    "server": "",
+    "database": "",
+    "charset": "cp936",
+    "fetch_after": "03:30",
+    "business_date_offset_days": 1,
+    "reports": "room_status,room_revenue,jl01,jy01,jy03,jl11,jd01",
+    "timeout_seconds": 600
+  },
   "mysql": {
     "host": "127.0.0.1",
     "port": 3306,

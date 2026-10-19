@@ -120,6 +120,7 @@ def login_process_alive(pid: Any) -> bool:
     except (TypeError, ValueError):
         return False
     command = (
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); "
         f"(Get-CimInstance Win32_Process -Filter 'ProcessId={process_id}').CommandLine"
     )
     completed = subprocess.run(
@@ -152,16 +153,21 @@ def stop_login_process(pid: Any) -> None:
 def profile_edge_root_pids(platform: str) -> list[int]:
     """Return only root Edge processes using this platform's dedicated profile."""
     command = """
-$agentProfile = [regex]::Escape($args[0].ToLower())
-$matches = @(Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" |
-  Where-Object { $_.CommandLine -and $_.CommandLine.ToLower() -match $agentProfile })
-$ids = @($matches | ForEach-Object { [int]$_.ProcessId })
-$matches | Where-Object { $ids -notcontains [int]$_.ParentProcessId } |
+$ErrorActionPreference = 'Stop'
+$agentProfile = $env:HOTEL_AGENT_LOGIN_PROFILE
+if ([string]::IsNullOrWhiteSpace($agentProfile)) { exit 1 }
+$agentEscaped = [regex]::Escape($agentProfile)
+$agentPattern = '(?:^|\\s)"?--user-data-dir="?' + $agentEscaped + '"?(?:\\s|$)'
+Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" |
+  Where-Object { ($_.CommandLine -and
+    $_.CommandLine -notmatch '(?:^|\\s)"?--type=' -and
+    $_.CommandLine -match $agentPattern) } |
   ForEach-Object { $_.ProcessId }
 """
     try:
         completed = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", command, str(profile_path(platform))],
+            ["powershell", "-NoProfile", "-Command", command],
+            env={**os.environ, "HOTEL_AGENT_LOGIN_PROFILE": str(profile_path(platform))},
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -171,6 +177,8 @@ $matches | Where-Object { $ids -notcontains [int]$_.ParentProcessId } |
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired):
+        return []
+    if completed.returncode:
         return []
     return [int(value) for value in completed.stdout.split() if value.isdigit()]
 

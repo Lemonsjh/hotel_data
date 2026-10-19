@@ -118,6 +118,12 @@ SECRET_GROUPS = [
             ("pms.password", "PMS 密码"),
         ],
     ),
+    (
+        "Foxhis 数据库",
+        [
+            ("foxhis.password", "Foxhis 数据库密码（只读账号）"),
+        ],
+    ),
 ]
 
 ADVANCED_SECRET_GROUPS = [
@@ -246,6 +252,26 @@ CONFIG_SECTIONS = [
             ("bypms.timeout_seconds", "超时（秒）", False, True),
         ],
     },
+    {
+        "key": "foxhis",
+        "title": "PMS（西软 Foxhis）",
+        "hint": "数据库只读直连（Sybase）。房态随每轮刷新，日结经营报表夜审后每天成功采集一次，失败会重试；与别样红 / 宝寓互斥启用。",
+        "fields": [
+            ("foxhis.hotel_name", "酒店名称", False, False),
+            ("foxhis.username", "数据库账号（只读）", False, False),
+            ("foxhis.password", "数据库密码", True, False),
+            ("foxhis.fetch_after", "采集时机（早于该时刻跳过，如 03:30）", False, False),
+            ("foxhis.reports", "采集报表（逗号分隔）", False, False),
+            ("foxhis.code_dir", "代码目录", False, True),
+            ("foxhis.isql_path", "isql 路径", False, True),
+            ("foxhis.interfaces_file", "接口文件", False, True),
+            ("foxhis.server", "服务名", False, True),
+            ("foxhis.database", "数据库名", False, True),
+            ("foxhis.charset", "字符集", False, True),
+            ("foxhis.business_date_offset_days", "业务日偏移（天）", False, True),
+            ("foxhis.timeout_seconds", "超时（秒）", False, True),
+        ],
+    },
 ]
 
 NUMBER_FIELDS = {
@@ -267,6 +293,8 @@ NUMBER_FIELDS = {
     "pms.action_timeout_ms",
     "pms.api_timeout_seconds",
     "bypms.timeout_seconds",
+    "foxhis.timeout_seconds",
+    "foxhis.business_date_offset_days",
 }
 
-SHORT_SECRET_FIELDS = {"mysql.password", "pms.password"}
+SHORT_SECRET_FIELDS = {"mysql.password", "pms.password", "foxhis.password"}

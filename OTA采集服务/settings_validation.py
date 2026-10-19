@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import pms_providers
+
 
 POSITIVE_NUMBERS = (
     "service.interval_minutes",
@@ -17,6 +19,7 @@ POSITIVE_NUMBERS = (
     "pms.action_timeout_ms",
     "pms.api_timeout_seconds",
     "bypms.timeout_seconds",
+    "foxhis.timeout_seconds",
     "data_retention.pms_hourly_days",
     "data_retention.pms_daily_days",
     "data_retention.jl02_daily_days",
@@ -46,6 +49,10 @@ PATH_FIELDS = (
     "pms.code_dir",
     "pms.entry_script",
     "bypms.code_dir",
+    "foxhis.code_dir",
+    "foxhis.entry_script",
+    "foxhis.isql_path",
+    "foxhis.interfaces_file",
 )
 
 
@@ -63,7 +70,11 @@ def validate_settings(settings: Any) -> list[str]:
     if not isinstance(settings, dict):
         return ["配置根节点必须是 JSON 对象"]
 
-    for section in ("service", "price_scheduler", "reply_scheduler", "data_retention", "hotel", "paths", "pms", "bypms", "mysql", "meituan", "ctrip", "tasks"):
+    sections = (
+        "service", "price_scheduler", "reply_scheduler", "data_retention", "hotel",
+        "paths", "mysql", "meituan", "ctrip", "tasks",
+    ) + tuple(spec["config_key"] for spec in pms_providers.PMS_PROVIDERS.values())
+    for section in sections:
         value = settings.get(section)
         if value is not None and not isinstance(value, dict):
             errors.append(f"{section} 必须是 JSON 对象")
@@ -100,11 +111,34 @@ def validate_settings(settings: Any) -> list[str]:
             if not isinstance(enabled, bool):
                 errors.append(f"tasks.{name} 必须是布尔值")
 
-    provider = get_path(settings, "pms.provider")
-    if provider not in (None, "", "byh", "bypms"):
-        errors.append("pms.provider 必须是 byh 或 bypms")
+    offset = get_path(settings, "foxhis.business_date_offset_days")
+    if offset is not None and (isinstance(offset, bool) or not isinstance(offset, int) or offset < 0):
+        errors.append("foxhis.business_date_offset_days 必须是非负整数")
+    gate = get_path(settings, "foxhis.fetch_after")
+    if gate:
+        try:
+            from datetime import datetime
+            datetime.strptime(gate, "%H:%M")
+        except (TypeError, ValueError):
+            errors.append("foxhis.fetch_after 必须是有效的 HH:MM 时刻")
+    reports = get_path(settings, "foxhis.reports")
+    if reports:
+        allowed = {"room_status", "room_revenue", "jl01", "jy01", "jy03", "jl11", "jd01"}
+        selected = reports.split(",") if isinstance(reports, str) else reports
+        if not isinstance(selected, (list, tuple)) or any(
+            not isinstance(item, str) or item.strip() not in allowed for item in selected
+        ):
+            errors.append("foxhis.reports 包含无效报表（不支持 KF11）")
 
-    for platform in ("pms", "bypms", "meituan", "ctrip"):
+    provider = get_path(settings, "pms.provider")
+    if provider not in (None, "", *pms_providers.PMS_PROVIDERS):
+        errors.append(
+            "pms.provider 必须是 " + " / ".join(pms_providers.PMS_PROVIDERS)
+        )
+
+    for platform in ("meituan", "ctrip") + tuple(
+        spec["config_key"] for spec in pms_providers.PMS_PROVIDERS.values()
+    ):
         enabled = get_path(settings, f"{platform}.enabled")
         if enabled is not None and not isinstance(enabled, bool):
             errors.append(f"{platform}.enabled 必须是布尔值")

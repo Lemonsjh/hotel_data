@@ -39,7 +39,8 @@ def _form_data() -> dict[str, Any]:
     return data
 
 
-def _select(name: str, label: str, options: list[str], current: Any) -> str:
+def _select(name: str, label: str, options: list[str], current: Any, required: bool = True) -> str:
+    required_attr = " required" if required else ""
     values = list(options)
     current = str(current or "")
     if current and current not in values:
@@ -50,7 +51,7 @@ def _select(name: str, label: str, options: list[str], current: Any) -> str:
         choices.append(f"<option value='{esc(value)}'{selected}>{esc(value)}</option>")
     return (
         f"<div class='field'><label for='{esc(name)}'>{esc(label)}</label>"
-        f"<select id='{esc(name)}' name='{esc(name)}' required>"
+        f"<select id='{esc(name)}' name='{esc(name)}'{required_attr}>"
         f"{''.join(choices)}</select></div>"
     )
 
@@ -101,7 +102,7 @@ def _render_form(
       <div class="panel-heading">
         <div>
           <h2 style="margin:0 0 6px">{'编辑' if editing else '新增'}统一房型</h2>
-          <div class="muted">三个平台可使用不同酒店名，所选房型共享统一房型 ID。</div>
+          <div class="muted">美团、携程房型至少填写一个，可分次补充。所选房型共享统一房型 ID。</div>
         </div>
         <span class="pill idle">PMS ↔ 美团 ↔ 携程</span>
       </div>
@@ -113,8 +114,8 @@ def _render_form(
         {preserved_aliases}
         {_input("hotel_id", item.get("hotel_id", ""), "例如 puyue")}
         {_input("pms_hotel_name", item.get("pms_hotel_name", ""), "自动同步，可手动修改")}
-        {_input("hotel_name", item.get("hotel_name", ""), "美团酒店展示名称")}
-        {_input("ctrip_hotel_name", item.get("ctrip_hotel_name", ""), "携程酒店展示名称（选填）", False)}
+        {_input("hotel_name", item.get("hotel_name", ""), "填写美团房型时必填", False)}
+        {_input("ctrip_hotel_name", item.get("ctrip_hotel_name", ""), "填写携程房型时必填", False)}
         {_input("room_type_id", item.get("room_type_id", ""), "自定义，例如 PY01")}
         {_input(
             "room_type_name",
@@ -123,7 +124,7 @@ def _render_form(
             False,
         )}
         {_select("pms_room_type_name", store.LABELS["pms_room_type_name"], pms_names, current_pms)}
-        {_select("meituan_room_type_name", store.LABELS["meituan_room_type_name"], meituan_names, item.get("meituan_room_type_name"))}
+        {_select("meituan_room_type_name", store.LABELS["meituan_room_type_name"], meituan_names, item.get("meituan_room_type_name"), False)}
         {_datalist_input("ctrip_room_type_name", item.get("ctrip_room_type_name", ""), ctrip_names, False)}
         <div class="field" style="grid-column:1/-1">
           <button type="submit">{'保存修改' if editing else '保存映射'}</button>{cancel}
