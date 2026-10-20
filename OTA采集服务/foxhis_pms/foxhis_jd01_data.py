@@ -1,4 +1,4 @@
-"""西软 JD01：离店日期从一个自然月前起，未知字段留NULL。"""
+"""西软 JD01：保留 PMS 原始账号，离店日期从一个自然月前起，未知字段留NULL。"""
 from __future__ import annotations
 
 import sys
@@ -89,7 +89,7 @@ def build_rows(records: list[dict], ledger: list[dict], rates: list[dict], confi
                     price, basis = rounded(rate), "whole_stay_rate"
         price_basis[basis] += 1
         rows.append({"hotel_name": config.hotel_name, "hotel_id": config.hotel_id, "source_platform": SOURCE_PLATFORM,
-                     "order_id": "foxhis:" + key, "booking_time": parse_time(r.get("booking_time")), "contact": r.get("contact") or None,
+                     "order_id": key, "booking_time": parse_time(r.get("booking_time")), "contact": r.get("contact") or None,
                      "guest_source": r.get("guest_source") or None, "member_level": None, "arrival_time": arrival, "departure_time": departure,
                      "room_type_name": r.get("room_type_name") or None, "room_type_id": None, "room_count": int(count),
                      "price_type": r.get("price_type") or None, "room_price": price, "prepayment": None, "guarantee_method": None,

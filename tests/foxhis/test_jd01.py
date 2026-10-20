@@ -63,37 +63,43 @@ class JD01Tests(unittest.TestCase):
         for records in (self.records,list(reversed(self.records))):
             rows,summary=self.build(records=records)
             self.assertEqual(len(rows),5)
-            self.assertEqual(next(r for r in rows if r['order_id']=='foxhis:OLD')['booking_status'],'已离店')
+            self.assertEqual(next(r for r in rows if r['order_id']=='OLD')['booking_status'],'已离店')
             self.assertEqual(summary['archived_duplicates_removed'],1)
+
+    def test_order_id_preserves_original_folio_without_prefix(self):
+        folios = ("F26100012", "000123")
+        rows, _ = self.build(records=[self.order(key, "R") for key in folios], ledger=[], rates=[])
+        self.assertEqual({row["order_id"] for row in rows}, set(folios))
+        self.assertTrue(all(row["source_platform"] == SOURCE_PLATFORM for row in rows))
 
     def test_unknown_fields_and_zero_nights_stay_null(self):
         rows,summary=self.build()
         for row in rows:
             for field in summary['nullable_fields']:self.assertIsNone(row[field])
-        unknown=next(r for r in rows if r['order_id']=='foxhis:UNKNOWN')
+        unknown=next(r for r in rows if r['order_id']=='UNKNOWN')
         self.assertIsNone(unknown['booking_status']);self.assertIsNone(unknown['room_price'])
-        self.assertIsNone(next(r for r in rows if r['order_id']=='foxhis:ZERO')['room_price'])
+        self.assertIsNone(next(r for r in rows if r['order_id']=='ZERO')['room_price'])
 
     def test_full_posted_average_and_ledger_deduplication(self):
         rows,_=self.build(ledger=[*self.ledger,self.ledger[0]])
-        self.assertEqual(next(r for r in rows if r['order_id']=='foxhis:OLD')['room_price'],D('50.01'))
+        self.assertEqual(next(r for r in rows if r['order_id']=='OLD')['room_price'],D('50.01'))
         ledger=[dict(folio_no='OLD',line_no='1',amount='100',nights='1'),dict(folio_no='OLD',line_no='2',amount='-20',nights='0')]
         rows,_=self.build(ledger=ledger)
-        self.assertEqual(next(r for r in rows if r['order_id']=='foxhis:OLD')['room_price'],D(80))
+        self.assertEqual(next(r for r in rows if r['order_id']=='OLD')['room_price'],D(80))
 
     def test_single_whole_stay_rate_supports_multiroom_reservations(self):
-        rows,_=self.build();future=next(r for r in rows if r['order_id']=='foxhis:FUTURE')
+        rows,_=self.build();future=next(r for r in rows if r['order_id']=='FUTURE')
         self.assertEqual((future['room_count'],future['room_price']),(2,D(110)))
-        self.assertEqual(next(r for r in rows if r['order_id']=='foxhis:LIVE')['room_price'],D(110))
+        self.assertEqual(next(r for r in rows if r['order_id']=='LIVE')['room_price'],D(110))
 
     def test_partial_overlapping_missing_or_shared_rate_is_not_guessed(self):
         for rates in ([],[self.rate('LIVE',start_date='20261016')],[self.rate('LIVE'),self.rate('LIVE')],
                       [self.rate('LIVE',quantity='2')],[self.rate('LIVE',rate='')]):
             rows,_=self.build(rates=rates)
-            self.assertIsNone(next(r for r in rows if r['order_id']=='foxhis:LIVE')['room_price'])
+            self.assertIsNone(next(r for r in rows if r['order_id']=='LIVE')['room_price'])
         records=[{**r,'share_code':'T'} if r['folio_no']=='LIVE' else r for r in self.records]
         rows,_=self.build(records=records)
-        self.assertIsNone(next(r for r in rows if r['order_id']=='foxhis:LIVE')['room_price'])
+        self.assertIsNone(next(r for r in rows if r['order_id']=='LIVE')['room_price'])
 
     def test_duplicate_main_or_conflicting_archive_and_ledger_fail(self):
         for records in ([*self.records,self.records[0]], [{**r,'room_count':'3'} if r['origin']=='history' and r['folio_no']=='OLD' else r for r in self.records]):
@@ -121,6 +127,23 @@ class JD01Tests(unittest.TestCase):
         with patch.object(self.db,'executemany',side_effect=sqlite3.IntegrityError('insert failed')):
             with self.assertRaises(sqlite3.IntegrityError):jd.sync_rows(rows,self.config)
         self.assertEqual(self.contents(),before)
+
+    def test_next_snapshot_replaces_legacy_prefixed_ids_only_in_its_scope(self):
+        rows, _ = self.build()
+        for row in rows:
+            self.seed({**row, "order_id": "foxhis:" + row["order_id"]})
+        legacy = {**rows[0], "order_id": "foxhis:" + rows[0]["order_id"]}
+        self.seed({**legacy, "hotel_id": "OTHER"})
+        self.seed({**legacy, "source_platform": "PMS（宝寓）"})
+        self.seed({**legacy, "departure_time": datetime(2026, 9, 18)})
+        jd.sync_rows(rows, self.config)
+        jd.sync_rows(rows, self.config)
+        contents = self.contents()
+        current = [r for r in contents if r[0] == self.config.hotel_id and r[1] == SOURCE_PLATFORM
+                   and r[3] >= str(jd.checkout_cutoff(self.stamp.date()))]
+        self.assertEqual({r[2] for r in current}, {row["order_id"] for row in rows})
+        self.assertEqual(len(current), len(rows))
+        self.assertEqual(sum(r[2].startswith("foxhis:") for r in contents), 3)
 
     def test_empty_duplicate_mixed_or_stale_batch_preserves_data(self):
         rows,_=self.build();self.seed({**rows[0],'snapshot_time':self.stamp+timedelta(seconds=1)});before=self.contents()
