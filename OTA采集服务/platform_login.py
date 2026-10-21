@@ -15,6 +15,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 import runner
+from login_diagnostics import LoginDiagnostics
 from hotel_name_probe import probe as probe_hotel
 
 
@@ -411,6 +412,7 @@ def run(platform: str, switch_account: bool = False) -> int:
     info = require_platform(platform)
     stop_path(platform).unlink(missing_ok=True)
     refresh_identity = False
+    diagnostic = LoginDiagnostics(runner.LOG_DIR, enabled=platform == "meituan", switch_account=switch_account)
     try:
         profile_guard = browser_profile_lock(timeout_seconds=600) if platform == "meituan" else nullcontext()
         with profile_guard, sync_playwright() as playwright:
@@ -424,6 +426,7 @@ def run(platform: str, switch_account: bool = False) -> int:
                 timezone_id="Asia/Shanghai",
                 args=["--start-maximized"],
             )
+            diagnostic.attach(context)
             required_cookies = (
                 {"mebsid"}
                 if platform == "meituan"
@@ -434,11 +437,14 @@ def run(platform: str, switch_account: bool = False) -> int:
                 context.clear_cookies()
                 had_session = False
             page = initial_login_page(context, platform)
+            diagnostic.phase("opening_login", had_session=had_session)
             navigate(page, initial_login_url(platform, had_session))
 
             if platform == "meituan":
+                diagnostic.phase("waiting_main")
                 page = wait_for_auth(context, platform, {"mebsid"}, "请在Edge中完成美团登录")
                 write_status(platform, "syncing", "美团主站已登录，正在同步EB会话")
+                diagnostic.phase("opening_eb")
                 navigate(page, info["eb_url"])
                 page = wait_for_auth(context, platform, {"mebsid", "ebbsid"}, "请完成美团EB登录")
             else:
@@ -450,9 +456,12 @@ def run(platform: str, switch_account: bool = False) -> int:
                 )
 
             protected_url = info["eb_url"] if platform == "meituan" else info["url"]
+            diagnostic.phase("validating")
             navigate(page, protected_url)
             validate_protected_page(page, platform)
+            diagnostic.phase("saving")
             count = save_cookies(platform, context)
+            diagnostic.finish("success")
             refresh_identity = switch_account or not had_session
             write_status(
                 platform,
@@ -491,12 +500,15 @@ def run(platform: str, switch_account: bool = False) -> int:
                 )
         return 0
     except LoginCancelled as exc:
+        diagnostic.finish("cancelled")
         write_status(platform, "cancelled", str(exc))
         return 1
     except Exception as exc:
+        diagnostic.finish("failed")
         write_status(platform, "failed", f"{type(exc).__name__}: {exc}")
         return 2
     finally:
+        diagnostic.finish("ended")
         stop_profile_edge_processes(platform)
         stop_path(platform).unlink(missing_ok=True)
         status = read_status(platform)
