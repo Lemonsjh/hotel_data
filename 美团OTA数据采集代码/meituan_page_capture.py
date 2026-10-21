@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import hashlib
 import time
 from contextlib import contextmanager
 from http.cookies import SimpleCookie
@@ -77,6 +78,36 @@ def cookie_entries(cookie_header: str, url: str) -> list[dict[str, str]]:
         {"name": name, "value": value.value, "url": url}
         for name, value in parsed.items()
     ]
+
+
+def session_fingerprint(me_cookie: str, eb_cookie: str) -> str:
+    return hashlib.sha256((me_cookie + "\n" + eb_cookie).encode()).hexdigest()
+
+
+def save_login_session(context: Any, me_cookie: str, eb_cookie: str) -> None:
+    path = profile_path() / "collector_session.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
+        "fingerprint": session_fingerprint(me_cookie, eb_cookie),
+        "storage_state": context.storage_state(),
+    }, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def load_login_session(me_cookie: str, eb_cookie: str) -> dict[str, Any] | None:
+    """Only reuse helper state belonging to the currently configured ME/EB session."""
+    if not me_cookie or not eb_cookie:
+        return None
+    try:
+        data = json.loads((profile_path() / "collector_session.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(data, dict) and data.get("fingerprint") == session_fingerprint(me_cookie, eb_cookie):
+        state = data.get("storage_state")
+        if isinstance(state, dict) and isinstance(state.get("cookies"), list):
+            return state
+    return None
 
 
 def page_access_issue(page: Any) -> str:

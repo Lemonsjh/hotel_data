@@ -9,10 +9,10 @@ import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from playwright.sync_api import sync_playwright
-from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE
+from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE, MEITUAN_PROMOTION_COOKIE
 from meituan_page_capture import browser_profile_lock, cookie_entries, page_access_issue
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -176,6 +176,9 @@ def request_page(context: Any, page: Any, period_start: date, period_end: date, 
                 raise RuntimeError(f"Promotion performance page requires manual action: {issue}")
             page.wait_for_timeout(500)
         if not responses:
+            if any(urlsplit(frame.url).hostname == "epassport.meituan.com" and "/oauth-login" in urlsplit(frame.url).path
+                   for frame in page.frames):
+                raise RuntimeError("美团推广后台未完成登录/授权；请在日常 Edge 进入推广页面，将 ebmidas.dianping.com 请求中的 Cookie 保存到“推广后台 Cookie”。")
             safe_page_url = page.url.split("?", 1)[0]
             raise RuntimeError(
                 "Promotion performance page did not issue a data request "
@@ -207,6 +210,8 @@ def fetch_plans(period_start: date, period_end: date) -> list[dict[str, Any]]:
             cookies = (
                 cookie_entries(MEITUAN_ME_COOKIE, "https://me.meituan.com/")
                 + cookie_entries(MEITUAN_EB_COOKIE, "https://eb.meituan.com/")
+                + [{**cookie, "sameSite": "None", "secure": True}
+                   for cookie in cookie_entries(MEITUAN_PROMOTION_COOKIE, "https://ebmidas.dianping.com/")]
             )
             if cookies:
                 context.add_cookies(cookies)

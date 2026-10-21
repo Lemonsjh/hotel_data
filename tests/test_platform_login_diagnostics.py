@@ -51,6 +51,7 @@ class PlatformLoginDiagnosticsTests(unittest.TestCase):
         self.navigate = self.stack.enter_context(patch.object(login, "navigate", side_effect=self.observed_navigation))
 
     def observed_navigation(self, page, url):
+        page.url = url
         page.fire("domcontentloaded")
         request = FakeRequest()
         self.context.fire("request", request)
@@ -68,12 +69,26 @@ class PlatformLoginDiagnosticsTests(unittest.TestCase):
         self.assertEqual(login.run("meituan"), 0)
         self.assertEqual(self.records()[-1]["outcome"], "success")
         self.assertEqual([call.args[1] for call in self.navigate.call_args_list], [
-            login.PLATFORMS["meituan"]["url"], login.PLATFORMS["meituan"]["eb_url"], login.PLATFORMS["meituan"]["eb_url"],
+            login.PLATFORMS["meituan"]["url"], login.PLATFORMS["meituan"]["eb_url"],
         ])
+        self.assertEqual([r["phase"] for r in self.records() if r["event"] == "phase"],
+                         ["opening_login", "waiting_main", "opening_eb", "validating", "saving"])
         self.mocks["save_cookies"].assert_called_once_with("meituan", self.context)
         self.assertEqual(self.options[0]["args"], ["--start-maximized"])
         self.assertFalse(self.options[0]["headless"])
         self.assertNotIn("ignore_default_args", self.options[0])
+
+    def test_validation_navigates_when_auth_returns_a_different_page(self):
+        def authenticated(*args):
+            page = self.context.pages[0]
+            page.url = login.PLATFORMS["meituan"]["url"]
+            return page
+        self.mocks["wait_for_auth"].side_effect = authenticated
+        self.assertEqual(login.run("meituan"), 0)
+        self.assertEqual(self.navigate.call_count, 3)
+        self.mocks["validate_protected_page"].assert_called_once()
+        self.mocks["save_cookies"].assert_called_once_with("meituan", self.context)
+        self.assertEqual(self.records()[-1]["outcome"], "success")
 
     def test_login_failure_records_failure_without_saving_any_cookies(self):
         self.navigate.side_effect = RuntimeError("PRIVATE")
@@ -98,7 +113,7 @@ class PlatformLoginDiagnosticsTests(unittest.TestCase):
         with patch("login_diagnostics.Path.open", side_effect=OSError("日志目录不可写 PRIVATE")):
             self.assertEqual(login.run("meituan"), 0)
         self.mocks["save_cookies"].assert_called_once_with("meituan", self.context)
-        self.assertEqual(self.navigate.call_count, 3)
+        self.assertEqual(self.navigate.call_count, 2)
 
 
 if __name__ == "__main__":

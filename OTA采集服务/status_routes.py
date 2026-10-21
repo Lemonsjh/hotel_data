@@ -33,7 +33,7 @@ def register(app) -> None:
         run_names = status.get("last_run_tasks") or runner.enabled_tasks(settings)
         run_items = [tasks.get(name, {}) for name in run_names]
         success_count = sum(1 for item in run_items if item.get("status") == "success")
-        failed_count = sum(1 for item in run_items if item.get("status") == "failed")
+        failed_count = sum(1 for item in run_items if item.get("status") in {"failed", "partial_failed"})
         running_count = sum(1 for item in run_items if item.get("status") == "running")
         pending_count = sum(1 for item in run_items if item.get("status") == "pending")
         completed_count = success_count + failed_count
@@ -53,6 +53,16 @@ def register(app) -> None:
             log = item.get("log_path", "")
             log_link = f"<a class='button secondary' href='/log?path={esc(log)}'>日志</a>" if log else ""
             error = item.get("error_summary") or "无"
+            children = item.get("subtasks") or []
+            child_html = ""
+            if len(children) > 1:
+                succeeded = sum(child.get("status") == "success" for child in children)
+                failed = sum(child.get("status") == "failed" for child in children)
+                child_html = (
+                    f"<details class='meta'><summary>子采集：{succeeded} 成功 / {failed} 失败</summary>"
+                    + "".join(f"<div>{esc(child.get('script'))}：{esc(status_label(child.get('status')))}</div>" for child in children)
+                    + "</details>"
+                )
             cards.append(
                 "<article class='task-card'>"
                 f"<div><div class='task-title'>{esc(task_label(name))}</div><div class='task-key'>{esc(name)}</div></div>"
@@ -60,6 +70,7 @@ def register(app) -> None:
                 f"<div class='meta'>配置：{config_state}<br>开始：{esc(item.get('started_at', '-'))}<br>"
                 f"耗时：{esc(item.get('duration_seconds', '-'))} s<br>"
                 f"错误：{esc(error)}</div>"
+                f"{child_html}"
                 f"<div class='actions'><form method='post' action='/run/{esc(name)}'>"
                 f"<button {'disabled' if is_running or unavailable_reason else ''} "
                 f"title='{esc(unavailable_reason)}'>运行</button></form>{log_link}</div>"

@@ -10,11 +10,13 @@ import price_tasks
 
 PMS_BYH_PLATFORM = "pms_byh"
 PMS_BYPMS_PLATFORM = "pms_bypms"
+PMS_FOXHIS_PLATFORM = "pms_foxhis"
 PMS_PLATFORM = PMS_BYH_PLATFORM
 BYPMS_SOURCE_LABEL = "PMS（宝寓）"
+FOXHIS_SOURCE_LABEL = "PMS（Foxhis）"
 MEITUAN_PLATFORM = "meituan"
 CTRIP_PLATFORM = "ctrip"
-PMS_PLATFORMS = (PMS_BYH_PLATFORM, PMS_BYPMS_PLATFORM)
+PMS_PLATFORMS = (PMS_BYH_PLATFORM, PMS_BYPMS_PLATFORM, PMS_FOXHIS_PLATFORM)
 BASE_PLATFORMS = (*PMS_PLATFORMS, MEITUAN_PLATFORM, CTRIP_PLATFORM)
 PRODUCT_PLATFORMS = {
     MEITUAN_PLATFORM: ("美团", "meituan"),
@@ -33,11 +35,7 @@ FIELDS = (
     "meituan_room_type_name",
     "ctrip_room_type_name",
 )
-REQUIRED_FIELDS = tuple(
-    name
-    for name in FIELDS
-    if name not in {"room_type_name", "ctrip_hotel_name", "ctrip_room_type_name"}
-)
+REQUIRED_FIELDS = ("hotel_id", "pms_hotel_name", "room_type_id", "pms_room_type_name")
 LABELS = {
     "hotel_id": "酒店 ID",
     "pms_hotel_name": "PMS 酒店名称",
@@ -53,11 +51,11 @@ LABELS = {
 
 def active_pms_platform(settings: dict[str, Any]) -> str:
     provider = str((settings.get("pms") or {}).get("provider") or "byh").strip().lower()
-    return PMS_BYPMS_PLATFORM if provider == "bypms" else PMS_BYH_PLATFORM
+    return {"bypms": PMS_BYPMS_PLATFORM, "foxhis": PMS_FOXHIS_PLATFORM}.get(provider, PMS_BYH_PLATFORM)
 
 
 def defaults(settings: dict[str, Any]) -> dict[str, Any]:
-    pms_key = "bypms" if active_pms_platform(settings) == PMS_BYPMS_PLATFORM else "pms"
+    pms_key = {PMS_BYPMS_PLATFORM: "bypms", PMS_FOXHIS_PLATFORM: "foxhis"}.get(active_pms_platform(settings), "pms")
     return {
         "hotel_id": str(settings.get("hotel", {}).get("hotel_id", "")).strip(),
         "pms_hotel_name": str(settings.get(pms_key, {}).get("hotel_name", "")).strip(),
@@ -109,8 +107,14 @@ def validate(data: dict[str, Any]) -> str | None:
             missing.append(LABELS[name])
     if missing:
         return "请填写：" + "、".join(missing)
-    if data.get("ctrip_room_type_name") and not data.get("ctrip_hotel_name"):
-        return "填写携程房型时，也需要填写携程酒店名称"
+    if not data.get("meituan_room_type_name") and not data.get("ctrip_room_type_name"):
+        return "请至少填写美团或携程其中一个房型"
+    for platform, room_field, hotel_field in (
+        ("美团", "meituan_room_type_name", "hotel_name"),
+        ("携程", "ctrip_room_type_name", "ctrip_hotel_name"),
+    ):
+        if data.get(room_field) and not data.get(hotel_field):
+            return f"填写{platform}房型时，也需要填写{platform}酒店名称"
     return None
 
 
@@ -126,7 +130,7 @@ def room_options(
     settings: dict[str, Any],
 ) -> tuple[list[str], list[str], list[str], list[str]]:
     hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
-    using_bypms = str((settings.get("pms") or {}).get("provider") or "byh") == "bypms"
+    source_label = {PMS_BYPMS_PLATFORM: BYPMS_SOURCE_LABEL, PMS_FOXHIS_PLATFORM: FOXHIS_SOURCE_LABEL}.get(active_pms_platform(settings))
     hotel_filter = " WHERE hotel_id=%s" if hotel_id else ""
     pms_params = (hotel_id, hotel_id) if hotel_id else ()
     forecast_filter = "WHERE hotel_id=%s AND" if hotel_id else "WHERE"
@@ -168,13 +172,13 @@ def room_options(
     ORDER BY room_type_name
     """
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
-        pms_hotel_sql, pms_room_sql = (bypms_hotel_sql, bypms_room_sql) if using_bypms else (byh_hotel_sql, byh_room_sql)
+        pms_hotel_sql, pms_room_sql = (bypms_hotel_sql, bypms_room_sql) if source_label else (byh_hotel_sql, byh_room_sql)
         pms_params = (
-            (BYPMS_SOURCE_LABEL, hotel_id)
-            if using_bypms and hotel_id
-            else ((BYPMS_SOURCE_LABEL,) if using_bypms else pms_params)
+            (source_label, hotel_id)
+            if source_label and hotel_id
+            else ((source_label,) if source_label else pms_params)
         )
-        forecast_params = pms_params if using_bypms else forecast_params
+        forecast_params = pms_params if source_label else forecast_params
         return (
             _query_names(cur, pms_hotel_sql, pms_params),
             _query_names(cur, pms_room_sql, forecast_params),
@@ -184,13 +188,14 @@ def room_options(
 
 
 def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
-    sql = """
+    pms_placeholders = ",".join(["%s"] * len(PMS_PLATFORMS))
+    sql = f"""
     SELECT hotel_id, room_type_id, room_type_name, pms_hotel_name,
            pms_room_type_name, ota_hotel_name, source_platform, source_room_type_name,
            is_active, updated_at
     FROM hotel_room_type_mapping
     WHERE mapping_status<>'REJECTED'
-      AND ((source_product_id='' AND source_platform IN (%s,%s,%s,%s,%s,%s))
+      AND ((source_product_id='' AND source_platform IN ({pms_placeholders},%s,%s,%s,%s))
        OR (source_product_id<>'' AND is_active=1
            AND source_platform IN (%s,%s,%s,%s)))
     ORDER BY updated_at DESC, id DESC

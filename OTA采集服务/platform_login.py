@@ -22,7 +22,7 @@ from hotel_name_probe import probe as probe_hotel
 MEITUAN_CODE_DIR = runner.PROJECT_ROOT / "美团OTA数据采集代码"
 if str(MEITUAN_CODE_DIR) not in sys.path:
     sys.path.insert(0, str(MEITUAN_CODE_DIR))
-from meituan_page_capture import browser_profile_lock
+from meituan_page_capture import browser_profile_lock, save_login_session
 
 
 PLATFORMS = {
@@ -80,6 +80,14 @@ def require_platform(platform: str) -> dict[str, str]:
     return PLATFORMS[platform]
 
 
+def open_local_edge() -> None:
+    """Open Meituan in the user's normal Edge session for manual authentication."""
+    try:
+        os.startfile("microsoft-edge:" + PLATFORMS["meituan"]["url"])
+    except OSError as exc:
+        raise RuntimeError("无法打开本机 Edge，请确认已安装且能正常启动。") from exc
+
+
 def read_status(platform: str) -> dict[str, Any]:
     require_platform(platform)
     return runner.load_json(
@@ -121,6 +129,7 @@ def login_process_alive(pid: Any) -> bool:
     except (TypeError, ValueError):
         return False
     command = (
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); "
         f"(Get-CimInstance Win32_Process -Filter 'ProcessId={process_id}').CommandLine"
     )
     completed = subprocess.run(
@@ -153,16 +162,21 @@ def stop_login_process(pid: Any) -> None:
 def profile_edge_root_pids(platform: str) -> list[int]:
     """Return only root Edge processes using this platform's dedicated profile."""
     command = """
-$agentProfile = [regex]::Escape($args[0].ToLower())
-$matches = @(Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" |
-  Where-Object { $_.CommandLine -and $_.CommandLine.ToLower() -match $agentProfile })
-$ids = @($matches | ForEach-Object { [int]$_.ProcessId })
-$matches | Where-Object { $ids -notcontains [int]$_.ParentProcessId } |
+$ErrorActionPreference = 'Stop'
+$agentProfile = $env:HOTEL_AGENT_LOGIN_PROFILE
+if ([string]::IsNullOrWhiteSpace($agentProfile)) { exit 1 }
+$agentEscaped = [regex]::Escape($agentProfile)
+$agentPattern = '(?:^|\\s)"?--user-data-dir="?' + $agentEscaped + '"?(?:\\s|$)'
+Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" |
+  Where-Object { ($_.CommandLine -and
+    $_.CommandLine -notmatch '(?:^|\\s)"?--type=' -and
+    $_.CommandLine -match $agentPattern) } |
   ForEach-Object { $_.ProcessId }
 """
     try:
         completed = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", command, str(profile_path(platform))],
+            ["powershell", "-NoProfile", "-Command", command],
+            env={**os.environ, "HOTEL_AGENT_LOGIN_PROFILE": str(profile_path(platform))},
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -172,6 +186,8 @@ $matches | Where-Object { $ids -notcontains [int]$_.ParentProcessId } |
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired):
+        return []
+    if completed.returncode:
         return []
     return [int(value) for value in completed.stdout.split() if value.isdigit()]
 
@@ -219,6 +235,8 @@ def start(platform: str, settings: dict[str, Any], switch_account: bool = False)
     old = read_status(platform)
     old_pid = old.get("pid")
     if login_process_alive(old_pid):
+        if platform == "meituan" and not switch_account:
+            return int(old_pid)
         if not cancel(platform):
             raise RuntimeError(f"无法结束旧的{info['label']}登录助手，请在任务管理器中结束该进程后重试")
     else:
@@ -369,6 +387,8 @@ def save_cookies(platform: str, context: Any) -> int:
     else:
         section["cookie"] = cookie_header(context, PLATFORMS[platform]["url"])
         count = len(cookie_names(context))
+    if platform == "meituan":
+        save_login_session(context, section["me_cookie"], section["eb_cookie"])
     runner.save_json(runner.CONFIG_PATH, settings)
     return count
 
@@ -457,7 +477,8 @@ def run(platform: str, switch_account: bool = False) -> int:
 
             protected_url = info["eb_url"] if platform == "meituan" else info["url"]
             diagnostic.phase("validating")
-            navigate(page, protected_url)
+            if platform != "meituan" or page.url != protected_url:
+                navigate(page, protected_url)
             validate_protected_page(page, platform)
             diagnostic.phase("saving")
             count = save_cookies(platform, context)

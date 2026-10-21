@@ -19,6 +19,7 @@ from playwright.sync_api import sync_playwright
 from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
 from meituan_goods_price_mapping import MeituanGoodsClient
 from meituan_page_capture import browser_profile_lock
+from meituan_status_session import launch_status_context
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import DB_CONFIG, OUTPUT_DIR
@@ -238,16 +239,8 @@ def click_workbench_menu(page: Any, parent_name: str, item_name: str) -> None:
 
 
 def fetch_hotel_highlights_status() -> str:
-    local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    profile = local_app_data / "HotelAgent" / "browser_profiles" / "meituan"
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile),
-            channel="msedge",
-            headless=True,
-            chromium_sandbox=True,
-            locale="zh-CN",
-        )
+        context = launch_status_context(playwright)
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
@@ -272,16 +265,8 @@ def fetch_hotel_highlights_status() -> str:
 
 
 def fetch_auto_order_status() -> str:
-    local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    profile = local_app_data / "HotelAgent" / "browser_profiles" / "meituan"
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile),
-            channel="msedge",
-            headless=True,
-            chromium_sandbox=True,
-            locale="zh-CN",
-        )
+        context = launch_status_context(playwright)
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(AUTO_ORDER_URL, wait_until="domcontentloaded", timeout=60_000)
@@ -309,13 +294,8 @@ def public_welfare_page_status(states: list[str], body: str) -> str | None:
 
 
 def fetch_public_welfare_status() -> str:
-    local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    profile = local_app_data / "HotelAgent" / "browser_profiles" / "meituan"
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile), channel="msedge", headless=True,
-            chromium_sandbox=True, locale="zh-CN",
-        )
+        context = launch_status_context(playwright)
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
@@ -350,13 +330,8 @@ def scheduled_invoice_is_closed(page: Any) -> bool:
 
 
 def fetch_scheduled_invoice_status() -> str:
-    local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    profile = local_app_data / "HotelAgent" / "browser_profiles" / "meituan"
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile), channel="msedge", headless=True,
-            chromium_sandbox=True, locale="zh-CN",
-        )
+        context = launch_status_context(playwright)
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)

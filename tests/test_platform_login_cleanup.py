@@ -33,8 +33,12 @@ class PlatformLoginCleanupTests(unittest.TestCase):
             self.assertFalse(platform_login.process_alive(60192))
 
     def test_profile_edge_roots_reads_only_returned_pids(self):
-        with patch.object(platform_login.subprocess, "run", return_value=SimpleNamespace(stdout="60192\n42380\n")):
+        with patch.object(platform_login.subprocess, "run", return_value=SimpleNamespace(stdout="60192\n42380\n", returncode=0)):
             self.assertEqual(platform_login.profile_edge_root_pids("meituan"), [60192, 42380])
+
+    def test_profile_detection_failure_does_not_return_or_kill_any_process(self):
+        with patch.object(platform_login.subprocess, "run", return_value=SimpleNamespace(stdout="60192", returncode=1)):
+            self.assertEqual(platform_login.profile_edge_root_pids("meituan"), [])
 
     def test_cleanup_kills_only_profile_roots(self):
         with patch.object(platform_login, "profile_edge_root_pids", return_value=[60192]), patch.object(platform_login.subprocess, "run") as run:

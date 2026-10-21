@@ -2,24 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
-from contextlib import nullcontext
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
-
-
-MEITUAN_CODE_DIR = Path(__file__).resolve().parent.parent / "美团OTA数据采集代码"
-if str(MEITUAN_CODE_DIR) not in sys.path:
-    sys.path.insert(0, str(MEITUAN_CODE_DIR))
-from meituan_page_capture import browser_profile_lock
 
 
 MEITUAN_URL = "https://me.meituan.com/ebooking/merchant/comment-manage-react"
@@ -106,11 +97,6 @@ def parse_cookie_header(cookie_header: str, domains: list[str]) -> list[dict[str
         for domain in domains:
             cookies.append({"name": name, "value": morsel.value, "domain": domain, "path": "/"})
     return cookies
-
-
-def meituan_profile_path() -> Path:
-    local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    return local / "HotelAgent" / "browser_profiles" / "meituan"
 
 
 def extract_meituan_comment_request(url: str) -> dict[str, str]:
@@ -243,30 +229,19 @@ def probe(
     else:
         raise ValueError(f"Unsupported platform: {platform}")
 
-    profile = meituan_profile_path()
-    profile_guard = browser_profile_lock() if platform == "meituan" and profile.exists() else nullcontext()
-    with profile_guard, sync_playwright() as p:
+    with sync_playwright() as p:
         browser = None
         context = None
         session_source = "cookie"
         try:
             hits: list[dict[str, str]] = []
             meituan_request: dict[str, str] = {}
-            if platform == "meituan" and profile.exists():
-                try:
-                    context = p.chromium.launch_persistent_context(
-                        user_data_dir=str(profile), channel="msedge", headless=True, no_viewport=True
-                    )
-                    session_source = "profile"
-                except PlaywrightError:
-                    context = None
-            if context is None:
-                browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-                context = browser.new_context(viewport={"width": 1280, "height": 800})
-                cookies = parse_cookie_header(cookie_header, primary_domains)
-                if secondary_cookie_header.strip():
-                    cookies.extend(parse_cookie_header(secondary_cookie_header, secondary_domains))
-                context.add_cookies(cookies)
+            browser = p.chromium.launch(channel="msedge", headless=True)
+            context = browser.new_context(viewport={"width": 1280, "height": 800})
+            cookies = parse_cookie_header(cookie_header, primary_domains)
+            if secondary_cookie_header.strip():
+                cookies.extend(parse_cookie_header(secondary_cookie_header, secondary_domains))
+            context.add_cookies(cookies)
             page = context.new_page()
             page.route(
                 "**/*",
@@ -297,13 +272,20 @@ def probe(
             page.on("response", on_response)
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                if platform == "ctrip":
+                    try:
+                        name = page.locator("#he-micro-html-inline-hotel-name").inner_text(timeout=min(timeout_ms, 10000))
+                        if looks_like_hotel(name):
+                            hits.append(hit("page_header", "hotelName", name, 110))
+                    except PlaywrightTimeoutError:
+                        pass
                 loop_count = 32 if platform == "meituan" else 10
                 for _ in range(loop_count):
                     candidates_now = unique_hits([item for item in hits if looks_like_hotel(item.get("value"))])
                     if platform == "meituan":
                         if meituan_request and candidates_now and int(candidates_now[0].get("priority") or 0) >= 100:
                             break
-                    elif candidates_now:
+                    elif candidates_now and int(candidates_now[0].get("priority") or 0) >= 100:
                         break
                     page.wait_for_timeout(250)
                 if not unique_hits([item for item in hits if looks_like_hotel(item.get("value"))]):
@@ -329,7 +311,8 @@ def probe(
                     or "passport" in current_url.lower()
                     or LOGIN_TEXT in body[:4000]
                 ) and not meituan_request
-                candidates = unique_hits([item for item in hits if looks_like_hotel(item.get("value"))])
+                candidates = unique_hits([item for item in hits if looks_like_hotel(item.get("value"))
+                                          and (platform != "ctrip" or int(item.get("priority") or 0) >= 100)])
                 hotel_name = candidates[0]["value"] if candidates and not login_like else ""
                 result = {
                     "ok": bool(meituan_request) if platform == "meituan" else bool(hotel_name),

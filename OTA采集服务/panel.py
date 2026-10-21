@@ -13,9 +13,11 @@ from config_schema import (
     NUMBER_FIELDS,
     SHORT_SECRET_FIELDS,
 )
+import foxhis_probe
 import log_routes
 import local_reset
 import platform_login
+import pms_providers
 import price_routes
 import price_tasks
 import promotion_routes
@@ -48,6 +50,8 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
                 if value:
                     set_path(settings, key, value)
                 continue
+            if not value and key in {"meituan.hotel_name", "meituan.poi_id", "meituan.partner_id", "meituan.biz_account_id"}:
+                continue
             old = get_path(settings, key)
             if isinstance(old, int):
                 try:
@@ -56,10 +60,8 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
                     value = old
             set_path(settings, key, value)
     provider = request.form.get("pms_provider")
-    if provider in {"byh", "bypms"}:
-        settings.setdefault("pms", {})["provider"] = provider
-        settings["pms"]["enabled"] = provider == "byh"
-        settings.setdefault("bypms", {})["enabled"] = provider == "bypms"
+    if provider:
+        pms_providers.apply_provider_selection(settings, provider)
     settings.setdefault("tasks", {})
     for name in runner.TASKS:
         settings["tasks"][name] = request.form.get(f"task.{name}") == "on"
@@ -131,12 +133,21 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         (advanced if is_advanced else regular).append(config_control(settings, key, label, secret))
 
     section_key = section["key"]
-    badge = {"system": "CORE", "meituan": "MEI", "ctrip": "CTRIP", "pms": "PMS", "bypms": "BYPMS"}[section_key]
+    badge_map = {"system": "CORE", "meituan": "MEI", "ctrip": "CTRIP"}
+    badge_map.update(
+        {spec["card_key"]: spec["badge"] for spec in pms_providers.PMS_PROVIDERS.values()}
+    )
+    badge = badge_map.get(section_key, section_key.upper())
     advanced_html = ""
     if advanced:
+        login_help = (
+            "<p>登录助手无法完成登录时，可在日常 Edge 登录后手动填写 Cookie；推广效果另需推广后台 Cookie。</p>"
+            "<button type='submit' class='secondary compact' name='login_mode' value='manual' formaction='/platform-login/meituan'>日常Edge登录（手动填写Cookie）</button>"
+        ) if section_key == "meituan" else ""
         advanced_html = (
             "<details class='inner-details'>"
             f"<summary>接口与高级参数 <span>{len(advanced)} 项</span></summary>"
+            f"{login_help}"
             f"<div class='config-grid advanced-grid'>{''.join(advanced)}</div></details>"
         )
 
@@ -168,21 +179,31 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<button type='submit' class='secondary compact' formaction='/platform-login/bypms/cancel'>关闭登录助手</button>"
             "</div>"
         )
+    elif section_key == "foxhis":
+        # Foxhis 不需要浏览器登录，改为「从本机客户端读取连接参数」
+        actions = (
+            "<div class='config-actions'>"
+            "<button type='submit' class='compact' formaction='/detect-foxhis'>从本机客户端自动读取</button>"
+            "<button type='submit' class='secondary compact' name='deep' value='1' formaction='/detect-foxhis'>校验数据库连通性</button>"
+            "</div>"
+        )
     if section_key in {"meituan", "ctrip", "bypms"}:
         login = platform_login.read_status(section_key)
         state = str(login.get("status") or "never")
         state_class = {"success": "good", "failed": "danger", "waiting": "warn", "syncing": "warn", "starting": "warn"}.get(state, "idle")
+        login_hint = ("使用专用 Edge 会话手动登录，Cookie 自动保存；遇到登录验证问题，可在高级参数中使用日常 Edge 手动填写 Cookie。"
+                      if section_key == "meituan" else "使用可见Edge手动登录，Cookie自动保存；高级参数中仍可手动填写。")
         login_html = (
             f"<div class='login-assistant' data-login-platform='{section_key}'>"
             "<div><strong>浏览器登录助手</strong>"
-            "<small>使用可见Edge手动登录，Cookie自动保存；高级参数中仍可手动填写。</small></div>"
+            f"<small>{login_hint}</small></div>"
             f"<span class='pill {state_class} login-state' data-login-state>{esc(login.get('message') or '尚未使用')}</span>"
             "</div>"
         )
 
     heading_actions = actions
     platform_actions = ""
-    if section_key in {"pms", "bypms"}:
+    if section_key in pms_providers.card_keys():
         heading_actions = pms_source_selector(settings)
         if actions:
             platform_actions = f"<div class='pms-platform-actions'>{actions}</div>"
@@ -211,12 +232,16 @@ def active_pms_provider(settings: dict[str, Any]) -> str:
 
 def pms_source_selector(settings: dict[str, Any]) -> str:
     selected = active_pms_provider(settings)
+    options = "".join(
+        f"<option value='{esc(item['value'])}'"
+        f"{' selected' if selected == item['value'] else ''}>{esc(item['label'])}</option>"
+        for item in pms_providers.provider_options()
+    )
     return (
         "<label class='pms-provider-select'><span>当前 PMS 平台</span>"
         "<select name='pms_provider' aria-label='PMS 平台选择'>"
-        f"<option value='byh'{(' selected' if selected == 'byh' else '')}>别样红 PMS</option>"
-        f"<option value='bypms'{(' selected' if selected == 'bypms' else '')}>宝寓 PMS</option>"
-        "</select><small>切换后保留另一平台配置</small></label>"
+        f"{options}"
+        "</select><small>切换后保留其他平台配置</small></label>"
     )
 
 
@@ -238,12 +263,20 @@ def config_page() -> str:
             f"<span><strong>{esc(task_label(name))}</strong><small>{esc(name)}</small></span></label>"
         )
     sections = {section["key"]: config_section(settings, section) for section in CONFIG_SECTIONS}
+    pms_cards = "".join(
+        sections[spec["card_key"]] for spec in pms_providers.PMS_PROVIDERS.values()
+    )
+    card_map_js = json.dumps(
+        {key: spec["card_key"] for key, spec in pms_providers.PMS_PROVIDERS.items()},
+        ensure_ascii=False,
+    )
+    default_provider = pms_providers.DEFAULT_PROVIDER
     base_group = (
         "<section class='config-group'><div class='config-group-heading'>基础配置</div>"
         "<div class='config-layout'>"
         f"{sections['system']}"
         "<div class='pms-config-stack'>"
-        f"{sections['pms']}{sections['bypms']}"
+        f"{pms_cards}"
         "</div></div></section>"
     )
     ota_group = "".join(
@@ -295,17 +328,21 @@ async function refreshLoginStates() {{
 }}
 setInterval(refreshLoginStates, 2000);
 
+const PMS_CARDS = {card_map_js};
+const PMS_DEFAULT_PROVIDER = '{default_provider}';
+
 function selectPmsProvider(provider) {{
   for (const select of document.querySelectorAll('select[name="pms_provider"]')) select.value = provider;
+  const target = PMS_CARDS[provider] || PMS_CARDS[PMS_DEFAULT_PROVIDER];
   for (const card of document.querySelectorAll('[data-pms-card]')) {{
-    if (!['pms', 'bypms'].includes(card.dataset.pmsCard)) continue;
-    card.hidden = card.dataset.pmsCard !== (provider === 'byh' ? 'pms' : 'bypms');
+    if (!Object.values(PMS_CARDS).includes(card.dataset.pmsCard)) continue;
+    card.hidden = card.dataset.pmsCard !== target;
   }}
 }}
 for (const select of document.querySelectorAll('select[name="pms_provider"]')) {{
   select.addEventListener('change', () => selectPmsProvider(select.value));
 }}
-selectPmsProvider(document.querySelector('select[name="pms_provider"]')?.value || 'byh');
+selectPmsProvider(document.querySelector('select[name="pms_provider"]')?.value || PMS_DEFAULT_PROVIDER);
 </script>"""
     return page("\u914d\u7f6e\u4e2d\u5fc3", body, "config")
 
@@ -339,6 +376,9 @@ def start_platform_login(platform: str):
     try:
         settings = apply_form_to_settings(runner.load_settings())
         runner.save_json(runner.CONFIG_PATH, settings)
+        if platform == "meituan" and request.form.get("login_mode") == "manual":
+            platform_login.open_local_edge()
+            return redirect(url_for("config_page", notice="已请求打开本机 Edge；请手动完成美团登录，再在高级参数填写 ME/EB Cookie 并保存配置。"))
         switch_account = request.form.get("login_mode") == "switch"
         platform_login.start(platform, settings, switch_account=switch_account)
         label = platform_login.PLATFORMS[platform]["label"]
@@ -442,6 +482,44 @@ def detect_hotel(platform: str):
     set_path(settings, target_key, hotel_name)
     runner.save_json(runner.CONFIG_PATH, settings)
     return redirect(url_for("config_page", notice=f"{label}\u8bc6\u522b\u6210\u529f\uff1a{hotel_name}"))
+
+
+@app.post("/detect-foxhis")
+def detect_foxhis():
+    """从本机 Foxhis 客户端读取连接参数并回填到配置（只读探测）。"""
+    settings = apply_form_to_settings(runner.load_settings())
+    deep = request.form.get("deep") == "1"
+    result = foxhis_probe.probe(deep=deep)
+    if not result.get("ok"):
+        reason = "；".join(result.get("warnings") or ["未探测到完整的连接参数"])
+        return redirect(url_for("config_page", error=f"Foxhis 自动探测失败：{reason}"))
+
+    fields = result["fields"]
+    mapping = {
+        "foxhis.isql_path": "isql_path",
+        "foxhis.interfaces_file": "interfaces_file",
+        "foxhis.server": "server",
+        "foxhis.database": "database",
+        "foxhis.charset": "charset",
+    }
+    filled: list[str] = []
+    for target, source in mapping.items():
+        value = str(fields.get(source) or "").strip()
+        if value:
+            set_path(settings, target, value)
+            filled.append(target.split(".", 1)[1])
+    if user := (request.form.get("foxhis.username") or "").strip():
+        set_path(settings, "foxhis.username", user)
+    runner.save_json(runner.CONFIG_PATH, settings)
+
+    notice = f"已从本机 Foxhis 客户端读取 {len(filled)} 项连接参数（{'、'.join(filled)}）"
+    deep_check = (result.get("evidence") or {}).get("deep_check") or {}
+    if deep_check.get("verdict"):
+        notice += f"；{deep_check['verdict']}"
+    if result.get("warnings"):
+        notice += "；提示：" + "；".join(result["warnings"])
+    notice += "；数据库账号与密码需手工填写"
+    return redirect(url_for("config_page", notice=notice))
 
 
 if __name__ == "__main__":

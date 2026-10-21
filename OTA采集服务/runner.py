@@ -12,6 +12,7 @@ from typing import Any
 from process_runner import ProcessCancelledError, ProcessTimeoutError, run_streamed
 from settings_validation import require_valid_settings
 from data_retention import DEFAULT_RETENTION
+import pms_providers
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -114,20 +115,20 @@ def load_settings() -> dict[str, Any]:
             tasks[name] = False
             changed = True
     pms = settings.setdefault("pms", {})
-    if pms.get("provider") not in {"byh", "bypms"}:
-        pms["provider"] = "bypms" if (settings.get("bypms") or {}).get("enabled") else "byh"
-        changed = True
+    selected, provider_changed = pms_providers.normalize_provider(settings)
+    changed = changed or provider_changed
+    pms["provider"] = selected
     bypms = settings.setdefault("bypms", {})
     for name, value in BYPMS_DEFAULTS.items():
         if name not in bypms:
             bypms[name] = value
             changed = True
-    selected = pms["provider"]
-    if selected == "byh" and bypms.get("enabled"):
-        bypms["enabled"] = False
-        changed = True
-    if selected == "bypms" and pms.get("enabled"):
-        pms["enabled"] = False
+    foxhis = settings.setdefault("foxhis", {})
+    for name, value in pms_providers.FOXHIS_DEFAULTS.items():
+        if name not in foxhis:
+            foxhis[name] = value
+            changed = True
+    if pms_providers.enforce_exclusive_enable(settings, selected):
         changed = True
     legacy_bypms_tasks = ("bypms_room_status", "bypms_channel_mapping")
     if selected == "bypms" and any(tasks.get(name) for name in legacy_bypms_tasks):
@@ -183,6 +184,26 @@ def backfill_bypms_hotel_name_from_summary(settings: dict[str, Any]) -> bool:
     except (OSError, ValueError):
         return False
     return backfill_bypms_hotel_name(summary.get("hotel_name"))
+
+
+def ensure_foxhis_hotel_name(settings: dict[str, Any]) -> None:
+    foxhis = settings.setdefault("foxhis", {})
+    if str(foxhis.get("hotel_name") or "").strip():
+        return
+    code_dir = str(project_path(foxhis.get("code_dir"), pms_providers.FOXHIS_DEFAULTS["code_dir"]))
+    if code_dir not in sys.path:
+        sys.path.insert(0, code_dir)
+    from foxhis_common import Config, resolve_hotel_name
+    name = resolve_hotel_name(Config.from_env(build_env(settings, "foxhis")))
+    latest = load_settings()
+    latest_foxhis = latest.setdefault("foxhis", {})
+    if (active_pms_provider(latest) != "foxhis" or internal_hotel_id(latest) != internal_hotel_id(settings)
+            or any(latest_foxhis.get(key) != foxhis.get(key) for key in ("server", "database", "username", "interfaces_file", "isql_path", "password", "charset"))):
+        raise RuntimeError("读取酒店名称期间西软连接配置发生变化，请重试采集。")
+    if not str(latest_foxhis.get("hotel_name") or "").strip():
+        latest_foxhis["hotel_name"] = name
+        save_json(CONFIG_PATH, latest)
+    foxhis["hotel_name"] = latest_foxhis["hotel_name"]
 
 
 def project_path(value: Any, default: str | Path = ".") -> Path:
@@ -292,39 +313,22 @@ def enabled_tasks(settings: dict[str, Any]) -> list[str]:
 
 
 def active_pms_provider(settings: dict[str, Any]) -> str:
-    provider = str((settings.get("pms") or {}).get("provider") or "byh").strip().lower()
-    return provider if provider in {"byh", "bypms"} else "byh"
+    return pms_providers.active_pms_provider(settings)
 
 
 def task_is_available(name: str, platform: str, settings: dict[str, Any]) -> bool:
-    provider = active_pms_provider(settings)
-    if name == "pms_fetch":
-        config_key = "pms" if provider == "byh" else "bypms"
-        return (settings.get(config_key) or {}).get("enabled", provider == "byh")
-    return (settings.get(platform) or {}).get("enabled", True)
+    return pms_providers.task_is_available(name, platform, settings)
 
 
 def task_unavailable_reason(name: str, platform: str, settings: dict[str, Any]) -> str:
-    if task_is_available(name, platform, settings):
-        return ""
-    if name == "pms_fetch":
-        label = "宝寓 PMS" if active_pms_provider(settings) == "bypms" else "别样红 PMS"
-    else:
-        label = {"meituan": "美团", "ctrip": "携程"}.get(platform, platform)
-    return f"{label}采集已禁用，请先在配置页启用"
+    return pms_providers.task_unavailable_reason(name, platform, settings)
 
 
 def task_specs(name: str, settings: dict[str, Any]) -> list[tuple[str, str, list[str]]]:
-    if name == "pms_fetch" and active_pms_provider(settings) == "bypms":
-        return [
-            ("bypms", "bypms_room_status_data.py", []),
-            ("bypms", "bypms_channel_mapping_data.py", []),
-            ("bypms", "bypms_rs01_data.py", []),
-            ("bypms", "bypms_daily_report_data.py", []),
-            ("bypms", "bypms_jl11_data.py", []),
-            ("bypms", "bypms_jy03_data.py", []),
-            ("bypms", "bypms_jd01_data.py", []),
-        ]
+    """PMS 任务由注册表展开；其余任务仍走 TASKS 注册表。"""
+    specs = pms_providers.task_specs(name, settings)
+    if specs is not None:
+        return specs
     return [TASKS[name]]
 
 
@@ -351,6 +355,7 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     ctrip = settings.get("ctrip") or {}
     pms = settings.get("pms") or {}
     bypms = settings.get("bypms") or {}
+    foxhis = settings.get("foxhis") or {}
 
     put_if(env, "HOTEL_OTA_PROJECT_ROOT", PROJECT_ROOT)
     put_if(env, "HOTEL_OTA_OUTPUT_DIR", output_path(settings))
@@ -394,12 +399,33 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     put_if(env, "BYPMS_PAYMENT_URL", bypms.get("payment_url"))
     put_if(env, "BYPMS_TIMEOUT_SECONDS", bypms.get("timeout_seconds"))
 
+    # Foxhis X5：Sybase 直连（子进程调 isql），口令与 MySQL 一样纳入日志脱敏
+    env["FOXHIS_HOTEL_NAME"] = str(foxhis.get("hotel_name") or "").strip()
+    put_if(env, "FOXHIS_ISQL_PATH", foxhis.get("isql_path"))
+    put_if(env, "FOXHIS_INTERFACES_FILE", foxhis.get("interfaces_file"))
+    put_if(env, "FOXHIS_SERVER", foxhis.get("server"))
+    put_if(env, "FOXHIS_DATABASE", foxhis.get("database"))
+    put_if(env, "FOXHIS_USERNAME", foxhis.get("username"))
+    put_if(env, "FOXHIS_PASSWORD", foxhis.get("password"))
+    put_if(env, "FOXHIS_CHARSET", foxhis.get("charset"))
+    put_if(env, "FOXHIS_FETCH_AFTER", foxhis.get("fetch_after"))
+    put_if(env, "FOXHIS_BUSINESS_DATE_OFFSET_DAYS", foxhis.get("business_date_offset_days"))
+    put_if(env, "FOXHIS_TIMEOUT_SECONDS", foxhis.get("timeout_seconds"))
+    reports = foxhis.get("reports")
+    if isinstance(reports, (list, tuple)):
+        put_if(env, "FOXHIS_REPORTS", ",".join(str(item) for item in reports))
+    else:
+        put_if(env, "FOXHIS_REPORTS", reports)
+
     put_if(env, "MEITUAN_HOTEL_NAME", meituan.get("hotel_name"))
     put_if(env, "MEITUAN_POI_ID", meituan.get("poi_id"))
     put_if(env, "MEITUAN_PARTNER_ID", meituan.get("partner_id"))
     put_if(env, "MEITUAN_BIZ_ACCOUNT_ID", meituan.get("biz_account_id"))
     put_if(env, "MEITUAN_EB_COOKIE", meituan.get("eb_cookie"))
     put_if(env, "MEITUAN_ME_COOKIE", meituan.get("me_cookie"))
+    env["MEITUAN_PROMOTION_COOKIE"] = str(meituan.get("promotion_cookie") or "").strip()
+    env["MEITUAN_HIGHLIGHTS_COOKIE"] = str(meituan.get("highlights_cookie") or "").strip()
+    env["MEITUAN_PUBLIC_WELFARE_COOKIE"] = str(meituan.get("public_welfare_cookie") or "").strip()
     put_if(env, "MEITUAN_REVIEW_RANKING_URL", meituan.get("review_ranking_url"))
     put_if(env, "MEITUAN_REVIEW_DETAIL_URL", meituan.get("review_detail_url"))
     put_if(env, "MEITUAN_DIANPING_REVIEW_DETAIL_URL", meituan.get("dianping_review_detail_url"))
@@ -443,24 +469,23 @@ def sanitize(text: str, settings: dict[str, Any]) -> str:
 
 
 def script_path(settings: dict[str, Any], platform: str, filename: str) -> Path:
+    # PMS 平台统一走注册表，新增平台不需要在这里加分支
+    resolved = pms_providers.script_path(settings, platform, filename)
+    if resolved is not None:
+        return resolved
     paths = settings.get("paths") or {}
-    if platform == "pms":
-        pms = settings.get("pms") or {}
-        code_dir = project_path(pms.get("code_dir"), "正式数据抓取-PMS（别样红）/PMS登录")
-        return code_dir / (pms.get("entry_script") or filename)
-    if platform == "bypms":
-        bypms = settings.get("bypms") or {}
-        return project_path(bypms.get("code_dir"), "宝寓PMS数据采集代码") / filename
-    key = "meituan_code_dir" if platform == "meituan" else "ctrip_code_dir"
-    default = "美团OTA数据采集代码" if platform == "meituan" else "携程OTA数据采集代码"
-    return project_path(paths.get(key), default) / filename
+    if platform == "meituan":
+        return project_path(paths.get("meituan_code_dir"), "美团OTA数据采集代码") / filename
+    if platform == "ctrip":
+        return project_path(paths.get("ctrip_code_dir"), "携程OTA数据采集代码") / filename
+    # 注意：这里以前是 else 落到「携程」目录，未注册的平台会被静默解析到错误位置
+    raise KeyError(f"未注册的平台，无法解析脚本路径：{platform}")
 
 
 def task_timeout(settings: dict[str, Any], platform: str) -> int:
-    if platform == "pms":
-        return int((settings.get("pms") or {}).get("timeout_seconds") or 900)
-    if platform == "bypms":
-        return int((settings.get("bypms") or {}).get("timeout_seconds") or 120)
+    registered = pms_providers.task_timeout(settings, platform)
+    if registered is not None:
+        return registered
     return int((settings.get("service") or {}).get("timeout_seconds") or 300)
 
 
@@ -503,39 +528,45 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
         for item_platform, filename, extra_args in specs
     ]
     missing = next((script for _platform, script, _args in resolved_specs if not script.exists()), None)
-    if missing:
+    if missing and name != "pms_fetch":
         result.update(status="failed", finished_at=now_text(), error_summary=f"Script not found: {missing}")
         save_json(STATUS_PATH, status)
         return result
 
     begin = datetime.now()
     try:
-        for index, (item_platform, script, extra_args) in enumerate(resolved_specs):
-            if index:
-                with log_path.open("a", encoding="utf-8") as log:
-                    log.write(f"\n\n=== PMS 子采集：{script.name} ===\n")
-            completed = run_streamed(
-                [py, str(script), *extra_args],
-                cwd=str(script.parent if item_platform == "pms" else base_dir),
-                env=build_env(settings, item_platform),
-                timeout=task_timeout(settings, item_platform),
-                log_path=log_path,
-                append=index > 0,
-                transform=lambda line: sanitize(line, settings),
-                should_cancel=run_stop_requested,
-            )
-            result["return_code"] = completed.return_code
-            if completed.return_code:
-                result["status"] = "failed"
-                result["error_summary"] = first_error_line(completed.output_tail) or f"{script.name}: return_code={completed.return_code}"
-                break
-            if item_platform == "bypms" and script.name == "bypms_daily_report_data.py":
-                if backfill_bypms_hotel_name_from_summary(settings):
-                    with log_path.open("a", encoding="utf-8") as log:
-                        log.write("ByPMS hotel name identified and saved to local configuration.\n")
+        if name == "pms_fetch":
+            if active_pms_provider(settings) == "foxhis":
+                ensure_foxhis_hotel_name(settings)
+            from pms_subtasks import run_pms_subtasks
+            run_pms_subtasks(resolved_specs, settings, status, result, py, base_dir, log_path, sys.modules[__name__])
         else:
-            result["status"] = "success"
-            enrich_room_type_ids(name, settings, log_path)
+            for index, (item_platform, script, extra_args) in enumerate(resolved_specs):
+                if index:
+                    with log_path.open("a", encoding="utf-8") as log:
+                        log.write(f"\n\n=== PMS 子采集：{script.name} ===\n")
+                completed = run_streamed(
+                    [py, str(script), *extra_args],
+                    cwd=str(script.parent if item_platform == "pms" else base_dir),
+                    env=build_env(settings, item_platform),
+                    timeout=task_timeout(settings, item_platform),
+                    log_path=log_path,
+                    append=index > 0,
+                    transform=lambda line: sanitize(line, settings),
+                    should_cancel=run_stop_requested,
+                )
+                result["return_code"] = completed.return_code
+                if completed.return_code:
+                    result["status"] = "failed"
+                    result["error_summary"] = first_error_line(completed.output_tail) or f"{script.name}: return_code={completed.return_code}"
+                    break
+                if item_platform == "bypms" and script.name == "bypms_daily_report_data.py":
+                    if backfill_bypms_hotel_name_from_summary(settings):
+                        with log_path.open("a", encoding="utf-8") as log:
+                            log.write("ByPMS hotel name identified and saved to local configuration.\n")
+            else:
+                result["status"] = "success"
+                enrich_room_type_ids(name, settings, log_path)
     except ProcessTimeoutError as exc:
         result["status"] = "failed"
         result["error_summary"] = f"timeout after {exc.timeout}s"
@@ -685,6 +716,11 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
             warnings.append(f"bypms entry script not found: {script}")
         if not bypms.get("cookie"):
             warnings.append("BYPMS_COOKIE is empty; Bypms collection cannot run.")
+    foxhis = settings.get("foxhis") or {}
+    if foxhis.get("enabled", False):
+        for key in ("isql_path", "interfaces_file", "server", "database", "username"):
+            if not foxhis.get(key):
+                warnings.append(f"Foxhis {key} is empty; please complete its read-only connection settings.")
     if not (settings.get("meituan") or {}).get("me_cookie"):
         warnings.append("MEITUAN_ME_COOKIE is empty; Meituan collection cannot run.")
     if not (settings.get("ctrip") or {}).get("cookie"):
