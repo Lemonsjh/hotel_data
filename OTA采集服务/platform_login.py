@@ -21,7 +21,7 @@ from hotel_name_probe import probe as probe_hotel
 MEITUAN_CODE_DIR = runner.PROJECT_ROOT / "美团OTA数据采集代码"
 if str(MEITUAN_CODE_DIR) not in sys.path:
     sys.path.insert(0, str(MEITUAN_CODE_DIR))
-from meituan_page_capture import browser_profile_lock
+from meituan_page_capture import browser_profile_lock, save_login_session
 
 
 PLATFORMS = {
@@ -77,6 +77,14 @@ def require_platform(platform: str) -> dict[str, str]:
     if platform not in PLATFORMS:
         raise ValueError(f"不支持的平台：{platform}")
     return PLATFORMS[platform]
+
+
+def open_local_edge() -> None:
+    """Open Meituan in the user's normal Edge session for manual authentication."""
+    try:
+        os.startfile("microsoft-edge:" + PLATFORMS["meituan"]["url"])
+    except OSError as exc:
+        raise RuntimeError("无法打开本机 Edge，请确认已安装且能正常启动。") from exc
 
 
 def read_status(platform: str) -> dict[str, Any]:
@@ -226,6 +234,8 @@ def start(platform: str, settings: dict[str, Any], switch_account: bool = False)
     old = read_status(platform)
     old_pid = old.get("pid")
     if login_process_alive(old_pid):
+        if platform == "meituan" and not switch_account:
+            return int(old_pid)
         if not cancel(platform):
             raise RuntimeError(f"无法结束旧的{info['label']}登录助手，请在任务管理器中结束该进程后重试")
     else:
@@ -376,6 +386,8 @@ def save_cookies(platform: str, context: Any) -> int:
     else:
         section["cookie"] = cookie_header(context, PLATFORMS[platform]["url"])
         count = len(cookie_names(context))
+    if platform == "meituan":
+        save_login_session(context, section["me_cookie"], section["eb_cookie"])
     runner.save_json(runner.CONFIG_PATH, settings)
     return count
 
@@ -458,7 +470,8 @@ def run(platform: str, switch_account: bool = False) -> int:
                 )
 
             protected_url = info["eb_url"] if platform == "meituan" else info["url"]
-            navigate(page, protected_url)
+            if platform != "meituan" or page.url != protected_url:
+                navigate(page, protected_url)
             validate_protected_page(page, platform)
             count = save_cookies(platform, context)
             refresh_identity = switch_account or not had_session

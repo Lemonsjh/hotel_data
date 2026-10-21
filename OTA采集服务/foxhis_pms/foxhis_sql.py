@@ -206,6 +206,8 @@ order by date,class
 
 # 实时快照收入与物理在住房集合一致，只取有效在住主单和当天有效的执行价段。
 # 左连接保留缺少主单/价格的在住房，由调用方拒绝不完整或重复价格，而非静默漏算。
+# 同日入住离店的价格段允许 begin_=end_=当天，但实际抵离也必须在当天且离店晚于抵店。
+# 当天应离但尚未退房：没有当天价格段时，取与主单离店时间一致的最后一晚价格。
 REALTIME_ROOM_RATE_QUERY = """
 select r.roomno as room_no, r.type as room_type_code,
        m.accnt as folio_no, m.rmnum as room_quantity, m.share as share_code,
@@ -213,7 +215,18 @@ select r.roomno as room_no, r.type as room_type_code,
 from rmsta r
 left join master m on m.roomno = r.roomno and m.sta = 'I'
 left join rsvsrc s on s.accnt = m.accnt
-  and s.begin_ <= '{business_date}' and s.end_ > '{business_date}'
+  and ((s.begin_ <= '{business_date}' and s.end_ > '{business_date}')
+    or (s.begin_ = '{business_date}' and s.end_ = '{business_date}'
+      and convert(char(8),s.arr,112) = '{business_date}'
+      and convert(char(8),s.dep,112) = '{business_date}' and s.dep > s.arr)
+    or (s.begin_ < '{business_date}' and s.end_ = '{business_date}'
+      and convert(char(8),m.dep,112) = '{business_date}' and s.dep = m.dep
+      and not exists (
+        select 1 from rsvsrc n where n.accnt = m.accnt
+        and ((n.begin_ <= '{business_date}' and n.end_ > '{business_date}')
+          or (n.begin_ = '{business_date}' and n.end_ = '{business_date}'
+            and convert(char(8),n.arr,112) = '{business_date}'
+            and convert(char(8),n.dep,112) = '{business_date}' and n.dep > n.arr)))))
 where r.ocsta = 'O'
 order by r.type, r.roomno
 """.strip()

@@ -31,10 +31,11 @@ class Config:
     mysql: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls, environ: dict[str, str] | None = None) -> "Config":
+        environ = os.environ if environ is None else environ
         def env(*names: str, default: str = "") -> str:
             for name in names:
-                value = os.environ.get(name)
+                value = environ.get(name)
                 if value and value.strip():
                     return value.strip()
             return default

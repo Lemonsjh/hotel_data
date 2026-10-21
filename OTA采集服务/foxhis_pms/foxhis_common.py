@@ -153,7 +153,7 @@ def run_isql(sql: str, config: Config, timeout: int = 300) -> str:
     return output
 
 
-def parse_isql_table(text: str, separator: str = "|") -> list[dict[str, str]]:
+def parse_isql_table(text: str, separator: str = "|", *, required_columns: tuple[str, ...] = ()) -> list[dict[str, str]]:
     """把 isql 的对齐表输出解析成 [dict]；第一行视为表头。"""
     raw_rows: list[list[str]] = []
     for line in text.splitlines():
@@ -173,8 +173,12 @@ def parse_isql_table(text: str, separator: str = "|") -> list[dict[str, str]]:
         raw_rows.append(cells)
 
     if not raw_rows:
+        if required_columns:
+            raise FoxhisError("查询结果缺少有效表头，无法确认是否为正常空结果。")
         return []
     header = [cell or f"col{index}" for index, cell in enumerate(raw_rows[0])]
+    if not set(required_columns).issubset(header):
+        raise FoxhisError("查询结果表头缺少必需字段，无法解析。")
     rows: list[dict[str, str]] = []
     for cells in raw_rows[1:]:
         if len(cells) < len(header):
@@ -188,8 +192,18 @@ def parse_isql_table(text: str, separator: str = "|") -> list[dict[str, str]]:
     return rows
 
 
-def query(sql: str, config: Config, timeout: int = 300) -> list[dict[str, str]]:
-    return parse_isql_table(run_isql(sql, config, timeout))
+def query(sql: str, config: Config, timeout: int = 300, *, required_columns: tuple[str, ...] = ()) -> list[dict[str, str]]:
+    return parse_isql_table(run_isql(sql, config, timeout), required_columns=required_columns)
+
+
+def resolve_hotel_name(config: Config) -> str:
+    if not config.hotel_name.strip():
+        rows = query("select value as hotel_name from sysoption where catalog='hotel' and item='name'",
+                     config, timeout=30, required_columns=("hotel_name",))
+        if len(rows) != 1 or not (rows[0].get("hotel_name") or "").strip():
+            raise FoxhisError("西软酒店名称未配置，且源库未返回唯一有效名称。")
+        config.hotel_name = rows[0]["hotel_name"].strip()
+    return config.hotel_name
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +291,7 @@ def report_main(report_key: str, collect: Callable[[Config, date, datetime], dic
         if not value:
             raise FoxhisError(f"缺少配置 {name}；请在配置页完成 Foxhis 连接参数与只读账号。")
 
+    resolve_hotel_name(config)
     snapshot_time = datetime.now()
     day = snapshot_time.date() if realtime else business_date(config)
     daily_state, record = {}, None

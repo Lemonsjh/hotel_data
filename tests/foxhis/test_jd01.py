@@ -2,6 +2,8 @@
 import sqlite3
 import sys
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from datetime import date, datetime, timedelta
 from decimal import Decimal as D
 from pathlib import Path
@@ -9,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "OTA采集服务/foxhis_pms"))
 import foxhis_jd01_data as jd
+import foxhis_common as common
 from foxhis_common import Config, FoxhisError, SOURCE_PLATFORM
 from .test_realtime_forecast import DatabaseAdapter
 
@@ -66,12 +69,6 @@ class JD01Tests(unittest.TestCase):
             self.assertEqual(next(r for r in rows if r['order_id']=='OLD')['booking_status'],'已离店')
             self.assertEqual(summary['archived_duplicates_removed'],1)
 
-    def test_order_id_preserves_original_folio_without_prefix(self):
-        folios = ("F26100012", "000123")
-        rows, _ = self.build(records=[self.order(key, "R") for key in folios], ledger=[], rates=[])
-        self.assertEqual({row["order_id"] for row in rows}, set(folios))
-        self.assertTrue(all(row["source_platform"] == SOURCE_PLATFORM for row in rows))
-
     def test_unknown_fields_and_zero_nights_stay_null(self):
         rows,summary=self.build()
         for row in rows:
@@ -128,6 +125,54 @@ class JD01Tests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):jd.sync_rows(rows,self.config)
         self.assertEqual(self.contents(),before)
 
+    def test_empty_duplicate_mixed_or_stale_batch_preserves_data(self):
+        rows,_=self.build();self.seed({**rows[0],'snapshot_time':self.stamp+timedelta(seconds=1)});before=self.contents()
+        for invalid in ([],[*rows,rows[0]],[{**rows[0],'hotel_id':'OTHER'}],rows):
+            with self.assertRaises(FoxhisError):jd.sync_rows(invalid,self.config)
+        self.assertEqual(self.contents(),before)
+
+    def test_dry_run_never_writes(self):
+        rows,summary=self.build()
+        with patch.object(jd,'fetch_rows',return_value=(rows,summary)),patch.object(jd,'sync_rows',side_effect=AssertionError('不应写入')),patch.object(jd,'save_output'),patch.object(sys,'argv',['jd01','--dry-run']):
+            self.assertEqual(jd.collect(self.config,date(2026,10,18),self.stamp)['written'],0)
+
+    def test_valid_empty_query_succeeds_and_preserves_existing_orders(self):
+        rows,_=self.build();self.seed(rows[0]);before=self.contents()
+        output=StringIO()
+        header='|folio_no|origin|status_code|arrival_time|departure_time|type_code|room_count\n|---|---|---|---|---|---|---\n'
+        config=Config(server='test',database='test',username='test',hotel_id='TEST',hotel_name='测试酒店')
+        with patch.object(common.Config,'from_env',return_value=config),patch.object(common,'after_gate',return_value=(True,'')),patch.object(common,'check_reachable',return_value=(True,'')),patch.object(common,'run_isql',return_value=header) as source,patch.object(jd,'mysql_connection',side_effect=AssertionError('空结果不得写库')),patch.object(jd,'save_output') as save,patch.object(sys,'argv',['jd01']),redirect_stdout(output):
+            self.assertEqual(jd.main(),0)
+        self.assertEqual(source.call_count,1)
+        result=save.call_args.args[1]
+        self.assertEqual((result['source_orders'],result['row_count'],result['written']),(0,0,0))
+        self.assertIn('0 条符合条件的订单',result['message'])
+        self.assertIn('OK [jd01]',output.getvalue())
+        self.assertEqual(self.contents(),before)
+
+    def test_missing_or_wrong_query_header_is_not_successful_empty(self):
+        for output in ('','unrecognized output','|wrong|header\n|---|---\n'):
+            with self.subTest(output=output),patch.object(common,'run_isql',return_value=output),patch.object(jd,'sync_rows') as sync:
+                with self.assertRaises(FoxhisError):jd.collect(self.config,self.stamp.date(),self.stamp)
+                sync.assert_not_called()
+
+    def test_source_query_failure_does_not_become_empty_success(self):
+        rows,_=self.build();self.seed(rows[0]);before=self.contents()
+        with patch.object(common,'run_isql',side_effect=FoxhisError('查询失败')),patch.object(jd,'sync_rows') as sync:
+            with self.assertRaises(FoxhisError):jd.collect(self.config,self.stamp.date(),self.stamp)
+            sync.assert_not_called()
+        self.assertEqual(self.contents(),before)
+
+    def test_invalid_nonempty_orders_still_fail_before_writing(self):
+        with patch.object(jd,'query',side_effect=[[{'folio_no':'BROKEN'}],[],[]]),patch.object(jd,'sync_rows') as sync:
+            with self.assertRaises(FoxhisError):jd.collect(self.config,self.stamp.date(),self.stamp)
+            sync.assert_not_called()
+
+    def test_order_id_preserves_original_folio_without_prefix(self):
+        folios = ("F26100012", "000123")
+        rows, _ = self.build(records=[self.order(key, "R") for key in folios], ledger=[], rates=[])
+        self.assertEqual({row["order_id"] for row in rows}, set(folios))
+        self.assertTrue(all(row["source_platform"] == SOURCE_PLATFORM for row in rows))
     def test_next_snapshot_replaces_legacy_prefixed_ids_only_in_its_scope(self):
         rows, _ = self.build()
         for row in rows:
@@ -144,42 +189,9 @@ class JD01Tests(unittest.TestCase):
         self.assertEqual({r[2] for r in current}, {row["order_id"] for row in rows})
         self.assertEqual(len(current), len(rows))
         self.assertEqual(sum(r[2].startswith("foxhis:") for r in contents), 3)
-
-    def test_empty_duplicate_mixed_or_stale_batch_preserves_data(self):
-        rows,_=self.build();self.seed({**rows[0],'snapshot_time':self.stamp+timedelta(seconds=1)});before=self.contents()
-        for invalid in ([],[*rows,rows[0]],[{**rows[0],'hotel_id':'OTHER'}],rows):
-            with self.assertRaises(FoxhisError):jd.sync_rows(invalid,self.config)
-        self.assertEqual(self.contents(),before)
-
-    def test_dry_run_never_writes(self):
-        rows,summary=self.build()
-        with patch.object(jd,'fetch_rows',return_value=(rows,summary)),patch.object(jd,'sync_rows',side_effect=AssertionError('不应写入')),patch.object(jd,'save_output'),patch.object(sys,'argv',['jd01','--dry-run']):
-            self.assertEqual(jd.collect(self.config,date(2026,10,18),self.stamp)['written'],0)
-
-    def test_successful_empty_result_clears_only_its_snapshot_scope(self):
-        rows, _ = self.build()
-        row = rows[0]
-        self.seed(row)
-        self.seed({**row, "hotel_id": "OTHER"})
-        self.seed({**row, "source_platform": "PMS（宝寓）"})
-        self.seed({**row, "departure_time": datetime(2026, 9, 18)})
-        empty, summary = self.build(records=[], ledger=[], rates=[])
-        self.assertEqual(empty, [])
-        self.assertEqual(summary["source_orders"], 0)
-        self.assertEqual(jd.sync_rows(empty, self.config, self.stamp), 0)
-        self.assertEqual(len(self.contents()), 3)
-
     def test_empty_orders_with_orphan_ledger_remain_failure(self):
         with self.assertRaises(FoxhisError):
             self.build(records=[], ledger=self.ledger, rates=[])
-
-    def test_empty_collect_completes_and_passes_snapshot_time(self):
-        with patch.object(jd, "fetch_rows", return_value=([], {})), \
-             patch.object(jd, "sync_rows", return_value=0) as sync, \
-             patch.object(jd, "save_output"), patch.object(sys, "argv", ["jd01"]):
-            self.assertEqual(jd.collect(self.config, self.stamp.date(), self.stamp)["row_count"], 0)
-        sync.assert_called_once_with([], self.config, self.stamp)
-
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

@@ -145,7 +145,7 @@ class RealtimeForecastTests(unittest.TestCase):
                 status.build_forecast_rows(invalid, self.stamp)
 
     def test_realtime_uses_today_even_before_night_audit(self):
-        config = common.Config(server="FoxFront", database="foxhis1", username="test", fetch_after="23:59", business_date_offset_days=1)
+        config = common.Config(server="FoxFront", database="foxhis1", username="test", hotel_name="测试酒店", fetch_after="23:59", business_date_offset_days=1)
         with patch.object(common.Config, "from_env", return_value=config), patch.object(common, "check_reachable", return_value=(True, "ok")), patch.object(common, "after_gate", side_effect=AssertionError("实时房态不应调用夜审闸门")):
             seen = []
             def collect(config, day, stamp):

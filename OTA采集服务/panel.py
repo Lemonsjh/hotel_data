@@ -50,6 +50,8 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
                 if value:
                     set_path(settings, key, value)
                 continue
+            if not value and key in {"meituan.hotel_name", "meituan.poi_id", "meituan.partner_id", "meituan.biz_account_id"}:
+                continue
             old = get_path(settings, key)
             if isinstance(old, int):
                 try:
@@ -138,9 +140,14 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
     badge = badge_map.get(section_key, section_key.upper())
     advanced_html = ""
     if advanced:
+        login_help = (
+            "<p>登录助手无法完成登录时，可在日常 Edge 登录后手动填写 Cookie；推广效果另需推广后台 Cookie。</p>"
+            "<button type='submit' class='secondary compact' name='login_mode' value='manual' formaction='/platform-login/meituan'>日常Edge登录（手动填写Cookie）</button>"
+        ) if section_key == "meituan" else ""
         advanced_html = (
             "<details class='inner-details'>"
             f"<summary>接口与高级参数 <span>{len(advanced)} 项</span></summary>"
+            f"{login_help}"
             f"<div class='config-grid advanced-grid'>{''.join(advanced)}</div></details>"
         )
 
@@ -184,10 +191,12 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         login = platform_login.read_status(section_key)
         state = str(login.get("status") or "never")
         state_class = {"success": "good", "failed": "danger", "waiting": "warn", "syncing": "warn", "starting": "warn"}.get(state, "idle")
+        login_hint = ("使用专用 Edge 会话手动登录，Cookie 自动保存；遇到登录验证问题，可在高级参数中使用日常 Edge 手动填写 Cookie。"
+                      if section_key == "meituan" else "使用可见Edge手动登录，Cookie自动保存；高级参数中仍可手动填写。")
         login_html = (
             f"<div class='login-assistant' data-login-platform='{section_key}'>"
             "<div><strong>浏览器登录助手</strong>"
-            "<small>使用可见Edge手动登录，Cookie自动保存；高级参数中仍可手动填写。</small></div>"
+            f"<small>{login_hint}</small></div>"
             f"<span class='pill {state_class} login-state' data-login-state>{esc(login.get('message') or '尚未使用')}</span>"
             "</div>"
         )
@@ -367,6 +376,9 @@ def start_platform_login(platform: str):
     try:
         settings = apply_form_to_settings(runner.load_settings())
         runner.save_json(runner.CONFIG_PATH, settings)
+        if platform == "meituan" and request.form.get("login_mode") == "manual":
+            platform_login.open_local_edge()
+            return redirect(url_for("config_page", notice="已请求打开本机 Edge；请手动完成美团登录，再在高级参数填写 ME/EB Cookie 并保存配置。"))
         switch_account = request.form.get("login_mode") == "switch"
         platform_login.start(platform, settings, switch_account=switch_account)
         label = platform_login.PLATFORMS[platform]["label"]

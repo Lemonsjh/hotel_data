@@ -1,5 +1,6 @@
 """JL01 日期、历史房型、原生控制总额和日期范围事务测试。"""
 import sqlite3
+import re
 import sys
 import unittest
 from datetime import date, datetime, timedelta
@@ -69,19 +70,56 @@ class JL01Tests(unittest.TestCase):
         self.assertEqual(prior["pms_rate_room_type_id"], "RR")
         self.assertEqual(summary["manual_zero_rows_skipped"], 1)
 
-    def test_free_rooms_are_excluded_by_query_and_match_paid_nights(self):
-        self.assertIn("soldf+soldg+soldc+soldl-ent", jl.JL01_REPORT_QUERY)
-        records = [self.record("20261018", "A", "大床房", 6, 6, 4, "400"),
-                   self.record("20261018", "{{{", "总计", 6, 6, 4, "400", "{")]
-        controls = self.control("20261018", (6, 6, 4, "66.67", "400", "100", "66.67"))
-        rows, _ = self.build(records, controls)
-        self.assertEqual(rows[0]["room_nights"], Decimal(4))
-        self.assertEqual(rows[0]["adr"], Decimal("100.00"))
-
     def test_hotel_daily_revenue_or_nights_mismatch_fails(self):
         for code in ("013000", "011000", "012000", "014000", "018560"):
             controls = [{**r, "metric_value": "999"} if r["business_date"] == "20261018" and r["metric_code"] == code else r for r in self.controls]
             with self.assertRaises(FoxhisError): self.build(controls=controls)
+
+    def test_manual_revenue_only_participates_in_hotel_reconciliation(self):
+        records = [{**r, "room_revenue": "58.64"} if r["room_type_code"] == "ZZZ" else
+                   {**r, "room_revenue": "4662.26"} if r["business_date"] == "20261018" and r["room_type_code"] == "{{{" else r
+                   for r in self.records]
+        values = jl.derived(dict(total_rooms=Decimal(61), available_rooms=Decimal(55), room_nights=Decimal(41), room_revenue=Decimal("4662.26")))
+        controls = [r for r in self.controls if r["business_date"] != "20261018"]
+        controls += self.control("20261018", [values[field] for field in jl.CONTROL_FIELDS.values()])
+        rows, summary = self.build(records, controls)
+        self.assertNotIn("ZZZ", {r["pms_rate_room_type_id"] for r in rows})
+        self.assertEqual(sum(r["room_revenue"] for r in rows if r["business_date"].year == 2026), Decimal("4603.62"))
+        self.assertEqual(summary["excluded_manual_by_date"]["2026-10-18"]["room_revenue"], Decimal("58.64"))
+        with self.assertRaises(FoxhisError):
+            self.build(records, self.controls)
+
+    def test_source_sql_deducts_free_nights_for_both_dates(self):
+        sql = jl.JL01_REPORT_QUERY.format(yesterday="20261018", last_year="20251018")
+        sql = sql.replace("convert(char(8),date,112)", "date").replace("dateadd(day,", "dateadd('day',")
+        sql = re.sub(r"convert\(numeric\(18,4\),([^)]+)\)", r"(\1)", sql)
+        with sqlite3.connect(":memory:") as source:
+            source.row_factory = sqlite3.Row
+            source.create_function("dateadd", 3, lambda unit, n, day: (datetime.strptime(day, "%Y%m%d") + timedelta(days=n)).strftime("%Y%m%d"))
+            source.execute("CREATE TABLE yrmsalerep_new (date,gkey,hall,code,descript,ttl,avl,soldf,soldg,soldc,soldl,ent,incomef,incomeg,incomec,incomel)")
+            for sold, free, revenue in ((18, 1, 3343.22), (18, 0, 3343.22), (2, 2, 0), (1, 0.5, 50)):
+                with self.subTest(sold=sold, free=free):
+                    source.execute("DELETE FROM yrmsalerep_new")
+                    controls = []
+                    paid = Decimal(str(sold)) - Decimal(str(free))
+                    metrics = jl.derived(dict(total_rooms=Decimal(32), available_rooms=Decimal(30), room_nights=paid, room_revenue=Decimal(str(revenue))))
+                    for day, code in (("20261018", "AR"), ("20251018", "RR")):
+                        for item, name in ((code, "历史房型"), ("{{{", "总计")):
+                            source.execute("INSERT INTO yrmsalerep_new VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                           (day, "t", "A", item, name, 32, 30, sold / 2, sold / 2, 0, 0, free, revenue, 0, 0, 0))
+                        controls.extend(self.control(day, [metrics[field] if metrics[field] is not None else 0 for field in jl.CONTROL_FIELDS.values()]))
+                    rows, _ = self.build([{key: str(r[key]) for key in r.keys()} for r in source.execute(sql)], controls)
+                    self.assertEqual(len(rows), 2)
+                    for row in rows:
+                        self.assertEqual(row["room_nights"], paid)
+                        self.assertEqual(row["adr"], metrics["adr"])
+                        self.assertEqual(row["occupancy_rate"], metrics["occupancy_rate"])
+                        self.assertEqual(row["revpar"], metrics["revpar"])
+
+    def test_fetch_requires_free_room_column(self):
+        with patch.object(jl, "require_columns") as require, patch.object(jl, "query", side_effect=[self.records, self.controls]):
+            jl.fetch_rows(self.config, self.stamp)
+        self.assertIn("ent", require.call_args_list[0].args[2])
 
     def test_detail_and_total_mismatch_fails(self):
         records = [{**r, "room_revenue": "2000"} if r["room_type_code"] == "AR" else r for r in self.records]

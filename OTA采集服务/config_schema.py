@@ -102,6 +102,9 @@ SECRET_GROUPS = [
         [
             ("meituan.eb_cookie", "美团 EB Cookie（经营/热词/部分后台接口）"),
             ("meituan.me_cookie", "美团 ME Cookie（评价评分/产品/调价页）"),
+            ("meituan.promotion_cookie", "美团推广后台 Cookie（近30天推广效果）"),
+            ("meituan.highlights_cookie", "美团酒店亮点 Cookie（tdc.meituan.com）"),
+            ("meituan.public_welfare_cookie", "美团公益流量 Cookie（gongyi.meituan.com）"),
             ("ctrip.cookie", "携程 Cookie"),
             ("bypms.cookie", "宝寓 PMS Cookie"),
         ],
@@ -187,6 +190,9 @@ CONFIG_SECTIONS = [
             ("meituan.hotel_name", "酒店名称", False, False),
             ("meituan.eb_cookie", "EB Cookie（经营数据、周边事件、评价排行）", True, True),
             ("meituan.me_cookie", "ME Cookie（评价明细、活动、调价商品与执行）", True, True),
+            ("meituan.promotion_cookie", "推广后台 Cookie（近30天推广效果，选填）", True, True),
+            ("meituan.highlights_cookie", "酒店亮点 Cookie（tdc.meituan.com，内页未登录时填写）", True, True),
+            ("meituan.public_welfare_cookie", "公益流量 Cookie（gongyi.meituan.com，内页未登录时填写）", True, True),
             ("meituan.poi_id", "poiId", False, True),
             ("meituan.partner_id", "partnerId", False, True),
             ("meituan.biz_account_id", "bizAccountId", False, True),
@@ -257,7 +263,7 @@ CONFIG_SECTIONS = [
         "title": "PMS（西软 Foxhis）",
         "hint": "数据库只读直连（Sybase）。房态随每轮刷新，日结经营报表夜审后每天成功采集一次，失败会重试；与别样红 / 宝寓互斥启用。",
         "fields": [
-            ("foxhis.hotel_name", "酒店名称", False, False),
+            ("foxhis.hotel_name", "酒店名称（留空自动读取）", False, False),
             ("foxhis.username", "数据库账号（只读）", False, False),
             ("foxhis.password", "数据库密码", True, False),
             ("foxhis.fetch_after", "采集时机（早于该时刻跳过，如 03:30）", False, False),

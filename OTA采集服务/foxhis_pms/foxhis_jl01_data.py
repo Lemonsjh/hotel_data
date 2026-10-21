@@ -61,6 +61,7 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
     totals: dict[date, dict] = {}
     seen: set[tuple] = set()
     manual_rows = 0
+    manual_totals: dict[date, dict] = {}
     for record in records:
         day = report_date(record.get("business_date"))
         if day not in days or day >= snapshot.date() or record.get("gkey") != "t":
@@ -80,9 +81,10 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
             totals[day] = values
             continue
         if code == "ZZZ":
-            if any(values.values()):
-                raise FoxhisError("JL01 有未分配到房型的手工收入或房量，需先核对。")
-            manual_rows += 1
+            manual = manual_totals.setdefault(day, {field: Decimal(0) for field in BASE_METRICS})
+            for field in BASE_METRICS:
+                manual[field] += values[field]
+            manual_rows += int(not any(values.values()))
             continue
         name = (record.get("room_type_name") or "").strip()
         if not name:
@@ -111,6 +113,8 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
     for day in available:
         details = [value for (item_day, _), value in grouped.items() if item_day == day]
         summed = {field: sum((value[field] for value in details), Decimal(0)) for field in BASE_METRICS}
+        # 手工调整参与酒店总额核对，不生成房型，也不分摊到真实房型。
+        summed = {field: value + manual_totals.get(day, {}).get(field, Decimal(0)) for field, value in summed.items()}
         if any(summed[field] != totals[day][field] for field in BASE_METRICS):
             raise FoxhisError("JL01 房型明细与原生总计不一致。")
         metrics = derived(summed)
@@ -134,7 +138,9 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
         raise FoxhisError("JL01 存在同日同名不同代码的房型，目标唯一键无法区分。")
     return rows, {"requested_dates": [day.isoformat() for day in days], "available_dates": [day.isoformat() for day in available],
                   "missing_dates": [day.isoformat() for day in days if day not in available],
-                  "manual_zero_rows_skipped": manual_rows, "by_date": audits}
+                  "manual_zero_rows_skipped": manual_rows,
+                  "excluded_manual_by_date": {day.isoformat(): values for day, values in manual_totals.items()},
+                  "by_date": audits}
 
 
 def fetch_rows(config: Config, snapshot: datetime) -> tuple[list[dict], dict]:
@@ -189,7 +195,7 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
     summary.update(report="jl01", business_date=collection_dates(snapshot_time.date())[0].isoformat(),
                    source_platform=SOURCE_PLATFORM, hotel_id=config.hotel_id, snapshot_time=snapshot_time.isoformat(),
                    row_count=len(rows), written=written, dry_run=dry_run, rows=rows,
-                   basis="原生房型日结：出租率=已售间夜/可用房数*100，ADR=房费/已售间夜，RevPAR=房费/总房数")
+                   basis="原生房型日结：计费间夜=已售间夜-免费房间夜，出租率=计费间夜/可用房数*100，ADR=房费/计费间夜，RevPAR=房费/总房数")
     save_output(SUMMARY_FILE, summary, config)
     return summary
 

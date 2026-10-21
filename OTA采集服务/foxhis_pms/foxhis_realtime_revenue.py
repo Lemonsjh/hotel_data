@@ -81,7 +81,7 @@ def apply_realtime_revenue(forecast_rows: list[dict], room_rows: list[dict], rec
         if room_no in seen:
             raise FoxhisError("同一在住房存在多条主单或重叠价格段，拒绝重复计算房费。")
         if not (record.get("folio_no") or "").strip() or not (record.get("rate_segment_id") or "").strip():
-            raise FoxhisError("在住房缺少有效主单或当日价格段，保留上次快照。")
+            raise FoxhisError(f"在住房缺少有效主单或当日价格段（房号：{room_no}），保留上次快照。")
         try:
             rate = Decimal(record["room_rate"].replace(",", "").strip())
             quantity = Decimal(record["room_quantity"].replace(",", "").strip())
@@ -113,7 +113,7 @@ def apply_realtime_revenue(forecast_rows: list[dict], room_rows: list[dict], rec
 
 
 def realtime_revenue(config: Config, room_rows: list[dict], forecast_rows: list[dict], day: date) -> dict:
-    require_columns(config, "master", ["accnt", "roomno", "sta", "rmnum", "share"])
-    require_columns(config, "rsvsrc", ["accnt", "id", "quantity", "rate", "begin_", "end_"])
+    require_columns(config, "master", ["accnt", "roomno", "sta", "rmnum", "share", "dep"])
+    require_columns(config, "rsvsrc", ["accnt", "id", "quantity", "rate", "begin_", "end_", "arr", "dep"])
     records = query(REALTIME_ROOM_RATE_QUERY.format(business_date=day.strftime("%Y%m%d")), config, timeout=120)
     return apply_realtime_revenue(forecast_rows, room_rows, records)

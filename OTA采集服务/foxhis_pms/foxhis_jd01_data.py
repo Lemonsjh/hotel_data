@@ -1,4 +1,4 @@
-"""西软 JD01：保留 PMS 原始账号，离店日期从一个自然月前起，未知字段留NULL。"""
+"""西软 JD01：离店日期从一个自然月前起，未知字段留NULL。"""
 from __future__ import annotations
 
 import sys
@@ -105,18 +105,21 @@ def build_rows(records: list[dict], ledger: list[dict], rates: list[dict], confi
 
 def fetch_rows(config: Config, snapshot: datetime) -> tuple[list[dict], dict]:
     params = {"cutoff": checkout_cutoff(snapshot.date()).strftime("%Y%m%d")}
-    records = query(JD01_ORDERS_QUERY.format(**params), config, timeout=120)
-    ledger = query(JD01_LEDGER_QUERY.format(**params), config, timeout=120)
-    rates = query(JD01_RATE_QUERY.format(**params), config, timeout=120)
+    records = query(JD01_ORDERS_QUERY.format(**params), config, timeout=120,
+                    required_columns=("folio_no", "origin", "status_code", "arrival_time", "departure_time", "type_code", "room_count"))
+    if not records:
+        return build_rows([], [], [], config, snapshot)
+    ledger = query(JD01_LEDGER_QUERY.format(**params), config, timeout=120,
+                   required_columns=("folio_no", "line_no", "amount", "nights"))
+    rates = query(JD01_RATE_QUERY.format(**params), config, timeout=120,
+                  required_columns=("folio_no", "type_code", "quantity", "start_date", "end_date", "rate"))
     return build_rows(records, ledger, rates, config, snapshot)
 
 
-def sync_rows(rows: list[dict], config: Config, snapshot: datetime | None = None) -> int:
-    if not config.hotel_id.strip():
-        raise FoxhisError("JD01 酒店ID为空。")
-    stamp = rows[0]["snapshot_time"] if rows else snapshot
-    if not isinstance(stamp, datetime):
-        raise FoxhisError("JD01 空快照缺少已完成采集的时间，拒绝替换。")
+def sync_rows(rows: list[dict], config: Config) -> int:
+    if not rows or not config.hotel_id.strip():
+        raise FoxhisError("JD01 数据或酒店ID为空。")
+    stamp = rows[0]["snapshot_time"]
     cutoff = checkout_cutoff(stamp.date())
     if (len({r["order_id"] for r in rows}) != len(rows)
             or any(r["hotel_id"] != config.hotel_id or r["source_platform"] != SOURCE_PLATFORM or r["snapshot_time"] != stamp
@@ -131,9 +134,8 @@ def sync_rows(rows: list[dict], config: Config, snapshot: datetime | None = None
             if any(r[0] and r[0] > stamp for r in cursor.fetchall()):
                 raise FoxhisError("JD01 已有更新批次，拒绝旧快照覆盖。")
             cursor.execute(f"DELETE FROM `{JD01_TABLE}` WHERE {condition}", args)
-            if rows:
-                cursor.executemany(f"INSERT INTO `{JD01_TABLE}` ({', '.join('`'+c+'`' for c in COLUMNS)}) VALUES ({', '.join(['%s']*len(COLUMNS))})",
-                                   [tuple(r[c] for c in COLUMNS) for r in rows])
+            cursor.executemany(f"INSERT INTO `{JD01_TABLE}` ({', '.join('`'+c+'`' for c in COLUMNS)}) VALUES ({', '.join(['%s']*len(COLUMNS))})",
+                               [tuple(r[c] for c in COLUMNS) for r in rows])
         connection.commit()
     except Exception:
         connection.rollback()
@@ -146,7 +148,10 @@ def sync_rows(rows: list[dict], config: Config, snapshot: datetime | None = None
 def collect(config: Config, business_date: date, snapshot_time: datetime) -> dict:
     rows, summary = fetch_rows(config, snapshot_time)
     dry_run = "--dry-run" in sys.argv
-    summary.update(report="jd01", row_count=len(rows), written=0 if dry_run else sync_rows(rows, config, snapshot_time), dry_run=dry_run)
+    summary.update(report="jd01", row_count=len(rows), written=0 if dry_run or not rows else sync_rows(rows, config), dry_run=dry_run)
+    if not rows:
+        summary["message"] = "查询成功，0 条符合条件的订单；保留已有数据。"
+        print("INFO [jd01] " + summary["message"])
     save_output(SUMMARY_FILE, summary, config)
     return summary
 

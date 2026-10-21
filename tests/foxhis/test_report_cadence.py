@@ -19,7 +19,7 @@ class ReportCadenceTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         directory = self.stack.enter_context(tempfile.TemporaryDirectory(prefix="foxhis_cadence_", dir=Path(__file__).resolve().parents[2]))
-        self.config = common.Config(server="FoxFront", database="foxhis1", username="reader", hotel_id="TEST",
+        self.config = common.Config(server="FoxFront", database="foxhis1", username="reader", hotel_id="TEST", hotel_name="测试酒店",
                                     output_dir=directory, fetch_after="03:30",
                                     mysql={"host": "target", "port": 3306, "database": "hotel_test"})
         self.clock = self.stack.enter_context(patch.object(common, "datetime", wraps=datetime))
