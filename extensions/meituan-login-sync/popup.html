@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>美团登录同步</title><link rel="stylesheet" href="popup.css"><script src="popup.js" defer></script>
+</head><body>
+  <header><span id="version" class="eyebrow">HOTEL COLLECTOR · 本机同步</span><h1>美团登录同步</h1>
+    <p>普通浏览器登录，一键导入本机采集服务。</p></header>
+  <p id="message" role="status" aria-live="polite">准备连接本机服务…</p>
+  <aside id="diagnostic" hidden aria-label="酒店核对失败详情"><strong>酒店核对未通过</strong>
+    <p id="diagnostic-details"></p></aside>
+  <section id="pairing"><h2>首次连接</h2>
+    <p>从配置中心的“浏览器扩展导入”页面生成一次性配对码。</p>
+    <label for="port">本机服务端口</label><input id="port" type="number" min="1" max="65535" value="8765">
+    <label for="pair-code">一次性配对码</label><input id="pair-code" maxlength="32" autocomplete="off" spellcheck="false" placeholder="粘贴 32 位配对码">
+    <button id="pair" type="button">连接本机服务</button></section>
+  <section id="connected" hidden><div class="section-head"><h2>浏览器 Cookie 读取状态</h2><span class="badge">已配对</span></div>
+    <p>先在同一浏览器窗口打开美团“评价管理”，待评价列表加载完成后读取。</p>
+    <button id="preview" type="button">读取 Cookie 并核对酒店</button>
+    <div id="groups"></div>
+    <div id="hotel" hidden><span class="eyebrow">识别结果 / 请核对</span><h2 id="hotel-name"></h2><p id="poi"></p></div>
+    <label id="confirm-box" hidden class="confirmation"><input id="confirmed" type="checkbox">
+      <span>酒店正确，且上述后台均为同一账号。已读取的额外后台尚未验证；未读取项保留原值。</span></label>
+    <div class="actions"><button id="commit" hidden disabled type="button">确认保存到采集服务</button>
+      <button id="cancel" hidden class="secondary" type="button">取消导入</button></div>
+  </section>
+  <footer>不自动登录 · 不修改浏览器 Cookie · 不上传云端<br>请先暂停自动调度，关闭登录助手；导入不会自动运行采集。</footer>
+</body></html>

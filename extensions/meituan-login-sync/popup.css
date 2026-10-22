@@ -1,0 +1,31 @@
+:root { color-scheme: light; --ink:#172b26; --muted:#61726b; --green:#126a58; --line:#dae5df; }
+* { box-sizing:border-box; }
+html { width:100%; min-width:0; min-height:100%; overflow-x:hidden; }
+body { margin:0; width:100%; min-width:0; padding:20px; color:var(--ink); background:#f5f8f5; font:13px/1.7 "Microsoft YaHei",sans-serif; overflow-wrap:anywhere; }
+header { border-bottom:1px solid var(--line); padding-bottom:12px; }
+.eyebrow { font-size:10px; font-weight:700; letter-spacing:.1em; color:var(--green); }
+h1 { font-size:23px; line-height:1.3; letter-spacing:-.03em; margin:10px 0; }
+h2 { margin:0 0 10px; font-size:15px; }
+p { color:var(--muted); margin:8px 0; }
+section { margin-top:16px; }
+label { display:block; margin:12px 0 5px; font-weight:600; }
+input:not([type=checkbox]) { width:100%; border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:#fff; color:var(--ink); font:13px Consolas,"Microsoft YaHei",monospace; }
+button { width:100%; border:0; border-radius:8px; padding:12px; background:var(--green); color:white; cursor:pointer; font:600 13px "Microsoft YaHei",sans-serif; margin-top:14px; }
+button:hover { background:#0c5143; } button:disabled { opacity:.5; cursor:default; }
+button.secondary { background:#e6eeea; color:var(--green); }
+.section-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.badge { background:#e0efe6; color:var(--green); font-size:11px; padding:3px 9px; border-radius:20px; white-space:nowrap; }
+.cookie-row { display:flex; justify-content:space-between; gap:8px; border-bottom:1px solid var(--line); padding:9px 0; font-size:12px; }
+.cookie-row span:last-child { color:var(--muted); }
+#hotel { padding:18px; background:#e8f1eb; border-left:3px solid var(--green); margin-top:18px; overflow-wrap:anywhere; }
+#hotel h2 { margin:8px 0; } #hotel p { margin-bottom:0; }
+.confirmation { display:flex; align-items:flex-start; gap:9px; color:var(--muted); font-size:12px; font-weight:400; }
+.confirmation input { margin-top:5px; accent-color:var(--green); }
+#message { color:var(--green); overflow-wrap:anywhere; padding:10px 12px; margin:14px 0 0; background:#e8f1eb; border-left:3px solid var(--green); font-size:12px; }
+#message[data-state=failed] { color:#8a331a; background:#fff0e5; border-left-color:#b94d27; }
+#diagnostic { padding:12px; margin-top:10px; border:1px solid #e8d2c5; border-radius:6px; font-size:12px; }
+#diagnostic-details { white-space:pre-line; margin-bottom:0; font-size:11px; }
+footer { font-size:11px; color:var(--muted); border-top:1px solid var(--line); padding-top:14px; }
+[hidden] { display:none !important; }
+:focus-visible { outline:3px solid #c78c35; outline-offset:3px; }
+@media (max-width:340px) { body { padding:16px; } h1 { font-size:21px; } }

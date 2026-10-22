@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="bridge-csrf" content="{{ csrf }}">
+  <title>连接日常浏览器 · 酒店采集服务</title>
+  <link rel="stylesheet" href="/static/panel.css">
+  <link rel="stylesheet" href="/static/browser_cookie.css">
+  <script src="/static/browser_cookie_pair.js" defer></script>
+</head>
+<body><main class="shell bridge-shell">
+  <a href="/config" class="bridge-back">← 返回配置中心</a>
+  <header class="bridge-hero"><span class="bridge-eyebrow">LOCAL CONNECTION / 仅限本机</span>
+    <h1>登录照常，<br>同步只需一次点击。</h1>
+    <p>用日常 Edge 完成美团登录，再通过扩展导入登录状态。不接管浏览器，不上传 Cookie。</p>
+  </header>
+  <section class="panel bridge-pair"><div>
+    <span class="bridge-eyebrow">01 / 首次连接</span><h2>配对你的浏览器</h2>
+    <p>在 Edge 的扩展管理页打开“开发人员模式”，选择“加载解压缩的扩展”，加载项目中的 <code>extensions/meituan-login-sync</code> 文件夹。</p>
+    <p>点击下方按钮，在扩展中粘贴配对码。配对码 3 分钟有效且仅使用一次；不要发给其他人。</p>
+    <button id="create-code" type="button">生成一次性配对码</button>
+    <div id="pair-code" class="bridge-code" hidden><label for="code">在扩展中输入此配对码</label>
+      <input id="code" readonly autocomplete="off" spellcheck="false"><small id="expiry"></small></div>
+  </div><aside><span class="bridge-eyebrow">02 / 日常使用</span><h2>登录 → 读取 → 确认</h2>
+    <ol><li>在安装扩展的同一 Edge 配置文件中登录美团。</li>
+      <li>先暂停自动调度并关闭登录助手，在同一普通浏览器窗口打开美团评价管理，待列表加载后点击扩展“读取并核对”。</li>
+      <li>核对酒店名称和门店 ID，确认各后台属于同一账号后保存。</li></ol>
+    <p>推广、亮点或公益后台未建立会话时，先正常打开相应页面再读取。额外后台仅标记“已读取”，不代表已验证。</p>
+  </aside></section>
+  <p id="message" role="status" aria-live="polite"></p>
+  <section class="panel bridge-security"><div><h2>你始终掌握授权</h2>
+    <p>配对授权保存在本机，30 天到期。撤销后扩展不能继续导入；已保存的登录配置保持不变。重置本地配置也会撤销授权。</p></div>
+    <button id="revoke" class="secondary" type="button">撤销扩展授权</button></section>
+</main></body></html>

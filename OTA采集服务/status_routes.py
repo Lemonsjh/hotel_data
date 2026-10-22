@@ -170,7 +170,8 @@ def register(app) -> None:
             or reply_scheduler_state in {"executing", "stopping"}
             or promotion_scheduler_state in {"executing", "stopping"}
         )
-        refresh_script = "<script>setTimeout(() => location.reload(), 2000);</script>" if should_refresh else ""
+        refresh_delay = 2000 if should_refresh else 15000 if scheduler.get("alive") and scheduler_state == "waiting" else 0
+        refresh_script = f"<script>setTimeout(() => location.reload(), {refresh_delay});</script>" if refresh_delay else ""
         scheduler_html = f"""
 <div class="grid scheduler-grid">
   <section class="panel" style="padding:16px 20px">

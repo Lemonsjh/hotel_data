@@ -7,12 +7,14 @@ __pycache__/
 文档/
 *.md
 !/README.md
+!/extensions/meituan-login-sync/README.md
 *.docx
 *.pdf
 .docx_qa/
 
 # Local configuration and secrets
 OTA采集服务/config/settings.json
+OTA采集服务/config/.settings.lock
 **/*cookie*.txt
 **/pms_session*.json
 **/JD01_preOrderDetailReport.json

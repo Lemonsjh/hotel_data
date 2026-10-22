@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+from browser_cookie_diagnostics import ProbeDiagnostics
 
 
 MEITUAN_URL = "https://me.meituan.com/ebooking/merchant/comment-manage-react"
@@ -214,7 +215,11 @@ def probe(
     cookie_header: str,
     secondary_cookie_header: str = "",
     timeout_ms: int = 45000,
+    require_authenticated: bool = False,
+    diagnostics: Any = None,
+    scoped_cookies: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    diagnostics = diagnostics or ProbeDiagnostics()
     if not cookie_header.strip():
         return {"ok": False, "error": f"{platform} cookie is empty", "hotel_name": "", "candidates": []}
 
@@ -236,11 +241,16 @@ def probe(
         try:
             hits: list[dict[str, str]] = []
             meituan_request: dict[str, str] = {}
+            authenticated_request: dict[str, str] = {}
             browser = p.chromium.launch(channel="msedge", headless=True)
+            diagnostics.phase("cookie_setup")
             context = browser.new_context(viewport={"width": 1280, "height": 800})
-            cookies = parse_cookie_header(cookie_header, primary_domains)
-            if secondary_cookie_header.strip():
-                cookies.extend(parse_cookie_header(secondary_cookie_header, secondary_domains))
+            if scoped_cookies is None:
+                cookies = parse_cookie_header(cookie_header, primary_domains)
+                if secondary_cookie_header.strip():
+                    cookies.extend(parse_cookie_header(secondary_cookie_header, secondary_domains))
+            else:
+                cookies = scoped_cookies
             context.add_cookies(cookies)
             page = context.new_page()
             page.route(
@@ -254,6 +264,7 @@ def probe(
                 if platform != "meituan" or meituan_request:
                     return
                 captured = extract_meituan_comment_request(req.url)
+                diagnostics.request(captured)
                 if captured:
                     meituan_request.update(captured)
 
@@ -262,16 +273,29 @@ def probe(
                     platform == "ctrip" and "ebooking.ctrip.com" not in resp.url
                 ):
                     return
+                observed = diagnostics.response(resp.url, getattr(resp, "status", None))
                 try:
                     data = resp.json()
                 except Exception:
                     return
+                if observed:
+                    diagnostics.business(data)
+                if platform == "meituan":
+                    captured = extract_meituan_comment_request(resp.url)
+                    if (captured and getattr(resp, "status", None) == 200
+                            and isinstance(data, dict) and data.get("code") == 10000
+                            and isinstance(data.get("data"), dict)):
+                        authenticated_request.update(captured)
                 walk_json(data, hits, resp.url, platform)
 
             page.on("request", on_request)
             page.on("response", on_response)
+            page.on("requestfailed", diagnostics.request_failed)
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                diagnostics.phase("page_load")
+                navigation = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                diagnostics.navigation(navigation)
+                diagnostics.phase("page_read")
                 if platform == "ctrip":
                     try:
                         name = page.locator("#he-micro-html-inline-hotel-name").inner_text(timeout=min(timeout_ms, 10000))
@@ -283,7 +307,8 @@ def probe(
                 for _ in range(loop_count):
                     candidates_now = unique_hits([item for item in hits if looks_like_hotel(item.get("value"))])
                     if platform == "meituan":
-                        if meituan_request and candidates_now and int(candidates_now[0].get("priority") or 0) >= 100:
+                        if (meituan_request and candidates_now and int(candidates_now[0].get("priority") or 0) >= 100
+                                and (not require_authenticated or authenticated_request)):
                             break
                     elif candidates_now and int(candidates_now[0].get("priority") or 0) >= 100:
                         break
@@ -301,11 +326,13 @@ def probe(
                 for line in body.splitlines():
                     if looks_like_hotel(line):
                         hits.append(hit("page_text", "line", line, text_priority(line, platform)))
+                diagnostics.phase("storage_read")
                 for item in page.evaluate(js_storage_probe()):
                     value = item.get("value")
                     if looks_like_hotel(value):
                         hits.append(hit(item.get("source", "storage"), item.get("key", ""), value, text_priority(value, platform) - 10))
                 current_url = page.url
+                diagnostics.location(current_url)
                 login_like = (
                     "login" in current_url.lower()
                     or "passport" in current_url.lower()
@@ -314,6 +341,7 @@ def probe(
                 candidates = unique_hits([item for item in hits if looks_like_hotel(item.get("value"))
                                           and (platform != "ctrip" or int(item.get("priority") or 0) >= 100)])
                 hotel_name = candidates[0]["value"] if candidates and not login_like else ""
+                diagnostics.phase("page_title")
                 result = {
                     "ok": bool(meituan_request) if platform == "meituan" else bool(hotel_name),
                     "login_like": login_like,
@@ -325,6 +353,15 @@ def probe(
                 }
                 if platform == "meituan":
                     result.update(meituan_request)
+                    result["authenticated"] = bool(authenticated_request) and all(
+                        authenticated_request.get(key) == meituan_request.get(key)
+                        for key in ("poi_id", "partner_id", "biz_account_id")
+                    )
+                    if require_authenticated and result["authenticated"]:
+                        result.update(authenticated_request)
+                    if require_authenticated:
+                        diagnostics.phase("completed")
+                        result["probe_diagnostics"] = diagnostics.safe()
                 return result
             finally:
                 if context is not None:

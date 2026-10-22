@@ -163,6 +163,22 @@ class RealtimeForecastTests(unittest.TestCase):
     def financial_record(self, line="1", amount="200.00", nights="2.00", room="101"):
         return {"folio_no": "F1", "line_no": line, "room_no": room, "charge_code": "1000", "amount": amount, "room_nights": nights, "ledger_source": "current"}
 
+    def test_summary_distinguishes_physical_rooms_from_written_room_types(self):
+        records = [{"room_no": room, "room_type_code": "A", "room_status": "R", "occupy_status": "V", "locked": "N"}
+                   for room in ("101", "102", "103")]
+        with patch.object(status, "require_columns"), \
+             patch.object(status, "room_type_name_map", return_value={"A": "大床房"}), \
+             patch.object(status, "room_status_name_map", return_value={"R": "干净"}), \
+             patch.object(status, "query", return_value=records), \
+             patch.object(status, "realtime_revenue", return_value={}), \
+             patch.object(status, "save_output") as output, \
+             patch.object(status, "sync_inventory", return_value=1), \
+             patch.object(sys, "argv", ["room_status"]):
+            result = status.collect(self.config, self.stamp.date(), self.stamp)
+        self.assertEqual((result["source_room_count"], result["row_count"], result["written"]), (3, 1, 1))
+        summary = output.call_args.args[1]
+        self.assertEqual((summary["source_room_count"], summary["row_count"], summary["written"]), (3, 1, 1))
+
     def live_record(self, **changes):
         return {"room_no": "103", "room_type_code": "A", "folio_no": "F1", "room_quantity": "1", "share_code": "F", "rate_segment_id": "0", "rate_quantity": "1", "room_rate": "123.45", **changes}
 

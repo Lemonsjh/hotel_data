@@ -4,8 +4,6 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,7 +12,7 @@ MEITUAN_DIR = ROOT / "美团OTA数据采集代码"
 
 def load_module():
     sys.path.insert(0, str(MEITUAN_DIR))
-    path = MEITUAN_DIR / "meituan_promotion_status_data.py"
+    path = MEITUAN_DIR / "meituan_promotion_status_checks.py"
     spec = importlib.util.spec_from_file_location("meituan_promotion_navigation_test_target", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {path}")
@@ -115,23 +113,10 @@ class PromotionStatusNavigationTests(unittest.TestCase):
 
         self.assertEqual(page.url, "https://me.meituan.com/ebooking/merchant/ebIframe")
 
-    def test_public_welfare_defaults_to_closed_after_page_content_loads(self):
-        self.assertEqual(self.module.public_welfare_page_status([], "公益流量服务说明"), "CLOSED")
+    def test_public_welfare_requires_an_explicit_state(self):
+        self.assertIsNone(self.module.public_welfare_page_status([], "公益流量服务说明"))
         self.assertEqual(self.module.public_welfare_page_status(["生效中"], "公益流量"), "OPEN")
         self.assertEqual(self.module.public_welfare_page_status([], ""), None)
-
-    def test_unrecognized_public_welfare_only_inserts_when_absent(self):
-        connection = MagicMock()
-        cursor = connection.cursor.return_value.__enter__.return_value
-        with patch.dict(sys.modules, {"pymysql": SimpleNamespace(connect=lambda **_kwargs: connection)}):
-            cursor.execute.return_value = 1
-            self.assertTrue(self.module.save_initial_public_welfare_closed("hotel-1"))
-            cursor.execute.return_value = 0
-            self.assertFalse(self.module.save_initial_public_welfare_closed("hotel-1"))
-        query, params = cursor.execute.call_args.args
-        self.assertIn("INSERT IGNORE", query)
-        self.assertEqual(params[1:3], ("public_welfare_traffic", "公益流量"))
-        self.assertEqual(connection.commit.call_count, 2)
 
 
 if __name__ == "__main__":

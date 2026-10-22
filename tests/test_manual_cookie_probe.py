@@ -59,6 +59,18 @@ class ManualCookieProbeTests(unittest.TestCase):
             self.assertEqual(result["hotel_name"], "")
             playwright.chromium.launch_persistent_context.assert_not_called()
 
+    def test_scoped_cookie_probe_does_not_expand_domain(self):
+        with patch.object(probe, "sync_playwright") as factory:
+            context = factory.return_value.__enter__.return_value.chromium.launch.return_value.new_context.return_value
+            page = context.new_page.return_value
+            page.url = "https://me.meituan.com/login/index.html"
+            page.locator.return_value.inner_text.return_value = "请登录"
+            page.evaluate.return_value = []
+            page.title.return_value = "登录"
+            scoped = [{"name": "session", "value": "fake", "domain": "me.meituan.com", "path": "/"}]
+            probe.probe("meituan", "session=fake", scoped_cookies=scoped)
+            context.add_cookies.assert_called_once_with(scoped)
+
     def test_empty_cookie_does_not_open_browser(self):
         with patch.object(probe, "sync_playwright") as factory:
             self.assertFalse(probe.probe("meituan", "")["ok"])

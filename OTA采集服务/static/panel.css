@@ -180,6 +180,8 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
   justify-content: flex-end;
   margin: -8px 0 14px;
 }
+.ota-platform-actions { margin: -6px 0 18px; }
+.ota-platform-actions .config-actions { flex-wrap: wrap; justify-content: flex-start; }
 @media (min-width: 981px) {
   .pms-config-stack > .config-card { height: 100%; box-sizing: border-box; }
 }
@@ -232,7 +234,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
 .login-assistant small { color: var(--muted); font-size: 11px; margin-top: 3px; }
 .login-assistant > div { min-width: 0; }
 .login-state {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   max-width: 55%;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -279,6 +281,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
 }
 .inner-details summary { padding: 14px 0 0; font-size: 13px; }
 .inner-details summary span { color: var(--muted); font-weight: 600; margin-left: 6px; }
+.advanced-login-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .advanced-grid { padding-top: 14px; }
 .task-switches { margin-top: 16px; }
 .ota-scope-panel { padding: 18px 20px; margin-bottom: 16px; }

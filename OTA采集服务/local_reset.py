@@ -71,4 +71,7 @@ def reset_local_configuration() -> None:
     request_scheduler_stop()
     stop_login_helpers()
     clear_login_sessions()
+    # Reset must also revoke the ordinary-browser extension's persisted authorization.
+    from browser_cookie_auth import pairing_path
+    pairing_path().unlink(missing_ok=True)
     runner.save_json(runner.CONFIG_PATH, default_settings())

@@ -14,6 +14,7 @@ from config_schema import (
     SHORT_SECRET_FIELDS,
 )
 import foxhis_probe
+import browser_cookie_routes
 import log_routes
 import local_reset
 import platform_login
@@ -97,6 +98,7 @@ status_routes.register(app)
 log_routes.register(app)
 price_routes.register(app)
 promotion_routes.register(app)
+browser_cookie_routes.register(app)
 
 
 def config_control(settings: dict[str, Any], key: str, label: str, secret: bool) -> str:
@@ -142,7 +144,10 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
     if advanced:
         login_help = (
             "<p>登录助手无法完成登录时，可在日常 Edge 登录后手动填写 Cookie；推广效果另需推广后台 Cookie。</p>"
+            "<div class='advanced-login-actions'>"
             "<button type='submit' class='secondary compact' name='login_mode' value='manual' formaction='/platform-login/meituan'>日常Edge登录（手动填写Cookie）</button>"
+            "<a class='button secondary compact' href='/browser-cookie-import' target='_blank' rel='noopener'>浏览器扩展导入</a>"
+            "</div>"
         ) if section_key == "meituan" else ""
         advanced_html = (
             "<details class='inner-details'>"
@@ -207,6 +212,9 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         heading_actions = pms_source_selector(settings)
         if actions:
             platform_actions = f"<div class='pms-platform-actions'>{actions}</div>"
+    elif section_key in {"meituan", "ctrip"}:
+        heading_actions = ""
+        platform_actions = f"<div class='ota-platform-actions'>{actions}</div>"
 
     return f"""
     <section class="panel config-card config-{esc(section_key)}" data-pms-card="{esc(section_key)}">

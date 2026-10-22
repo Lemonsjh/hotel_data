@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "酒店采集 · 美团登录同步",
+  "version": "0.2.2",
+  "minimum_chrome_version": "132",
+  "description": "由用户点击，将普通浏览器中的美团登录 Cookie 导入已配对的本机酒店采集服务。无云端上传。",
+  "permissions": ["cookies", "storage", "sidePanel", "scripting"],
+  "host_permissions": [
+    "https://meituan.com/*",
+    "https://dianping.com/*",
+    "https://me.meituan.com/*",
+    "https://eb.meituan.com/*",
+    "https://ebmidas.dianping.com/*",
+    "https://tdc.meituan.com/*",
+    "https://gongyi.meituan.com/*",
+    "http://meituan.com/*",
+    "http://dianping.com/*",
+    "http://me.meituan.com/*",
+    "http://eb.meituan.com/*",
+    "http://ebmidas.dianping.com/*",
+    "http://tdc.meituan.com/*",
+    "http://gongyi.meituan.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {"service_worker": "worker.js", "type": "module"},
+  "action": {"default_title": "打开美团登录同步侧栏"},
+  "side_panel": {"default_path": "popup.html"},
+  "incognito": "not_allowed",
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"}
+}

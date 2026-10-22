@@ -11,15 +11,17 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
-from playwright.sync_api import sync_playwright
 
 from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
 from meituan_goods_price_mapping import MeituanGoodsClient
 from meituan_page_capture import browser_profile_lock
-from meituan_status_session import launch_status_context
+from meituan_promotion_status_checks import (
+    AUTO_ORDER_NAME, BUSINESS_TRAVEL_NAME, HIGHLIGHTS_NAME, PUBLIC_WELFARE_NAME,
+    SCHEDULED_INVOICE_NAME, fetch_auto_order_status, fetch_business_travel_status,
+    fetch_hotel_highlights_status, fetch_public_welfare_status, fetch_scheduled_invoice_status,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import DB_CONFIG, OUTPUT_DIR
@@ -29,32 +31,12 @@ STATUS_URL = "https://eb.meituan.com/api/v1/vip/member/platformMember/statusAndR
 PROMOTION_CODE = "youmeihui"
 PROMOTION_NAME = "\u4f18\u7f8e\u4f1a"
 BUSINESS_TRAVEL_CODE = "business_travel_price"
-BUSINESS_TRAVEL_NAME = "\u5546\u65c5\u4e13\u4eab\u4ef7"
-BUSINESS_TRAVEL_URL = (
-    "https://me.meituan.com/ebooking/merchant/ebIframe?"
-    "iUrl=%2Febooking%2Fpromotion-new%2Findex.html%23%2Fbusiness-hotel%2Fhome"
-)
 HOURLY_ROOM_CODE = "hourly_room"
 HOURLY_ROOM_NAME = "\u949f\u70b9\u623f"
 HIGHLIGHTS_CODE = "hotel_highlights"
-HIGHLIGHTS_NAME = "\u9152\u5e97\u4eae\u70b9"
-WORKBENCH_URL = "https://eb.meituan.com/ebooking/new-workbench/index.html"
-HIGHLIGHTS_EMPTY_TEXT = "\u5f53\u524d\u9152\u5e97\u6682\u65e0\u7279\u8272\u4eae\u70b9\u6570\u636e"
 AUTO_ORDER_CODE = "auto_order_acceptance"
-AUTO_ORDER_NAME = "\u81ea\u52a8\u63a5\u5355"
-AUTO_ORDER_URL = (
-    "https://me.meituan.com/ebooking/merchant/ebIframe?"
-    "iUrl=%2Febooking%2Forder%2Findex.html%23%2Fauto"
-)
 PUBLIC_WELFARE_CODE = "public_welfare_traffic"
-PUBLIC_WELFARE_NAME = "\u516c\u76ca\u6d41\u91cf"
-PUBLIC_WELFARE_ACTIVE = "\u751f\u6548\u4e2d"
 SCHEDULED_INVOICE_CODE = "reservation_invoice"
-SCHEDULED_INVOICE_NAME = "\u9884\u7ea6\u53d1\u7968"
-SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
-PAGE_CHECK_SECONDS = 10
-PAGE_ACTION_TIMEOUT_MS = 5_000
-WORKBENCH_MENU_TIMEOUT_MS = 20_000
 COOLDOWN_MIN_HOURS = 10.0
 COOLDOWN_MAX_HOURS = 14.0
 COOLDOWN_REASONS = {"success", "failure"}
@@ -147,42 +129,6 @@ def fetch_youmeihui_status() -> str:
     return "OPEN" if payload["data"].get("activeStatus") == 1 else "CLOSED"
 
 
-def browser_cookies() -> list[dict[str, str]]:
-    entries = []
-    for header, url in (
-        (MEITUAN_EB_COOKIE, "https://eb.meituan.com/"),
-        (MEITUAN_ME_COOKIE, "https://me.meituan.com/"),
-        (MEITUAN_EB_COOKIE, "https://epassport.meituan.com/"),
-        (MEITUAN_ME_COOKIE, "https://epassport.meituan.com/"),
-    ):
-        for part in header.split(";"):
-            if "=" in part:
-                name, value = part.strip().split("=", 1)
-                entries.append({"name": name, "value": value, "url": url})
-    return entries
-
-
-def fetch_business_travel_status() -> str:
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, chromium_sandbox=True)
-        try:
-            context = browser.new_context(locale="zh-CN")
-            context.add_cookies(browser_cookies())
-            page = context.new_page()
-            page.goto(BUSINESS_TRAVEL_URL, wait_until="domcontentloaded", timeout=60_000)
-            for _ in range(PAGE_CHECK_SECONDS * 2):
-                for frame in page.frames:
-                    try:
-                        if "\u5df2\u52a0\u5165\u5546\u65c5\u5408\u4f5c" in frame.locator("body").inner_text(timeout=2_000):
-                            return "OPEN"
-                    except Exception:
-                        continue
-                page.wait_for_timeout(500)
-        finally:
-            browser.close()
-    raise RuntimeError("Business travel page did not return a recognized status")
-
-
 def fetch_hourly_room_status() -> str:
     client = MeituanGoodsClient(MEITUAN_ME_COOKIE)
     goods_data = client.query_goods()
@@ -196,177 +142,6 @@ def fetch_hourly_room_status() -> str:
         if status.get("fullRoomCode") in (0, "0", None) and not status.get("fullRoomDesc"):
             return "OPEN"
     return "CLOSED"
-
-
-def find_visible_text(page: Any, text: str):
-    locators = page.get_by_text(text, exact=True)
-    for index in range(locators.count()):
-        locator = locators.nth(index)
-        try:
-            if locator.is_visible(timeout=500):
-                return locator
-        except Exception:
-            continue
-    return None
-
-
-def wait_for_visible_text(page: Any, text: str, timeout_ms: int):
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        locator = find_visible_text(page, text)
-        if locator:
-            return locator
-        page.wait_for_timeout(250)
-    raise RuntimeError(f"Visible workbench menu was not found: {text}")
-
-
-def wait_for_workbench_wrapper(page: Any, timeout_ms: int = WORKBENCH_MENU_TIMEOUT_MS) -> None:
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        if urlparse(page.url).hostname == "me.meituan.com":
-            return
-        page.wait_for_timeout(250)
-    raise RuntimeError("Meituan workbench wrapper did not finish loading")
-
-
-def click_workbench_menu(page: Any, parent_name: str, item_name: str) -> None:
-    parent = wait_for_visible_text(page, parent_name, WORKBENCH_MENU_TIMEOUT_MS)
-    item = find_visible_text(page, item_name)
-    if not item:
-        parent.click(force=True, timeout=PAGE_ACTION_TIMEOUT_MS)
-        item = wait_for_visible_text(page, item_name, WORKBENCH_MENU_TIMEOUT_MS)
-    item.click(force=True, timeout=PAGE_ACTION_TIMEOUT_MS)
-
-
-def fetch_hotel_highlights_status() -> str:
-    with sync_playwright() as playwright:
-        context = launch_status_context(playwright)
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
-            page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
-            wait_for_workbench_wrapper(page)
-            click_workbench_menu(page, "\u4fe1\u606f\u7ba1\u7406", HIGHLIGHTS_NAME)
-            page.wait_for_timeout(1_000)
-            for _ in range(PAGE_CHECK_SECONDS * 2):
-                for frame in page.frames:
-                    try:
-                        if frame.locator(".list-empty").count():
-                            return "CLOSED"
-                        if HIGHLIGHTS_EMPTY_TEXT in frame.locator("body").inner_text(timeout=1_000):
-                            return "CLOSED"
-                    except Exception:
-                        continue
-                if "hasVpoiSelect" in page.url:
-                    return "OPEN"
-                page.wait_for_timeout(500)
-        finally:
-            context.close()
-    raise RuntimeError("Hotel highlights page did not return a recognized status")
-
-
-def fetch_auto_order_status() -> str:
-    with sync_playwright() as playwright:
-        context = launch_status_context(playwright)
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
-            page.goto(AUTO_ORDER_URL, wait_until="domcontentloaded", timeout=60_000)
-            for _ in range(PAGE_CHECK_SECONDS * 2):
-                for frame in page.frames:
-                    try:
-                        open_radio = frame.locator('input#status-open[value="1"]')
-                        closed_radio = frame.locator('input#status-shut[value="0"]')
-                        if open_radio.count() and open_radio.first.is_checked(timeout=1_000):
-                            return "OPEN"
-                        if closed_radio.count() and closed_radio.first.is_checked(timeout=1_000):
-                            return "CLOSED"
-                    except Exception:
-                        continue
-                page.wait_for_timeout(500)
-        finally:
-            context.close()
-    raise RuntimeError("Auto order page did not return a recognized status")
-
-
-def public_welfare_page_status(states: list[str], body: str) -> str | None:
-    if PUBLIC_WELFARE_ACTIVE in states or "权益生效中" in body:
-        return "OPEN"
-    return "CLOSED" if body.strip() else None
-
-
-def fetch_public_welfare_status() -> str:
-    with sync_playwright() as playwright:
-        context = launch_status_context(playwright)
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
-            page.goto(WORKBENCH_URL, wait_until="domcontentloaded", timeout=60_000)
-            wait_for_workbench_wrapper(page)
-            click_workbench_menu(page, "\u4fc3\u9500\u63a8\u5e7f", PUBLIC_WELFARE_NAME)
-            for _ in range(PAGE_CHECK_SECONDS * 2):
-                for frame in page.frames:
-                    if urlparse(frame.url).hostname != "gongyi.meituan.com":
-                        continue
-                    try:
-                        states = frame.locator("span.benefits-color-desc").all_text_contents()
-                        body = frame.locator("body").inner_text(timeout=1_000)
-                        if status := public_welfare_page_status(states, body):
-                            return status
-                    except Exception:
-                        continue
-                page.wait_for_timeout(500)
-        finally:
-            context.close()
-    raise RuntimeError("Public welfare page did not return a recognized status")
-
-
-def scheduled_invoice_is_closed(page: Any) -> bool:
-    for frame in page.frames:
-        try:
-            text = frame.locator("body").inner_text(timeout=1_000)
-        except Exception:
-            continue
-        if "\u5f53\u524d\u95e8\u5e97\u6682\u672a\u5f00\u901a" in text and SCHEDULED_INVOICE_NAME in text:
-            return True
-    return False
-
-
-def fetch_scheduled_invoice_status() -> str:
-    with sync_playwright() as playwright:
-        context = launch_status_context(playwright)
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
-            page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
-            maintenance_clicked = False
-            for _ in range(PAGE_CHECK_SECONDS * 2):
-                if scheduled_invoice_is_closed(page):
-                    return "CLOSED"
-                for frame in page.frames:
-                    try:
-                        links = frame.locator("a", has_text="\u9152\u5e97\u53d1\u7968\u4fe1\u606f\u7ef4\u62a4")
-                        for index in range(links.count()):
-                            link = links.nth(index)
-                            if link.is_visible():
-                                link.click(force=True)
-                                maintenance_clicked = True
-                                break
-                    except Exception:
-                        continue
-                    if maintenance_clicked:
-                        break
-                if maintenance_clicked:
-                    break
-                page.wait_for_timeout(500)
-            if not maintenance_clicked:
-                raise RuntimeError("Hotel invoice maintenance link was not found")
-
-            page.wait_for_timeout(1_000)
-            page.goto(SCHEDULED_INVOICE_URL, wait_until="domcontentloaded", timeout=60_000)
-            for _ in range(PAGE_CHECK_SECONDS * 2):
-                if scheduled_invoice_is_closed(page):
-                    return "CLOSED"
-                page.wait_for_timeout(500)
-        finally:
-            context.close()
-    return "OPEN"
 
 
 def save_status(hotel_id: str, code: str, name: str, status: str) -> None:
@@ -385,27 +160,6 @@ def save_status(hotel_id: str, code: str, name: str, status: str) -> None:
                 (hotel_id, code, name, status, snapshot_time),
             )
         connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
-
-
-def save_initial_public_welfare_closed(hotel_id: str) -> bool:
-    import pymysql
-
-    connection = pymysql.connect(**DB_CONFIG)
-    try:
-        with connection.cursor() as cursor:
-            inserted = cursor.execute(
-                """INSERT IGNORE INTO meituan_ota_promotion_status
-                   (hotel_id, promotion_code, promotion_name, status, snapshot_time)
-                   VALUES (%s, %s, %s, 'CLOSED', %s)""",
-                (hotel_id, PUBLIC_WELFARE_CODE, PUBLIC_WELFARE_NAME, datetime.now()),
-            )
-        connection.commit()
-        return bool(inserted)
     except Exception:
         connection.rollback()
         raise
@@ -456,20 +210,18 @@ def main() -> int:
     try:
         with browser_profile_lock():
             for code, name, check in checks:
+                started = time.monotonic()
+                print(f"{code} check started", flush=True)
                 try:
                     status = check()
                     save_status(hotel_id, code, name, status)
                 except Exception as exc:
-                    if (code == PUBLIC_WELFARE_CODE and isinstance(exc, RuntimeError)
-                            and str(exc) == "Public welfare page did not return a recognized status"
-                            and save_initial_public_welfare_closed(hotel_id)):
-                        print("public_welfare_traffic status unrecognized; initial CLOSED row inserted")
-                        results.append((code, name, "CLOSED"))
-                        continue
                     message = f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')[:300]}"
                     failures.append((code, name, message))
                     print(f"{code} check failed; previous database status retained: {message}")
                     continue
+                finally:
+                    print(f"{code} check finished; duration={time.monotonic() - started:.2f}s", flush=True)
                 results.append((code, name, status))
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         (OUTPUT_DIR / "meituan_ota_promotion_status.json").write_text(
@@ -503,12 +255,12 @@ def main() -> int:
     if failures:
         next_allowed_at = schedule_cooldown(completed_at, "failure")
         summary = "; ".join(f"{code}: {error}" for code, _name, error in failures)
-        print(f"Promotion status partial warning; previous values retained: {summary}")
+        print(f"RuntimeError: 促销状态部分失败：已确认{len(results)}/{len(checks)}项；保留失败项旧值；{summary}")
     else:
         next_allowed_at = schedule_cooldown(completed_at, "success")
         mark_schedule_success(completed_at)
     print(f"promotion status next automatic attempt after {next_allowed_at:%Y-%m-%d %H:%M:%S}")
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

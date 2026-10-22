@@ -13,6 +13,7 @@ from process_runner import ProcessCancelledError, ProcessTimeoutError, run_strea
 from settings_validation import require_valid_settings
 from data_retention import DEFAULT_RETENTION
 import pms_providers
+import config_transaction
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -88,6 +89,15 @@ def load_json(path: Path, default: Any) -> Any:
 
 
 def save_json(path: Path, data: Any) -> None:
+    if path == CONFIG_PATH:
+        with config_transaction.transaction(path):
+            config_transaction.check_writable(path)
+            _save_json(path, data)
+        return
+    _save_json(path, data)
+
+
+def _save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(data, ensure_ascii=False, indent=2)
     with tempfile.NamedTemporaryFile(
@@ -647,17 +657,19 @@ def cancelled_result(name: str) -> dict[str, Any]:
 
 def run_once(task_names: list[str] | None = None) -> dict[str, Any]:
     from update_guard import ensure_not_updating
-    ensure_not_updating()
-    settings = load_settings()
-    status = load_status()
-    tasks = task_names or enabled_tasks(settings)
-    status["last_run_started_at"] = now_text()
-    status["last_run_finished_at"] = ""
-    status["last_run_status"] = "running"
-    status["last_run_tasks"] = tasks
-    for name in tasks:
-        status.setdefault("tasks", {})[name] = pending_result(name)
-    save_json(STATUS_PATH, status)
+    with config_transaction.transaction(CONFIG_PATH):
+        ensure_not_updating()
+        config_transaction.check_writable(CONFIG_PATH)
+        settings = load_settings()
+        status = load_status()
+        tasks = task_names or enabled_tasks(settings)
+        status["last_run_started_at"] = now_text()
+        status["last_run_finished_at"] = ""
+        status["last_run_status"] = "running"
+        status["last_run_tasks"] = tasks
+        for name in tasks:
+            status.setdefault("tasks", {})[name] = pending_result(name)
+        save_json(STATUS_PATH, status)
 
     results = []
     cancelled = False
@@ -696,6 +708,8 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
     if not py.exists():
         warnings.append(f"Python path not found: {py}")
     for platform, key in (("meituan", "meituan_code_dir"), ("ctrip", "ctrip_code_dir")):
+        if not (settings.get(platform) or {}).get("enabled", True):
+            continue
         default = "美团OTA数据采集代码" if platform == "meituan" else "携程OTA数据采集代码"
         code_dir = project_path((settings.get("paths") or {}).get(key), default)
         if not code_dir.exists():
@@ -721,9 +735,9 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
         for key in ("isql_path", "interfaces_file", "server", "database", "username"):
             if not foxhis.get(key):
                 warnings.append(f"Foxhis {key} is empty; please complete its read-only connection settings.")
-    if not (settings.get("meituan") or {}).get("me_cookie"):
+    if (settings.get("meituan") or {}).get("enabled", True) and not (settings.get("meituan") or {}).get("me_cookie"):
         warnings.append("MEITUAN_ME_COOKIE is empty; Meituan collection cannot run.")
-    if not (settings.get("ctrip") or {}).get("cookie"):
+    if (settings.get("ctrip") or {}).get("enabled", True) and not (settings.get("ctrip") or {}).get("cookie"):
         warnings.append("CTRIP_COOKIE is empty; Ctrip collection cannot run.")
     if not (settings.get("mysql") or {}).get("password"):
         warnings.append("MySQL password is empty; original script fallback or environment may be used.")

@@ -280,7 +280,6 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
 
     dry_run = "--dry-run" in sys.argv
     forecast_written = 0 if dry_run else sync_inventory(forecast_rows, config)
-    written = forecast_written
 
     state_counts: dict[str, int] = {}
     for row in rows:
@@ -294,8 +293,9 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
             "hotel_id": config.hotel_id,
             "business_date": business_date.isoformat(),
             "snapshot_time": snapshot_time.isoformat(timespec="seconds"),
-            "row_count": len(rows),
-            "written": written,
+            "source_room_count": len(rows),
+            "row_count": len(forecast_rows),
+            "written": forecast_written,
             "dry_run": dry_run,
             "state_counts": state_counts,
             "forecast_row_count": len(forecast_rows),
@@ -309,7 +309,8 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
         },
         config,
     )
-    return {"business_date": business_date.isoformat(), "row_count": len(rows), "written": written}
+    return {"business_date": business_date.isoformat(), "source_room_count": len(rows),
+            "row_count": len(forecast_rows), "written": forecast_written}
 
 
 def introspect() -> int:
