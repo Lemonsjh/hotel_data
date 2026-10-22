@@ -81,7 +81,7 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
                snapshot_time: datetime) -> tuple[list[dict], dict]:
     rows = []
     seen: dict[tuple[str, str], tuple] = {}
-    duplicate_count = zero_count = 0
+    duplicate_count = zero_count = unassigned_group_count = 0
     for record in records:
         folio = (record.get("folio_no") or "").strip()
         line = (record.get("line_no") or "").strip()
@@ -115,8 +115,12 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
         room = source_room or order["room_no"]
         # 同退房房号时保留历史主单房型，换房前的流水再按其实际房号查字典。
         type_code = (order["room_type_code"] if room == order["room_no"] else "") or room_types.get(room)
-        if not room or not type_code or type_code not in type_names:
-            raise FoxhisError("RS01 有效房费流水缺少可核验的房号或房型。")
+        unassigned_group = (order.get("account_class") == "G" and not room and not order["room_type_code"])
+        if unassigned_group:
+            # 团队总账可直接过账房费，保留原始金额，不分摊到客房。
+            unassigned_group_count += 1
+        elif not room or not type_code or type_code not in type_names:
+            raise FoxhisError(f"RS01 有效房费流水缺少可核验的房号或房型（账号：{folio}，流水：{line}）。")
         is_room_night = (record.get("charge_tail") or "").strip() == "01"
         nights = quantity if is_room_night else Decimal("0")
         order_id = f"foxhis:{folio}:{line}"
@@ -124,7 +128,7 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
             raise FoxhisError("RS01 流水稳定键超过现有 order_id 长度。")
         rows.append({
             "hotel_name": config.hotel_name, "hotel_id": config.hotel_id, "source_platform": SOURCE_PLATFORM,
-            "business_date": business_date, "room_no": room, "room_type_name": type_names[type_code],
+            "business_date": business_date, "room_no": room, "room_type_name": type_names.get(type_code),
             "room_type_id": None, "guest_name": order.get("guest_name") or None,
             "customer_source": markets.get(order.get("market_code", "")) or order.get("market_code") or None,
             "checkin_time": order["checkin_time"], "checkout_time": order["checkout_time"],
@@ -136,7 +140,8 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
             "order_id": order_id, "channel_unit_id": None, "snapshot_time": snapshot_time.replace(microsecond=0),
         })
     return rows, {"source_rows": len(records), "unique_transactions": len(seen), "deduplicated_rows": duplicate_count,
-                  "zero_placeholders_skipped": zero_count, "checkout_orders": len(orders)}
+                  "zero_placeholders_skipped": zero_count, "checkout_orders": len(orders),
+                  "unassigned_group_postings": unassigned_group_count}
 
 
 def fetch_rows(config: Config, snapshot_time: datetime) -> tuple[list[dict], dict]:
@@ -144,7 +149,7 @@ def fetch_rows(config: Config, snapshot_time: datetime) -> tuple[list[dict], dic
     for table in ("account", "haccount"):
         require_columns(config, table, ROOM_REVENUE_REQUIRED[1])
     for table in ("master", "hmaster"):
-        require_columns(config, table, ["accnt", "roomno", "type", "market", "ratecode", "haccnt", "citime", "cotime", "sta"])
+        require_columns(config, table, ["accnt", "roomno", "type", "class", "market", "ratecode", "haccnt", "citime", "cotime", "sta"])
     for table, columns in {"pccode": ["pccode", "descript", "jierep", "tail"], "guest": ["no", "name"],
                            "sys_empno": ["empno", "name"], "typim": ["type", "descript"],
                            "rmsta": ["roomno", "type"], "mktcode": ["code", "descript"]}.items():

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
+from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -133,6 +134,97 @@ class MeituanTaskCollectionTests(unittest.TestCase):
         _query, values = cursor.executemany.call_args.args
         self.assertEqual([value[-1] for value in values][0], [value[-1] for value in values][1])
         self.assertIn("snapshot_time", cursor.executemany.call_args.args[0])
+
+
+class ReviewRefreshTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.target = load_module("meituan_review_detail_data.py", "meituan_review_refresh_test_target")
+
+    @staticmethod
+    def payload(page, total=200, **changes):
+        items = [{"id": f"old-{page}-{i}", "comment": "更新后的内容", "bizReply": "更新后的回复",
+                  "replyId": "reply-1", "replyTime": 1792627200000, "readStatus": 1}
+                 for i in range(10)]
+        return {"code": 10000, "data": {"total": total, "commentList": items, **changes}}
+
+    def collect(self, responses, max_pages=10):
+        with patch.object(self.target, "MeituanReviewDetailClient") as factory, \
+             patch.object(self.target.time, "sleep"), patch("builtins.print"):
+            client = factory.return_value
+            client.fetch_page.side_effect = responses
+            result = self.target.collect_online("https://example.test", 1, "美团", 10, max_pages)
+        return result, client
+
+    def test_refresh_reads_all_ten_pages_and_updates_old_comment_fields(self):
+        (rows, counts), client = self.collect([self.payload(page) for page in range(1, 11)])
+        self.assertEqual(client.fetch_page.call_count, 10)
+        self.assertEqual([call.args for call in client.fetch_page.call_args_list], [(page, 10) for page in range(1, 11)])
+        self.assertEqual(len(rows), 100)
+        tenth = next(row for row in rows if row[4] == "old-10-0")
+        values = dict(zip(self.target.HEADERS, tenth))
+        self.assertEqual(values["review_content"], "更新后的内容")
+        self.assertEqual(values["merchant_reply_content"], "更新后的回复")
+        self.assertTrue(values["is_replied"])
+        self.assertIsNotNone(values["merchant_reply_time"])
+        self.assertEqual(values["read_status"], 1)
+        self.assertEqual(counts["total_review_count"], 200)
+        client.close.assert_called_once()
+
+    def test_short_history_stops_at_reported_total(self):
+        (rows, _), client = self.collect([self.payload(1, total=20), self.payload(2, total=20)])
+        self.assertEqual(len(rows), 20)
+        self.assertEqual(client.fetch_page.call_count, 2)
+
+    def test_empty_or_repeated_api_page_still_stops_safely(self):
+        for second in (self.payload(2, commentList=[]), self.payload(1)):
+            with self.subTest(second=second):
+                (rows, _), client = self.collect([self.payload(1), second])
+                self.assertEqual(len(rows), 10)
+                self.assertEqual(client.fetch_page.call_count, 2)
+
+    def test_main_with_existing_reviews_uses_ten_pages_for_both_channels(self):
+        existing = {"美团": {"old-1-0"}, "大众点评": {"old-1-0"}}
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(sys, "argv", ["review-detail"]))
+            stack.enter_context(patch.object(self.target, "MEITUAN_ME_COOKIE", "fake-cookie"))
+            stack.enter_context(patch.object(self.target, "load_existing_review_ids", return_value=existing))
+            collect = stack.enter_context(patch.object(self.target, "collect_online", return_value=([], {})))
+            stack.enter_context(patch.object(self.target, "save_outputs"))
+            stack.enter_context(patch.object(self.target, "upsert_mysql"))
+            stack.enter_context(patch.object(self.target, "sync_overview_counts"))
+            stack.enter_context(patch("builtins.print"))
+            self.target.main()
+        self.assertEqual(collect.call_count, 2)
+        self.assertEqual([call.args[-2:] for call in collect.call_args_list], [(10, 10), (10, 10)])
+
+    def test_first_collection_retains_existing_page_limits(self):
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(sys, "argv", ["review-detail"]))
+            stack.enter_context(patch.object(self.target, "MEITUAN_ME_COOKIE", "fake-cookie"))
+            stack.enter_context(patch.object(self.target, "load_existing_review_ids", return_value={}))
+            collect = stack.enter_context(patch.object(self.target, "collect_online", return_value=([], {})))
+            stack.enter_context(patch.object(self.target, "save_outputs"))
+            stack.enter_context(patch.object(self.target, "upsert_mysql"))
+            stack.enter_context(patch.object(self.target, "sync_overview_counts"))
+            stack.enter_context(patch("builtins.print"))
+            self.target.main()
+        self.assertEqual([call.args[-1] for call in collect.call_args_list], [30, 10])
+
+    def test_upsert_updates_reply_fields_without_deleting_older_comments(self):
+        rows = self.target.normalize_rows(self.payload(10), "美团")
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        with patch.object(self.target.pymysql, "connect", return_value=connection), patch("builtins.print"):
+            self.target.upsert_mysql(self.target.HEADERS, rows)
+        query, values = cursor.executemany.call_args.args
+        self.assertIn("ON DUPLICATE KEY UPDATE", query)
+        for field in ("review_content", "merchant_reply_content", "merchant_reply_time", "is_replied", "read_status"):
+            self.assertIn(f"`{field}`=VALUES(`{field}`)", query)
+        self.assertNotIn("DELETE", query)
+        cursor.execute.assert_not_called()
+        self.assertEqual(len(values), 10)
+        connection.commit.assert_called_once()
 
 
 if __name__ == "__main__":

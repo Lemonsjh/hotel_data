@@ -214,11 +214,8 @@ def collect_online(
     channel_source: str,
     limit: int,
     max_pages: int,
-    full_history: bool,
-    existing_ids: set[str] | None = None,
 ) -> tuple[list[list[Any]], dict[str, int]]:
     client = MeituanReviewDetailClient(MEITUAN_ME_COOKIE, api_url, platform)
-    existing_ids = existing_ids or set()
     captured_at = datetime.now()
     rows_by_id: dict[str, list[Any]] = {}
     offset = 1
@@ -254,9 +251,7 @@ def collect_online(
                 break
             for row in page_rows:
                 rows_by_id[str(row[4])] = row
-            if not full_history and page_ids & existing_ids:
-                print(f"review_detail incremental stop: page={offset} contains existing review_id")
-                break
+            # 刷新窗口内的旧评论及回复状态，不因数据库已有 ID 而停止翻页。
             if total and len(rows_by_id) >= total:
                 break
             previous_ids = page_ids
@@ -377,7 +372,7 @@ def main() -> None:
                 if channel_source == "美团" and full_history
                 else max(1, args.max_pages)
             )
-            mode = "full_history" if full_history else f"incremental existing={len(existing_ids)}"
+            mode = "full_history" if full_history else f"recent_refresh existing={len(existing_ids)}"
             print(f"review_detail channel={channel_source} mode={mode} max_pages={channel_max_pages}")
             channel_rows, counts = collect_online(
                 api_url,
@@ -385,8 +380,6 @@ def main() -> None:
                 channel_source,
                 max(1, args.limit),
                 channel_max_pages,
-                full_history,
-                existing_ids,
             )
             rows.extend(channel_rows)
             overview_counts[review_platform] = counts

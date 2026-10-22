@@ -152,6 +152,24 @@ class RS01Tests(unittest.TestCase):
         self.assertTrue(summary["dry_run"])
         self.assertEqual(summary["written"], 0)
 
+    def test_unassigned_group_charge_preserves_revenue_without_guessing_room(self):
+        orders = {"F1": {**self.orders["F1"], "account_class": "G", "room_no": "", "room_type_code": ""}}
+        rows, summary = rs.build_rows([self.record(room_no="", charge_code="1060", amount="2000")],
+                                      orders, {"A": "大床房"}, {}, {}, self.config, self.stamp)
+        self.assertEqual((rows[0]["room_no"], rows[0]["room_type_name"], rows[0]["room_fee"]), ("", None, Decimal("2000")))
+        self.assertEqual(summary["unassigned_group_postings"], 1)
+        rs.sync_rows(rows, self.config, self.start, self.end)
+        self.assertEqual(len(self.contents()), 1)
+
+    def test_roomless_normal_account_and_unrecognized_group_room_still_fail(self):
+        for changes, room in [({"account_class": "F", "room_no": "", "room_type_code": ""}, ""),
+                              ({"account_class": "G", "room_no": "", "room_type_code": ""}, "UNKNOWN"),
+                              ({"account_class": "G", "room_no": "", "room_type_code": "A"}, "")]:
+            orders = {"F1": {**self.orders["F1"], **changes}}
+            with self.assertRaises(FoxhisError):
+                rs.build_rows([self.record(room_no=room)], orders, {"A": "大床房"}, {}, {}, self.config, self.stamp)
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

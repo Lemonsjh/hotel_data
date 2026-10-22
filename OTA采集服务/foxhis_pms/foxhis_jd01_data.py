@@ -70,16 +70,22 @@ def build_rows(records: list[dict], ledger: list[dict], rates: list[dict], confi
     for r in rates:
         segments[r["folio_no"]].append(r)
 
-    rows, price_basis = [], Counter()
+    rows, price_basis, reservation_time_anomalies = [], Counter(), []
     for key, r in sorted(orders.items()):
         arrival, departure = parse_time(r.get("arrival_time")), parse_time(r.get("departure_time"))
         count = number(r.get("room_count"))
-        if not arrival or not departure or arrival >= departure or departure.date() < cutoff or count <= 0 or count != int(count):
-            raise FoxhisError("JD01 主单抵离时间、离店范围或房数无效。")
+        # 预订的预计抵离时刻可能沿用默认值；同日倒置保留源值，但不据此计算价格。
+        same_day_reservation = (r["status_code"] == "R" and arrival and departure
+                                and arrival.date() == departure.date() and arrival >= departure)
+        if (not arrival or not departure or (arrival >= departure and not same_day_reservation)
+                or departure.date() < cutoff or count <= 0 or count != int(count)):
+            raise FoxhisError(f"JD01 主单抵离时间、离店范围或房数无效（账号：{key}）。")
+        if same_day_reservation:
+            reservation_time_anomalies.append(key)
         status, price, basis = r["status_code"], None, "unknown"
         if status == "O" and key in fees and fees[key][1] > 0:
             price, basis = rounded(fees[key][0] / fees[key][1]), "posted_average"
-        elif status in ("R", "I") and r.get("share_code") == "F" and len(segments[key]) == 1:
+        elif not same_day_reservation and status in ("R", "I") and r.get("share_code") == "F" and len(segments[key]) == 1:
             segment = segments[key][0]
             if (segment["start_date"] == arrival.strftime("%Y%m%d") and segment["end_date"] == departure.strftime("%Y%m%d")
                     and segment["type_code"] == r["type_code"] and segment.get("quantity") and number(segment["quantity"]) == count
@@ -100,6 +106,7 @@ def build_rows(records: list[dict], ledger: list[dict], rates: list[dict], confi
     return rows, {"cutoff": str(cutoff), "source_orders": len(records), "archived_duplicates_removed": len(records)-len(orders),
                   "status_counts": dict(Counter(r["status_code"] for r in orders.values())), "price_basis": dict(price_basis),
                   "unmapped_statuses": dict(Counter(r["status_code"] for r in orders.values() if r["status_code"] not in STATUS)),
+                  "reservation_time_anomalies": reservation_time_anomalies,
                   "nullable_fields": ["member_level", "room_type_id", "prepayment", "guarantee_method", "hold_time", "remarks"]}
 
 
@@ -152,6 +159,8 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
     if not rows:
         summary["message"] = "查询成功，0 条符合条件的订单；保留已有数据。"
         print("INFO [jd01] " + summary["message"])
+    if summary["reservation_time_anomalies"]:
+        print("WARN [jd01] 同日预订抵离时刻倒置或相同，保留源时间、房价留空；账号：" + ",".join(summary["reservation_time_anomalies"]))
     save_output(SUMMARY_FILE, summary, config)
     return summary
 

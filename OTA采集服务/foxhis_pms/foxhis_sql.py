@@ -126,29 +126,6 @@ where date >= '{start_date}' and date < '{end_date}'
 order by date,class
 """.strip()
 
-# 仅返回按日/市场/渠道汇总的事实，不采住客身份信息。
-# COM/HSE 分别为现场字典的免费房/自用房，不计入原生计费出租间夜。
-JY03_FACT_QUERY = """
-select convert(char(8),date,112) as business_date,
-       market as market_code, channel as channel_code,
-       convert(numeric(18,4),sum(rquan)) as raw_nights,
-       convert(numeric(18,4),sum(case when market in ('COM','HSE') then 0 else rquan end)) as paid_nights,
-       convert(numeric(18,4),sum(rincome)) as room_revenue
-from ymktsummaryrep_detail
-where date >= '{start_date}' and date < '{end_date}'
-group by date,market,channel
-order by date,market,channel
-""".strip()
-
-JY03_GROUP_CONTROL_QUERY = """
-select convert(char(8),date,112) as business_date, class, grp, code,
-       convert(numeric(18,4),rquan) as room_nights,
-       convert(numeric(18,4),rincome) as room_revenue
-from ymktsummaryrep
-where date >= '{start_date}' and date < '{end_date}' and class in ('M','C')
-order by date,class,grp,code
-""".strip()
-
 # JY01 使用酒店原生历史营业日报；日结房型表只作独立房量/房费控制。
 JY01_DAILY_QUERY = """
 select convert(char(8),date,112) as business_date, class as metric_code,
@@ -261,7 +238,7 @@ ROOM_REVENUE_TABLE = "rs01_room_revenue_daily"
 def _rs01_order_select(table: str, origin: str) -> str:
     name = "m.name" if table == "hmaster" else "g.name"
     return f"""
-select '{origin}' as order_origin, m.accnt as folio_no, m.roomno as room_no,
+select '{origin}' as order_origin, m.accnt as folio_no, m.roomno as room_no, m.class as account_class,
        m.type as room_type_code, {name} as guest_name,
        m.market as market_code, m.ratecode as price_type,
        convert(char(8),m.citime,112)+' '+convert(char(8),m.citime,108) as checkin_time,

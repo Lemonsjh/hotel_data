@@ -193,5 +193,25 @@ class JD01Tests(unittest.TestCase):
         with self.assertRaises(FoxhisError):
             self.build(records=[], ledger=self.ledger, rates=[])
 
+    def test_same_day_reservation_keeps_source_times_without_guessed_price(self):
+        for arrival in ('20261020 18:00:00', '20261020 14:00:00'):
+            record = {**self.order('SAME', 'R'), 'arrival_time': arrival, 'departure_time': '20261020 14:00:00'}
+            rates = [self.rate('SAME', start_date='20261020', end_date='20261020')]
+            rows, summary = self.build(records=[record], ledger=[], rates=rates)
+            self.assertEqual(rows[0]['arrival_time'], jd.parse_time(arrival))
+            self.assertEqual(rows[0]['departure_time'], datetime(2026, 10, 20, 14))
+            self.assertIsNone(rows[0]['room_price'])
+            self.assertEqual(summary['reservation_time_anomalies'], ['SAME'])
+            jd.sync_rows(rows, self.config)
+            self.assertEqual(len(self.contents()), 1)
+
+    def test_reversed_stays_still_fail_outside_same_day_reservations(self):
+        for status, arrival in [('I', '20261020 18:00:00'), ('O', '20261020 18:00:00'),
+                                ('R', '20261021 18:00:00')]:
+            record = {**self.order('BAD', status), 'arrival_time': arrival, 'departure_time': '20261020 14:00:00'}
+            with self.assertRaises(FoxhisError):
+                self.build(records=[record], ledger=[], rates=[])
+
+
 if __name__=='__main__':
     unittest.main(verbosity=2)
