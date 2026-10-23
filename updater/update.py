@@ -127,6 +127,8 @@ def apply_update(root: Path, package: Path, tag: str, work: Path) -> None:
         raise
     pending.unlink(missing_ok=True)
     print(f"Update installed: {manifest['version']}; backup: updater/backups/{stamp}")
+    if any(name.startswith("extensions/meituan-login-sync/") for name in content):
+        print("Browser extension files updated. Reload the extension in Edge/Chrome; first-time installation still requires Load unpacked.")
 
 
 def recover(root: Path, work: Path) -> Path:

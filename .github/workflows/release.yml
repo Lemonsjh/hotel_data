@@ -11,6 +11,10 @@ on:
         description: 'Publish an official GitHub Release after tests pass'
         type: boolean
         default: false
+      include_browser_extension:
+        description: 'Include extension files (only AFTER deployments installed the updater transition release)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -30,7 +34,14 @@ jobs:
       - name: Build code-only update
         env:
           RELEASE_VERSION: ${{ inputs.version }}
-        run: python updater/build_release.py --version "$RELEASE_VERSION" --output dist
+          INCLUDE_BROWSER_EXTENSION: ${{ inputs.include_browser_extension }}
+        shell: bash
+        run: |
+          args=()
+          if [ "$INCLUDE_BROWSER_EXTENSION" = "true" ]; then
+            args+=(--include-browser-extension)
+          fi
+          python updater/build_release.py --version "$RELEASE_VERSION" --output dist "${args[@]}"
       - uses: actions/upload-artifact@v4
         with:
           name: hotel-collector-update

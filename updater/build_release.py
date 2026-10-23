@@ -9,14 +9,16 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from package_format import ASSET_NAME, REPOSITORY, allowed_path, dependency_digest, digest, validate_package, version
+from package_format import ASSET_NAME, BROWSER_EXTENSION_FILES, REPOSITORY, allowed_path, dependency_digest, digest, validate_package, version
 
 
-def build(root: Path, output: Path, release_version: str, removed: list[str]) -> Path:
+def build(root: Path, output: Path, release_version: str, removed: list[str], *, include_browser_extension: bool = False) -> Path:
     version(release_version)
     tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode("utf-8").split("\0")
     files = {}
     for relative in filter(None, tracked):
+        if relative in BROWSER_EXTENSION_FILES and not include_browser_extension:
+            continue
         try:
             allowed_path(relative)
         except ValueError:
@@ -50,5 +52,8 @@ if __name__ == "__main__":
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, default=Path("dist"))
     parser.add_argument("--remove", action="append", default=[])
+    parser.add_argument("--include-browser-extension", action="store_true",
+                        help="Only after deployed updaters support extension paths; omitted for the transition release")
     args = parser.parse_args()
-    build(Path(__file__).resolve().parents[1], args.output, args.version, args.remove)
+    build(Path(__file__).resolve().parents[1], args.output, args.version, args.remove,
+          include_browser_extension=args.include_browser_extension)

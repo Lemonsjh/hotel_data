@@ -19,6 +19,12 @@ CODE_DIRS = {
 ROOT_FILES = {"mysql_connection.py", "ota_mysql_writer.py", "update_guard.py", "一键更新.bat"}
 BLOCKED = {"config", "state", "logs", "output", "__pycache__", "browser_profiles", "user-data", "backups", "work"}
 EXTENSIONS = {".py", ".ps1", ".bat", ".sql", ".css", ".html", ".js"}
+BROWSER_EXTENSION_FILES = {
+    "extensions/meituan-login-sync/" + name for name in (
+        "manifest.json", "README.md", "browser_verify.js", "cookies.js",
+        "popup.css", "popup.html", "popup.js", "worker.js",
+    )
+}
 
 
 def digest(data: bytes) -> str:
@@ -49,7 +55,7 @@ def allowed_path(value: str) -> str:
         raise ValueError("Unsafe package path")
     if any(part.lower() in BLOCKED for part in parts):
         raise ValueError("Protected deployment data path")
-    if value not in ROOT_FILES and not (
+    if value not in ROOT_FILES | BROWSER_EXTENSION_FILES and not (
         len(parts) > 1 and parts[0] in CODE_DIRS and PurePosixPath(value).suffix in EXTENSIONS
     ):
         raise ValueError("Path is not an allowed program file: " + value)
@@ -122,4 +128,11 @@ def validate_package(path: Path, root: Path, expected_version: str | None = None
             if relative.endswith(".py"):
                 compile(data, relative, "exec")
             content[relative] = data
+        extension_files = BROWSER_EXTENSION_FILES & content.keys()
+        if extension_files:
+            if extension_files != BROWSER_EXTENSION_FILES:
+                raise ValueError("Incomplete browser extension package")
+            extension = json.loads(content["extensions/meituan-login-sync/manifest.json"])
+            if extension.get("manifest_version") != 3 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,3}", str(extension.get("version", ""))):
+                raise ValueError("Invalid browser extension manifest")
         return manifest, content

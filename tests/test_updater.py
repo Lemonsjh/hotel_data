@@ -208,6 +208,56 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual((self.root / "mysql_connection.py").read_bytes(), b"# original")
         self.assertFalse((self.root / "updater/pending.json").exists())
 
+    def extension_files(self):
+        files = {name: b"// extension fixture" for name in fmt.BROWSER_EXTENSION_FILES}
+        files["extensions/meituan-login-sync/manifest.json"] = json.dumps({
+            "manifest_version": 3, "version": "0.2.2",
+        }).encode()
+        return files
+
+    def test_extension_allowlist_does_not_open_arbitrary_json_or_directories(self):
+        for name in fmt.BROWSER_EXTENSION_FILES:
+            self.assertEqual(fmt.allowed_path(name), name)
+        for name in ("extensions/other/manifest.json", "extensions/meituan-login-sync/settings.json",
+                     "extensions/meituan-login-sync/private.js", "extensions/meituan-login-sync/subdir/worker.js",
+                     "OTA采集服务/credentials.json"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                fmt.allowed_path(name)
+
+    def test_extension_package_is_complete_and_manifest_is_valid(self):
+        files = self.extension_files()
+        path, manifest, content = self.package(files)
+        self.assertEqual(fmt.validate_package(path, self.root), (manifest, content))
+        incomplete = dict(files)
+        incomplete.pop("extensions/meituan-login-sync/worker.js")
+        for changes in (incomplete, {**files, "extensions/meituan-login-sync/manifest.json": b"{}"},
+                        {**files, "extensions/meituan-login-sync/manifest.json": b"invalid-json"}):
+            path, _, _ = self.package(changes)
+            with self.assertRaises(ValueError):
+                fmt.validate_package(path, self.root)
+
+    def test_extension_install_and_restore_preserve_browser_and_local_data(self):
+        _, manifest, content = self.package(self.extension_files())
+        original = self.root / "extensions/meituan-login-sync/worker.js"
+        original.parent.mkdir(parents=True)
+        original.write_bytes(b"// previous extension")
+        private = self.root / "extensions/meituan-login-sync/settings.json"
+        private.write_bytes(b"local data")
+        backup = self.root / "updater/backups/extension"
+        plan = core.prepare(self.root, backup, manifest, content)
+        core.apply_files(self.root, manifest, content, plan)
+        self.assertEqual(original.read_bytes(), content["extensions/meituan-login-sync/worker.js"])
+        core.restore(self.root, backup, plan)
+        self.assertEqual(original.read_bytes(), b"// previous extension")
+        self.assertEqual(private.read_bytes(), b"local data")
+        self.assertFalse((original.parent / "manifest.json").exists())
+
+    def test_transition_package_contains_no_extension_or_removals(self):
+        path, manifest, content = self.package({"updater/package_format.py": b"# new allowlist"})
+        fmt.validate_package(path, self.root)
+        self.assertFalse(fmt.BROWSER_EXTENSION_FILES & content.keys())
+        self.assertEqual(manifest["removed"], [])
+
     def test_publisher_includes_only_tracked_program_files(self):
         required = ["mysql_connection.py", "ota_mysql_writer.py", "OTA采集服务/runner.py", "OTA采集服务/panel.py"]
         for name in required:
@@ -217,12 +267,20 @@ class UpdaterTests(unittest.TestCase):
         private = self.root / "OTA采集服务/config/settings.json"
         private.parent.mkdir()
         private.write_text('{"password":"not-for-release"}')
+        extension = self.extension_files()
+        for name, body in extension.items():
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
         subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
-        subprocess.run(["git", "add", *required, "requirements-portable.lock.txt", "OTA采集服务/config/settings.json"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", *required, *extension, "requirements-portable.lock.txt", "OTA采集服务/config/settings.json"], cwd=self.root, check=True)
         path = build_release.build(self.root, self.root / "dist", "v1.0.0", [])
         with zipfile.ZipFile(path) as archive:
             self.assertNotIn("OTA采集服务/config/settings.json", archive.namelist())
             self.assertEqual(set(archive.namelist()), {*required, "manifest.json"})
+        path = build_release.build(self.root, self.root / "future", "v1.0.1", [], include_browser_extension=True)
+        with zipfile.ZipFile(path) as archive:
+            self.assertEqual(set(archive.namelist()), {*required, *extension, "manifest.json"})
 
 
 if __name__ == "__main__":
