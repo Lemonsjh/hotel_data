@@ -20,6 +20,7 @@ OTA采集服务/config/.settings.lock
 **/JD01_preOrderDetailReport.json
 美团OTA数据采集代码/meituan_price_status_payload.json
 正式数据抓取-PMS（别样红）/ota调价/meituan_hotel_config.json
+别样红PMS数据采集代码/ota调价/meituan_hotel_config.json
 
 # Runtime state and logs
 OTA采集服务/logs/

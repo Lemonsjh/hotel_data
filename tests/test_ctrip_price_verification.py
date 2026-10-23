@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "正式数据抓取-PMS（别样红）" / "ota调价" / "ctrip_change_price.py"
+SCRIPT = ROOT / "别样红PMS数据采集代码" / "ota调价" / "ctrip_change_price.py"
 
 
 def load_module():

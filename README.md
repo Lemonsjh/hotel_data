@@ -132,7 +132,7 @@ hotel_data/
 ├─ OTA采集服务/                 管理面板、调度、配置、数据库 Schema、房型映射
 ├─ 美团OTA数据采集代码/         美团采集和相关调价代码
 ├─ 携程OTA数据采集代码/         携程采集和相关调价代码
-├─ 正式数据抓取-PMS（别样红）/  PMS 登录、报表采集和 ETL
+├─ 别样红PMS数据采集代码/     PMS 登录、报表采集和 ETL
 ├─ tests/                       项目测试
 ├─ runtime/                     便携 Python 与浏览器运行环境（不提交）
 ├─ OTA数据/                     本地采集输出（不提交）
@@ -178,7 +178,7 @@ runtime\python.exe "OTA采集服务/runner.py" run-task pms_fetch
 PMS 需要单独调试或补采报表时，可查看：
 
 ```powershell
-runtime\python.exe "正式数据抓取-PMS（别样红）/PMS登录/fetch_main.py" --help
+runtime\python.exe "别样红PMS数据采集代码/PMS登录/fetch_main.py" --help
 ```
 
 ## 数据库

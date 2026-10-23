@@ -11,7 +11,7 @@ import runner
 DEFAULT_SETTINGS_PATH = runner.ROOT / "config" / "settings.example.json"
 PMS_SESSION_PATH = (
     runner.PROJECT_ROOT
-    / "正式数据抓取-PMS（别样红）"
+    / "别样红PMS数据采集代码"
     / "PMS登录"
     / "pms_session_playwright.json"
 )

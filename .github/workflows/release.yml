@@ -14,7 +14,7 @@ on:
       include_browser_extension:
         description: 'Include extension files (only AFTER deployments installed the updater transition release)'
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -38,8 +38,8 @@ jobs:
         shell: bash
         run: |
           args=()
-          if [ "$INCLUDE_BROWSER_EXTENSION" = "true" ]; then
-            args+=(--include-browser-extension)
+          if [ "$INCLUDE_BROWSER_EXTENSION" = "false" ]; then
+            args+=(--without-browser-extension)
           fi
           python updater/build_release.py --version "$RELEASE_VERSION" --output dist "${args[@]}"
       - uses: actions/upload-artifact@v4

@@ -44,7 +44,7 @@
     "hotel_name": "",
     "username": "",
     "password": "",
-    "code_dir": "正式数据抓取-PMS（别样红）\\\\PMS登录",
+    "code_dir": "别样红PMS数据采集代码/PMS登录",
     "entry_script": "fetch_main.py",
     "timeout_seconds": 900,
     "login_base_url": "https://xingfeng.beyondh.com:8101",

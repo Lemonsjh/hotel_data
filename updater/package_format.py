@@ -14,7 +14,7 @@ ASSET_NAME = "hotel-collector-update.zip"
 MAX_BYTES = 50 * 1024 * 1024
 CODE_DIRS = {
     "OTA采集服务", "美团OTA数据采集代码", "携程OTA数据采集代码",
-    "宝寓PMS数据采集代码", "正式数据抓取-PMS（别样红）", "updater",
+    "宝寓PMS数据采集代码", "别样红PMS数据采集代码", "正式数据抓取-PMS（别样红）", "updater",
 }
 ROOT_FILES = {"mysql_connection.py", "ota_mysql_writer.py", "update_guard.py", "一键更新.bat"}
 BLOCKED = {"config", "state", "logs", "output", "__pycache__", "browser_profiles", "user-data", "backups", "work"}

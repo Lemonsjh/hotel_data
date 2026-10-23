@@ -18,6 +18,39 @@ from process_runner import ProcessResult
 
 
 class PmsProviderSelectionTests(TestCase):
+    def test_byh_default_and_old_local_paths_resolve_to_renamed_directory(self):
+        expected = ROOT / "别样红PMS数据采集代码" / "PMS登录" / "fetch_main.py"
+        for directory in (None, "正式数据抓取-PMS（别样红）/PMS登录",
+                          "正式数据抓取-PMS（别样红）\\\\PMS登录",
+                          str(ROOT / "正式数据抓取-PMS（别样红）" / "PMS登录")):
+            settings = {"pms": {"provider": "byh", "code_dir": directory}}
+            with self.subTest(directory=directory):
+                self.assertEqual(runner.script_path(settings, "pms", "fetch_main.py"), expected)
+                self.assertEqual(settings["pms"]["code_dir"], directory)
+        self.assertTrue(expected.is_file())
+
+    def test_byh_custom_external_directory_is_not_redirected(self):
+        custom = ROOT.parent / "custom-test-root" / "正式数据抓取-PMS（别样红）" / "PMS登录"
+        settings = {"pms": {"code_dir": str(custom)}}
+        self.assertEqual(runner.script_path(settings, "pms", "fetch_main.py"), custom / "fetch_main.py")
+
+    def test_byh_legacy_path_is_kept_before_directory_is_renamed(self):
+        import pms_providers
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            base = Path(directory)
+            legacy = base / "正式数据抓取-PMS（别样红）" / "PMS登录"
+            legacy.mkdir(parents=True)
+            with patch.object(pms_providers, "PROJECT_ROOT", base):
+                self.assertEqual(pms_providers.byh_path("正式数据抓取-PMS（别样红）/PMS登录"), legacy)
+
+    def test_byh_price_and_session_entries_follow_renamed_directory(self):
+        import local_reset
+        import price_tasks
+        self.assertEqual(local_reset.PMS_SESSION_PATH.parent, ROOT / "别样红PMS数据采集代码" / "PMS登录")
+        self.assertEqual(price_tasks.PRICE_DIR, ROOT / "别样红PMS数据采集代码" / "ota调价")
+        for platform in price_tasks.PLATFORMS.values():
+            self.assertTrue((price_tasks.PRICE_DIR / platform["script"]).is_file())
+
     def test_retired_roomnight_task_is_not_registered_or_scheduled(self):
         self.assertNotIn("meituan_exposure_source", runner.TASKS)
         settings = {"meituan": {"enabled": True}, "tasks": {"meituan_exposure_source": True}}

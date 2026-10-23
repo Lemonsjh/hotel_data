@@ -277,10 +277,13 @@ class UpdaterTests(unittest.TestCase):
         path = build_release.build(self.root, self.root / "dist", "v1.0.0", [])
         with zipfile.ZipFile(path) as archive:
             self.assertNotIn("OTA采集服务/config/settings.json", archive.namelist())
-            self.assertEqual(set(archive.namelist()), {*required, "manifest.json"})
-        path = build_release.build(self.root, self.root / "future", "v1.0.1", [], include_browser_extension=True)
-        with zipfile.ZipFile(path) as archive:
             self.assertEqual(set(archive.namelist()), {*required, *extension, "manifest.json"})
+        path = build_release.build(self.root, self.root / "transition", "v1.0.1", [], include_browser_extension=False)
+        with zipfile.ZipFile(path) as archive:
+            self.assertEqual(set(archive.namelist()), {*required, "manifest.json"})
+        (self.root / "extensions/meituan-login-sync/manifest.json").unlink()
+        with self.assertRaises(ValueError):
+            build_release.build(self.root, self.root / "incomplete", "v1.0.2", [])
 
 
 if __name__ == "__main__":

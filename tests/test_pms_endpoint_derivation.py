@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "正式数据抓取-PMS（别样红）" / "PMS登录" / "scripts" / "pms_config.py"
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "别样红PMS数据采集代码" / "PMS登录" / "scripts" / "pms_config.py"
 URL_KEYS = (
     "PMS_LOGIN_BASE_URL",
     "PMS_REPORT_BASE_URL",

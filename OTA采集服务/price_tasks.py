@@ -13,7 +13,7 @@ import runner
 
 
 ROOT = Path(__file__).resolve().parent
-PRICE_DIR = ROOT.parent / "正式数据抓取-PMS（别样红）" / "ota调价"
+PRICE_DIR = ROOT.parent / "别样红PMS数据采集代码" / "ota调价"
 LOG_DIR = ROOT / "logs"
 PAGE_CACHE_SECONDS = 60
 _PAGE_CACHE: dict[str, Any] = {"loaded_at": 0.0, "products": None, "tasks": None, "refreshing": False}

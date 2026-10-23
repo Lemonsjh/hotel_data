@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS_DIR = ROOT / "正式数据抓取-PMS（别样红）" / "PMS登录" / "scripts"
+SCRIPTS_DIR = ROOT / "别样红PMS数据采集代码" / "PMS登录" / "scripts"
 
 
 def load_pms_utils():

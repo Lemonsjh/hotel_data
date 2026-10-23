@@ -31,6 +31,19 @@ def project_path(value: Any, default: str | Path = ".") -> Path:
     return (path if path.is_absolute() else PROJECT_ROOT / path).resolve()
 
 
+def byh_path(value: Any = None) -> Path:
+    """兼容本项目旧目录配置；不改写配置，不重定向外部自定义目录。"""
+    path = project_path(str(value).replace("\\", "/") if value else None,
+                        "别样红PMS数据采集代码/PMS登录")
+    legacy = PROJECT_ROOT / "正式数据抓取-PMS（别样红）"
+    current = PROJECT_ROOT / "别样红PMS数据采集代码"
+    try:
+        relative = path.relative_to(legacy)
+    except ValueError:
+        return path
+    return current / relative if current.is_dir() else path
+
+
 # ---------------------------------------------------------------------------
 # 注册表
 #
@@ -48,7 +61,7 @@ PMS_PROVIDERS: dict[str, dict[str, Any]] = {
         "config_key": "pms",
         "card_key": "pms",
         "badge": "PMS",
-        "default_code_dir": "正式数据抓取-PMS（别样红）/PMS登录",
+        "default_code_dir": "别样红PMS数据采集代码/PMS登录",
         "cwd_from_script": True,
         "entry_script": "fetch_main.py",
         "entry_args": [],
@@ -204,7 +217,8 @@ def script_path(settings: dict[str, Any], platform: str, filename: str) -> Path 
         if spec["platform"] != platform:
             continue
         section = settings.get(spec["config_key"]) or {}
-        code_dir = project_path(section.get("code_dir"), spec["default_code_dir"])
+        code_dir = (byh_path(section.get("code_dir")) if platform == "pms"
+                    else project_path(section.get("code_dir"), spec["default_code_dir"]))
         entry = section.get("entry_script") or spec["entry_script"] or filename
         return code_dir / entry
     return None
