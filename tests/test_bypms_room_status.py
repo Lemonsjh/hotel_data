@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
+import sqlite3
 import sys
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -186,3 +189,97 @@ class ByPmsRoomStatusContractTests(unittest.TestCase):
         self.assertIn("pms_room_type_forecast", sql)
         self.assertIn("pms_room_type_hourly_status", sql)
         self.assertNotIn("bypms_room_type_hourly_status", sql)
+
+
+class ByPmsLatestForecastTests(unittest.TestCase):
+    def setUp(self):
+        self.target = load_target()
+        self.hour = datetime(2026, 10, 23, 10)
+        self.source = {
+            "hotel_id": self.target.HOTEL_ID, "hotel_name": "测试酒店",
+            "business_date": self.hour.date(), "snapshot_time": self.hour, "snapshot_hour": self.hour,
+            "bypms_room_type_id": "21", "room_type_name": "大床房", "total_rooms": 3,
+            "remaining_saleable_rooms": 2, "sold_rooms": 1,
+        }
+        self.forecast = self.target.standard_forecast_rows([self.source])[0]
+        self.hourly = self.target.standard_inventory_rows([self.source])[0]
+        self.database = sqlite3.connect(":memory:")
+        self.addCleanup(self.database.close)
+        for table, row, keys in (
+            (self.target.FORECAST_TABLE_NAME, self.forecast, "hotel_id,stay_date,pms_room_type_id"),
+            (self.target.STANDARD_ROOM_TYPE_TABLE_NAME, self.hourly,
+             "hotel_id,source_platform,snapshot_hour,pms_room_type_id"),
+        ):
+            columns = ",".join(f"`{name}` TEXT" for name in row)
+            self.database.execute(f"CREATE TABLE `{table}` ({columns}, PRIMARY KEY ({keys}))")
+        self.cursor = MagicMock()
+        self.cursor.__enter__.return_value = self.cursor
+        self.cursor.execute.side_effect = lambda sql, params: self.database.execute(
+            sql.replace("%s", "?"), [None if value is None else str(value) for value in params])
+        self.cursor.executemany.side_effect = self.insert_many
+        self.connection = MagicMock()
+        self.connection.cursor.return_value = self.cursor
+        self.connection.commit.side_effect = self.database.commit
+        self.connection.rollback.side_effect = self.database.rollback
+
+    def insert_many(self, sql, rows):
+        sql = re.sub(r"%\((\w+)\)s", r":\1", sql)
+        return self.database.executemany(sql, [
+            {key: None if value is None else str(value) for key, value in row.items()} for row in rows
+        ])
+
+    def seed(self, table, row):
+        columns = ",".join(f"`{name}`" for name in row)
+        self.database.execute(f"INSERT INTO `{table}` ({columns}) VALUES ({','.join('?' for _ in row)})",
+                              [None if value is None else str(value) for value in row.values()])
+        self.database.commit()
+
+    def contents(self, table):
+        return self.database.execute(f"SELECT * FROM `{table}` ORDER BY hotel_id,stay_date,pms_room_type_id").fetchall()
+
+    def test_forecast_replaces_all_old_dates_only_for_current_hotel_and_provider(self):
+        table = self.target.FORECAST_TABLE_NAME
+        for day in ("2026-10-22", "2026-10-23", "2026-10-24"):
+            self.seed(table, {**self.forecast, "stay_date": day, "pms_room_type_id": "obsolete"})
+        others = [{**self.forecast, "hotel_id": "other-hotel"},
+                  {**self.forecast, "source_platform": "PMS（Foxhis）", "pms_room_type_id": "foxhis-type"}]
+        for row in others:
+            self.seed(table, row)
+        self.target.sync_mysql([self.source], self.hour, connection=self.connection)
+        self.target.sync_mysql([self.source], self.hour, connection=self.connection)
+        rows = self.database.execute(f"SELECT hotel_id,source_platform,stay_date,pms_room_type_id FROM `{table}`").fetchall()
+        self.assertCountEqual(rows, [(row["hotel_id"], row["source_platform"], str(row["stay_date"]), row["pms_room_type_id"])
+                                    for row in [self.forecast, *others]])
+
+    def test_hourly_history_is_retained_and_only_current_hour_is_replaced(self):
+        table = self.target.STANDARD_ROOM_TYPE_TABLE_NAME
+        for day, hour in (("2026-10-22", "2026-10-22 10:00:00"),
+                          ("2026-10-23", "2026-10-23 09:00:00"), ("2026-10-23", str(self.hour))):
+            self.seed(table, {**self.hourly, "stay_date": day, "snapshot_hour": hour, "pms_room_type_id": "obsolete"})
+        self.target.sync_mysql([self.source], self.hour, connection=self.connection)
+        rows = self.database.execute(f"SELECT snapshot_hour,pms_room_type_id FROM `{table}`").fetchall()
+        self.assertCountEqual(rows, [("2026-10-22 10:00:00", "obsolete"),
+                                     ("2026-10-23 09:00:00", "obsolete"), (str(self.hour), "21")])
+
+    def test_empty_inventory_keeps_previous_forecast(self):
+        self.seed(self.target.FORECAST_TABLE_NAME, self.forecast)
+        before = self.contents(self.target.FORECAST_TABLE_NAME)
+        self.target.sync_mysql([], self.hour, connection=self.connection)
+        self.assertEqual(self.contents(self.target.FORECAST_TABLE_NAME), before)
+        self.cursor.execute.assert_not_called()
+
+    def test_insert_failure_rolls_back_both_forecast_and_hourly_changes(self):
+        for table, row in ((self.target.FORECAST_TABLE_NAME, self.forecast),
+                           (self.target.STANDARD_ROOM_TYPE_TABLE_NAME, self.hourly)):
+            self.seed(table, {**row, "pms_room_type_id": "obsolete"})
+        before = {table: self.contents(table) for table in (self.target.FORECAST_TABLE_NAME, self.target.STANDARD_ROOM_TYPE_TABLE_NAME)}
+        def fail_forecast(sql, rows):
+            if f"INSERT INTO `{self.target.FORECAST_TABLE_NAME}`" in sql:
+                raise RuntimeError("simulated insert failure")
+            return self.insert_many(sql, rows)
+        self.cursor.executemany.side_effect = fail_forecast
+        with self.assertRaisesRegex(RuntimeError, "simulated insert failure"):
+            self.target.sync_mysql([self.source], self.hour, connection=self.connection)
+        self.assertEqual({table: self.contents(table) for table in before}, before)
+        self.connection.rollback.assert_called_once()
+        self.connection.commit.assert_not_called()

@@ -321,8 +321,8 @@ def sync_mysql(inventory_rows: list[dict[str, Any]], snapshot_hour: datetime, co
             if inventory_rows:
                 forecast_rows = standard_forecast_rows(inventory_rows)
                 cursor.execute(
-                    f"DELETE FROM `{FORECAST_TABLE_NAME}` WHERE hotel_id=%s AND stay_date=%s",
-                    (HOTEL_ID, forecast_rows[0]["stay_date"]),
+                    f"DELETE FROM `{FORECAST_TABLE_NAME}` WHERE hotel_id=%s AND source_platform=%s",
+                    (HOTEL_ID, SOURCE_PLATFORM),
                 )
                 cursor.execute(
                     f"DELETE FROM `{STANDARD_ROOM_TYPE_TABLE_NAME}` WHERE hotel_id=%s AND snapshot_hour=%s AND source_platform=%s",
