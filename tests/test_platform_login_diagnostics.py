@@ -7,7 +7,7 @@ import unittest
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "OTA采集服务"))
@@ -24,6 +24,7 @@ class PlatformLoginDiagnosticsTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.folder = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix=".test_login_flow_", dir=ROOT)))
         self.context = FakeContext()
+        self.context.add_init_script = MagicMock()
         self.context.close = lambda: None
         self.context.clear_cookies = lambda: None
         self.options = []
@@ -108,6 +109,25 @@ class PlatformLoginDiagnosticsTests(unittest.TestCase):
         self.assertEqual(login.run("ctrip"), 0)
         self.assertEqual(list(self.folder.glob("*.log")), [])
         self.mocks["save_cookies"].assert_called_once_with("ctrip", self.context)
+
+    def test_meituan_initialization_precedes_first_navigation(self):
+        def navigate_after_registration(page, url):
+            self.context.add_init_script.assert_called_once()
+            self.observed_navigation(page, url)
+        self.navigate.side_effect = navigate_after_registration
+        self.assertEqual(login.run("meituan"), 0)
+        self.mocks["save_cookies"].assert_called_once_with("meituan", self.context)
+
+    def test_compatibility_does_not_inject_for_other_platforms(self):
+        self.assertEqual(login.run("ctrip"), 0)
+        self.context.add_init_script.assert_not_called()
+
+    def test_registration_failure_does_not_navigate_or_save_cookies(self):
+        self.context.add_init_script = MagicMock(side_effect=RuntimeError("PRIVATE"))
+        self.assertEqual(login.run("meituan"), 2)
+        self.navigate.assert_not_called()
+        self.mocks["save_cookies"].assert_not_called()
+        self.assertEqual(self.records()[-1]["outcome"], "failed")
 
     def test_log_creation_failure_does_not_change_login_success(self):
         with patch("login_diagnostics.Path.open", side_effect=OSError("日志目录不可写 PRIVATE")):

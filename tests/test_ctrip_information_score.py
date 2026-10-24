@@ -65,22 +65,6 @@ class CtripInformationScoreTests(unittest.TestCase):
         button.inner_text.return_value = "立即报名"
         self.assertTrue(self.module.has_visible_action_button(page, self.module.APPLY_SELECTOR, "立即报名"))
 
-    def test_business_travel_status_requires_the_full_page_marker_set(self):
-        page = MagicMock()
-        page.locator.return_value.all.return_value = []
-        page.locator.return_value.inner_text.return_value = "商旅专享说明 企业间对公结算"
-        with patch.object(self.module, "open_promotion_page"), patch.object(self.module, "ensure_logged_in"):
-            self.assertEqual(self.module.business_travel_status(page), 1)
-
-    def test_business_travel_signup_button_takes_precedence(self):
-        button = MagicMock()
-        button.is_visible.return_value = True
-        button.inner_text.return_value = "立即加入"
-        page = MagicMock()
-        page.locator.return_value.all.return_value = [button]
-        with patch.object(self.module, "open_promotion_page"), patch.object(self.module, "ensure_logged_in"):
-            self.assertEqual(self.module.business_travel_status(page), 0)
-
     def test_filters_non_deletable_listing_short_tags(self):
         payload = {
             "resStatus": {"rcode": 200},

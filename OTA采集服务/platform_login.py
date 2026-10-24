@@ -447,6 +447,8 @@ def run(platform: str, switch_account: bool = False) -> int:
                 args=["--start-maximized"],
             )
             diagnostic.attach(context)
+            if platform == "meituan":
+                context.add_init_script("Object.defineProperty(Navigator.prototype, 'webdriver', {get: () => false});")
             required_cookies = (
                 {"mebsid"}
                 if platform == "meituan"

@@ -1,5 +1,31 @@
 # 项目当前进度（PROJECT_STATUS）
 
+## 2026-10-24：携程商旅专享改用促销中心接口状态
+
+ctrip_promotion_status 的 business_travel_price 不再访问旧商旅介绍页或凭“商旅专享说明／企业间对公结算”文字判断。新增小模块 ctrip_business_travel_status.py，从当前 Cookie 上下文直接打开促销中心并捕获页面实际 getDomesticHome 响应，严格校验固定主机与路径、HTTP 200、resStatus.rcode=200、服务错误和 dtos 结构，再唯一匹配 promotionType=BTP；不读取 historyTypeInfos 类型目录，不报名、编辑、重组接口参数或循环重试。
+
+仅 actions 精确等于 [ADD] 且 promotionStatusList 明确为空列表时写 enabled=0、status=NOT_JOINED。EFFECTIVE 写 enabled=1、status=JOINED；PAUSE、AUDIT、EXPIRED 分别保留实际状态，多个已知状态以竖线连接，status_detail 保留原状态集合（未参与记录为 ADD）。未知状态、ADD 与非空状态冲突、字段缺失、重复／缺失 BTP 卡片、登录或接口失败均抛出异常，经现有 collect_one 告警并跳过该项 UPSERT，保留既有值；其他子项采集和任务原有返回行为不变，不新增 Schema、字段或调度任务。
+
+13 项新商旅回归测试及原有相关测试通过，468 项全量离线测试通过，覆盖精确未参与判定、有效／暂停／审核／过期、未知与矛盾状态、旧介绍文字不兜底、其他权益不受影响和异常项不写入。当前保存的百灵酒店 Cookie 只读现场调用新函数得到 enabled=0、NOT_JOINED、ADD，与促销中心“立即参加”一致；未验证其他酒店或实际已生效商旅账号。未触发采集入库、数据库变更、配置保存、服务重启、提交推送或发布更新。
+
+## 2026-10-24：携程活动效果切换当前促销中心接口
+
+ctrip_promotion 中的活动效果快照改为从“促销推广 → 促销中心 → 促销效果 → 过去30天”捕获页面实际产生的 queryDomesticPromoEffectDetails 和 queryDomesticPromoEffectOverview 响应，不再调用 getNewPromotionDetail 或重组页面请求；仅接受起止日期与最近30个完整日相符、HTTP 200、resStatus.rcode=200 且无服务错误的两份结果。明细名称取 promoSet，间夜取 promoRoomNights，campaign_gmv 改为当前页面“含促销收入”的 promoGmv 口径；总间夜与竞争圈间夜均值来自 Overview。保留原任务和表，不新增趋势采集。
+
+用户确认新接口未提供的字段留 NULL：campaign_id、promotion_switch、各同比和 discount_amt；平均优惠幅度不冒充优惠金额，不使用旧接口补齐。主键改为 hotel_id、platform_scope、campaign_name，campaign_id 允许为空；同步新建表定义，提供 database/migrations/ctrip_promotion_effect_name_key.sql 供已有酒店库先核对空名称及重名再迁移，不删除或猜测合并旧记录。名称为空或重复、接口失败、响应不完整时整批拒绝；非空结果沿用按酒店/平台事务替换，完全空列表保留原快照，防止公共写入器将空批次变成全表删除。
+
+15 项针对性测试通过；457 项全量离线测试首跑出现一项无关的 PMS runner 临时失败，未修改该逻辑，复跑全部通过。使用当前配置保存的携程会话只读现场验证 2026-09-24 至 2026-10-23，得到11项促销（7项有间夜、4项为零），与页面一致，缺失字段均为空；现场页的 cipher 可为空，新接口业务成功码为200而非旧接口的0。未连接真实业务数据库、执行迁移或入库，未修改酒店配置、重启服务、提交推送或发布更新；已有库必须先应用上述迁移 SQL 才能保存空活动ID。
+
+随后按用户明确要求，在当前配置指向的 hotel_bailing 实际执行了上述结构迁移；执行前确认无正在运行的采集任务、7条记录名称均有效且无重复、无外键引用。迁移后主键为 hotel_id、platform_scope、campaign_name，campaign_id 可为 NULL、campaign_name 不可为 NULL；原7条记录逐字段比较及 SHA-256 完全一致，未采集入库或改动其他数据库。
+
+按用户后续要求，同步迁移 hotel_puyue、hotel_zhiting、hotel_wyn 的同一张表；各库执行前均无空名称、重名、外键引用或正在访问该表的其他活动查询。迁移后主键及空值约束与 hotel_bailing 一致，原记录分别为0、2、6条，前后逐字段及摘要核对完全一致。只改这三库的该表结构，未运行采集或替换业务记录。
+
+## 2026-10-24：美团登录助手两行初始化注入
+
+按用户明确授权及“只添加两行代码”的要求，仅在 platform_login.py 为美团专用登录上下文添加 if 判断和 add_init_script，将 navigator.webdriver 设为 false；在首次业务导航前注册，其他平台及采集任务不变。不是完整 stealth.min.js，不保证解决美团风控；日志里的 webdriver 值是注入后的页面值，不能据此判断浏览器原生标记。
+
+撤回此前额外新增的模块、配置开关、诊断字段和相应设置改动，保留既有测试文件中的回归验证。不新增生产文件或依赖，不修改启动参数、Cookie、人工验证码流程或任务冷却。未访问真实美团、改写酒店配置、清理会话、重启服务、采集入库、提交推送或发布更新包。
+
 ## 2026-10-23：宝寓 FORECAST 仅保留最新当日快照
 
 按用户要求，宝寓 pms_room_type_forecast 从“仅覆盖酒店当天、跨日累计”改为按 hotel_id 和 source_platform=PMS（宝寓）替换全部既有日期，再写入本轮当日房型数据；下一次非空、成功采集会自然移除该酒店宝寓来源的旧日期快照。其他酒店或其他来源不清理，字段计算、接口和房型映射语义不变，不执行全表清空或独立历史清理 SQL。

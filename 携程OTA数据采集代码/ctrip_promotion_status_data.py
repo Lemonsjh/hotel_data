@@ -12,6 +12,7 @@ from playwright.sync_api import sync_playwright
 
 from ctrip_config import COOKIE, DEFAULT_HOTEL_NAME, USER_AGENT
 from ctrip_goods_price_mapping import CtripGoodsClient, normalize_products
+from ctrip_business_travel_status import business_travel_status
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import OUTPUT_DIR, sync_metric_history_table
@@ -31,14 +32,11 @@ POINTS_ALLIANCE_MENU_POINT = (110, 385)
 POINTS_ALLIANCE_MENU_TEXT = "积分联盟"
 PREFERRED_CLUB_MENU_POINT = (110, 458)
 PREFERRED_CLUB_MENU_TEXT = "优享会"
-BUSINESS_TRAVEL_MENU_POINT = (110, 503)
-BUSINESS_TRAVEL_MENU_TEXT = "商旅专享价"
 TRAVEL_PHOTO_TAB_TEXT = "\u65c5\u62cd"
 EMPTY_DATA_TEXT = "\u6682\u65e0\u6570\u636e"
 MY_UPLOADS_TEXT = "\u6211\u7684\u4e0a\u4f20"
 POINTS_PAGE_MARKERS = ("积分可抵", "积分膨胀", "十倍积分")
 PREFERRED_CLUB_PAGE_MARKERS = ("体验优享会计划说明", "优享会酒店附加协议")
-BUSINESS_TRAVEL_PAGE_MARKERS = ("商旅专享说明", "企业间对公结算")
 
 
 def require_hotel_id() -> str:
@@ -116,7 +114,6 @@ def activity_enabled(page: Any, menu_point: tuple[int, int], markers: tuple[str,
     menu_text = {
         POINTS_ALLIANCE_MENU_POINT: POINTS_ALLIANCE_MENU_TEXT,
         PREFERRED_CLUB_MENU_POINT: PREFERRED_CLUB_MENU_TEXT,
-        BUSINESS_TRAVEL_MENU_POINT: BUSINESS_TRAVEL_MENU_TEXT,
     }[menu_point]
     open_promotion_page(page, menu_point, menu_text)
     deadline = time.monotonic() + 30
@@ -181,20 +178,6 @@ def points_alliance_status(page: Any) -> dict[str, int | None]:
         if has_visible_action_button(page, APPLY_SELECTOR, "立即报名"):
             return {"enabled": 0, "orders_30d": None}
         raise RuntimeError(f"Ctrip points-alliance dashboard is unavailable: {exc}") from exc
-
-
-def business_travel_status(page: Any) -> int:
-    open_promotion_page(page, BUSINESS_TRAVEL_MENU_POINT, BUSINESS_TRAVEL_MENU_TEXT)
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        ensure_logged_in(page)
-        if has_visible_action_button(page, 'button[he-click="businesstravel_join"]', "立即加入"):
-            return 0
-        body = page.locator("body").inner_text(timeout=1_000)
-        if all(marker in body for marker in BUSINESS_TRAVEL_PAGE_MARKERS):
-            return 1
-        page.wait_for_timeout(500)
-    raise RuntimeError("Ctrip business-travel page did not return a recognized status")
 
 
 def enabled_flag(value: Any) -> bool:
@@ -390,10 +373,15 @@ def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[A
     information_enabled = None if information_error else int(float(information_score) >= 100)
     short_tags, short_tags_error = results["listing_short_tags"]
     recommendation_words, recommendation_words_error = results["listing_recommendation_words"]
+    business_value, business_error = results["business_travel"]
+    business_data = business_value if isinstance(business_value, dict) else {"enabled": business_value}
+    business_status = business_data.get("status") or ("JOINED" if business_data.get("enabled") else "NOT_JOINED")
     candidates = [
         status_row(hotel_id, captured_at, "points_alliance", "\u79ef\u5206\u8054\u76df", (points_enabled, points_error), "JOINED", "NOT_JOINED", orders_30d=points_orders),
         status_row(hotel_id, captured_at, "preferred_club", "\u4f18\u4eab\u4f1a", results["preferred_club"], "JOINED", "NOT_JOINED", "UNKNOWN" if results["preferred_club"][0] else None),
-        status_row(hotel_id, captured_at, "business_travel_price", "\u5546\u65c5\u4e13\u4eab\u4ef7", results["business_travel"], "JOINED", "NOT_JOINED"),
+        status_row(hotel_id, captured_at, "business_travel_price", "\u5546\u65c5\u4e13\u4eab\u4ef7",
+                   (business_data.get("enabled"), business_error), business_status, business_status,
+                   status_detail=business_data.get("status_detail")),
         status_row(hotel_id, captured_at, "hourly_room", "\u949f\u70b9\u623f", (hourly_enabled, hourly_error), "ENABLED", "DISABLED", room_type_count=hourly_room_count),
         status_row(hotel_id, captured_at, "listing_short_tags", "\u5217\u8868\u9875\u77ed\u6807\u7b7e", (short_tags, short_tags_error), "CONFIGURED", "NOT_CONFIGURED", status_detail=short_tags),
         status_row(hotel_id, captured_at, "listing_recommendation_words", "\u5217\u8868\u9875\u63a8\u8350\u8bcd", (recommendation_words, recommendation_words_error), "CONFIGURED", "NOT_CONFIGURED", status_detail=recommendation_words),

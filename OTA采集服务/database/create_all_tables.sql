@@ -269,14 +269,14 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_activity_performance` (
   `comp_avg_total_quantity` decimal(18,4) DEFAULT NULL,
   `total_quantity_yoy_pct` decimal(10,2) DEFAULT NULL,
   `comp_avg_quantity_yoy_pct` decimal(10,2) DEFAULT NULL,
-  `campaign_id` bigint unsigned NOT NULL,
-  `campaign_name` varchar(255) DEFAULT NULL,
+  `campaign_id` bigint unsigned DEFAULT NULL,
+  `campaign_name` varchar(255) NOT NULL,
   `campaign_quantity` bigint DEFAULT NULL,
   `campaign_quantity_yoy_pct` decimal(10,2) DEFAULT NULL,
   `campaign_gmv` decimal(18,2) DEFAULT NULL,
   `campaign_gmv_yoy_pct` decimal(10,2) DEFAULT NULL,
   `discount_amt` decimal(18,2) DEFAULT NULL,
-  PRIMARY KEY (`hotel_id`,`platform_scope`,`campaign_id`),
+  PRIMARY KEY (`hotel_id`,`platform_scope`,`campaign_name`),
   KEY `idx_ctrip_promotion_activity_performance_snapshot` (`hotel_id`,`snapshot_time`),
   KEY `idx_ctrip_promotion_activity_performance_period` (`hotel_id`,`period_end_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

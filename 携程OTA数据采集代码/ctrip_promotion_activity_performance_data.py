@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,8 @@ from ota_mysql_writer import sync_table
 
 TABLE_NAME = "ctrip_ota_promotion_activity_performance"
 PROMOTION_PAGE_URL = "https://ebooking.ctrip.com/promotion/promotionCenter?microJump=true"
-DETAIL_PATH = "/revenueroom/api/prcpromotion/getNewPromotionDetail?hostType=HE"
+DETAIL_PATH = "/restapi/soa2/24267/queryDomesticPromoEffectDetails"
+OVERVIEW_PATH = "/restapi/soa2/24267/queryDomesticPromoEffectOverview"
 HEADERS = [
     "hotel_id", "hotel_name", "platform_scope", "period_start_date", "period_end_date",
     "snapshot_time", "promotion_switch", "total_campaign_quantity",
@@ -46,6 +48,8 @@ def ctrip_cookies(cookie: str) -> list[dict[str, str]]:
 
 
 def fetch_payload(start_date: date, end_date: date, cookie: str = COOKIE) -> dict[str, Any]:
+    if (start_date, end_date) != rolling_30_day_range():
+        raise ValueError("Ctrip promotion-effect collector requires the completed 30-day window")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, chromium_sandbox=True)
         try:
@@ -55,51 +59,83 @@ def fetch_payload(start_date: date, end_date: date, cookie: str = COOKIE) -> dic
             page.goto(PROMOTION_PAGE_URL, wait_until="domcontentloaded", timeout=60_000)
             if any(marker in page.url.lower() for marker in ("/login", "passport", "security", "verify")):
                 raise RuntimeError("Ctrip login session is invalid or requires verification")
-            result = page.evaluate(
-                """async ({startDate, endDate, path}) => {
-                    const response = await fetch(path, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
-                        body: new URLSearchParams({startDate, endDate}),
-                    });
-                    return {status: response.status, text: await response.text()};
-                }""",
-                {"startDate": start_date.isoformat(), "endDate": end_date.isoformat(), "path": DETAIL_PATH},
-            )
+            # Read the page's real responses, including its current hotel and request metadata.
+            # Replaying a constructed POST is not equivalent to the page's own API client.
+            results: dict[str, Any] = {}
+
+            def capture(response: Any) -> None:
+                path = response.url.split("?")[0]
+                name = next((key for key, suffix in (("details", DETAIL_PATH), ("overview", OVERVIEW_PATH))
+                             if path.endswith(suffix)), None)
+                if name is None:
+                    return
+                request = response.request.post_data_json
+                if not isinstance(request, dict) or request.get("startDate") != start_date.isoformat() or request.get("endDate") != end_date.isoformat():
+                    return
+                results[name] = {"status": response.status, "text": response.text()}
+
+            page.on("response", capture)
+            page.get_by_text("促销效果", exact=True).click(timeout=15_000)
+            page.get_by_text("过去30天", exact=True).click(timeout=15_000)
+            deadline = time.monotonic() + 30
+            while len(results) < 2 and time.monotonic() < deadline:
+                page.wait_for_timeout(100)
+            if len(results) != 2:
+                raise RuntimeError("Ctrip promotion-effect APIs did not return both 30-day results")
+            result = dict(results)
         finally:
             browser.close()
+    return {name: decode_response(value) for name, value in result.items()}
+
+
+def decode_response(result: Any) -> dict[str, Any]:
     if not isinstance(result, dict) or result.get("status") != 200:
-        raise RuntimeError("Ctrip promotion-detail API failed")
+        raise RuntimeError("Ctrip promotion-effect API failed")
     try:
         payload = json.loads(str(result.get("text") or ""))
     except json.JSONDecodeError as exc:
-        raise RuntimeError("Ctrip promotion-detail API did not return JSON") from exc
-    if not isinstance(payload, dict) or payload.get("rcode") not in (0, "0") or not isinstance(payload.get("data"), dict):
-        raise RuntimeError("Ctrip promotion-detail response is invalid")
+        raise RuntimeError("Ctrip promotion-effect API did not return JSON") from exc
+    validate_payload(payload)
     return payload
+
+
+def validate_payload(payload: Any) -> None:
+    status = payload.get("resStatus") if isinstance(payload, dict) else None
+    if not isinstance(status, dict) or status.get("rcode") not in (200, "200"):
+        raise RuntimeError("Ctrip promotion-effect response is not successful")
+    transport = payload.get("ResponseStatus", {})
+    if not isinstance(transport, dict) or transport.get("Ack", "Success") != "Success" or transport.get("Errors"):
+        raise RuntimeError("Ctrip promotion-effect response contains service errors")
 
 
 def rows_from_payload(
     payload: dict[str, Any], hotel_id: str, captured_at: datetime, start_date: date, end_date: date,
 ) -> list[list[Any]]:
-    data = payload["data"]
-    details = data.get("promotionDetailBo")
+    detail_data, data = payload.get("details"), payload.get("overview")
+    validate_payload(detail_data)
+    validate_payload(data)
+    details = detail_data.get("details")
     if not isinstance(details, list):
-        raise RuntimeError("Ctrip promotion-detail response is missing promotionDetailBo")
+        raise RuntimeError("Ctrip promotion-effect response is missing details")
+    if not hotel_id.strip():
+        raise RuntimeError("Ctrip promotion-effect hotel_id is empty")
     shared = [
         hotel_id, DEFAULT_HOTEL_NAME, PLATFORM_SCOPE, start_date, end_date, captured_at,
-        data.get("promotionSwitch"), data.get("totalCampaignQuantity"),
-        data.get("totalQuantity"), data.get("compAvgTotalQuantity"), data.get("quantityYoy"),
-        data.get("compAvgQuantityYoy"),
+        None, data.get("promoRoomNights"), data.get("totalRoomNights"),
+        data.get("competitorsAvgPromoRoomNights"), None, None,
     ]
-    rows = []
+    rows, names = [], set()
     for detail in details:
-        if not isinstance(detail, dict) or detail.get("campaignId") in (None, ""):
-            continue
+        name = detail.get("promoSet") if isinstance(detail, dict) else None
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 255:
+            raise RuntimeError("Ctrip promotion-effect detail has no valid promotion name")
+        name = name.strip()
+        if name.casefold() in names:
+            raise RuntimeError("Ctrip promotion-effect contains duplicate promotion names")
+        names.add(name.casefold())
         rows.append(shared + [
-            detail.get("campaignId"), detail.get("campaignName"), detail.get("campaignQuantity"),
-            detail.get("quantityYoy"), detail.get("campaignGmv"), detail.get("campaignGmvYoy"),
-            detail.get("discountAmt"),
+            None, name, detail.get("promoRoomNights"), None,
+            detail.get("promoGmv"), None, None,
         ])
     return rows
 
@@ -110,4 +146,7 @@ def collect_rows(hotel_id: str, captured_at: datetime, cookie: str = COOKIE) -> 
 
 
 def sync_rows(rows: list[list[Any]]) -> None:
+    # No scope can be inferred from an empty batch; never turn it into a full-table DELETE.
+    if not rows:
+        return
     sync_table(TABLE_NAME, HEADERS, rows, allow_empty_replace=True)
