@@ -12,8 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from package_format import ASSET_NAME, BROWSER_EXTENSION_FILES, REPOSITORY, allowed_path, dependency_digest, digest, validate_package, version
 
 
-def build(root: Path, output: Path, release_version: str, removed: list[str], *,
-          include_browser_extension: bool = True, legacy_pms_layout: bool = True) -> Path:
+def build(root: Path, output: Path, release_version: str, removed: list[str], *, include_browser_extension: bool = True) -> Path:
     version(release_version)
     tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode("utf-8").split("\0")
     files = {}
@@ -27,12 +26,7 @@ def build(root: Path, output: Path, release_version: str, removed: list[str], *,
         path = root / relative
         if path.is_symlink() or not path.is_file():
             raise ValueError("Tracked program file missing or symlink: " + relative)
-        target = relative
-        if legacy_pms_layout and relative.startswith("别样红PMS数据采集代码/"):
-            target = "正式数据抓取-PMS（别样红）/" + relative.split("/", 1)[1]
-        if target in files:
-            raise ValueError("Package path collision: " + target)
-        files[target] = path.read_bytes()
+        files[relative] = path.read_bytes()
     if include_browser_extension and not BROWSER_EXTENSION_FILES <= files.keys():
         raise ValueError("Browser extension source files must all be tracked and present")
     manifest = {
@@ -60,8 +54,6 @@ if __name__ == "__main__":
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, default=Path("dist"))
     parser.add_argument("--remove", action="append", default=[])
-    parser.add_argument("--modern-pms-layout", action="store_true",
-                        help="Use renamed PMS directory; requires a compatible deployment updater")
     extension = parser.add_mutually_exclusive_group()
     extension.add_argument("--include-browser-extension", dest="include_browser_extension", action="store_true")
     extension.add_argument("--without-browser-extension", dest="include_browser_extension", action="store_false",
@@ -69,4 +61,4 @@ if __name__ == "__main__":
     parser.set_defaults(include_browser_extension=True)
     args = parser.parse_args()
     build(Path(__file__).resolve().parents[1], args.output, args.version, args.remove,
-          include_browser_extension=args.include_browser_extension, legacy_pms_layout=not args.modern_pms_layout)
+          include_browser_extension=args.include_browser_extension)

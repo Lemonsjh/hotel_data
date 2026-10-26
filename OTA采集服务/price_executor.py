@@ -94,7 +94,7 @@ def task_status(settings: dict[str, Any], platform: str, task_id: int) -> str:
 
 def task_command(settings: dict[str, Any], platform: str, task: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
     info = price_tasks.require_platform(platform)
-    script = price_tasks.price_dir() / info["script"]
+    script = price_tasks.PRICE_DIR / info["script"]
     if not script.exists():
         raise FileNotFoundError(f"调价脚本不存在：{script}")
     if platform == "meituan":
@@ -135,7 +135,7 @@ def execute_task(settings: dict[str, Any], platform: str, task: dict[str, Any], 
         command, env = task_command(settings, platform, task)
         completed = subprocess.run(
             command,
-            cwd=str(price_tasks.price_dir()),
+            cwd=str(price_tasks.PRICE_DIR),
             env=env,
             capture_output=True,
             text=True,

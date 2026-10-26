@@ -35,10 +35,6 @@ PLATFORMS = {
 }
 
 
-def price_dir() -> Path:
-    return runner.pms_providers.byh_path().parent / "ota调价"
-
-
 def connection(settings: dict[str, Any]):
     cfg = settings.get("mysql") or {}
     return pymysql.connect(
@@ -320,8 +316,7 @@ def launch_task(settings: dict[str, Any], platform: str, task_id: int, dry_run: 
     if not task or task.get("execute_status") != "PENDING":
         raise ValueError("只能预览或执行 PENDING 任务")
 
-    directory = price_dir()
-    script = directory / info["script"]
+    script = PRICE_DIR / info["script"]
     if not script.exists():
         raise FileNotFoundError(f"调价脚本不存在：{script}")
     if platform == "meituan":
@@ -363,7 +358,7 @@ def launch_task(settings: dict[str, Any], platform: str, task_id: int, dry_run: 
     try:
         subprocess.Popen(
             command,
-            cwd=str(directory),
+            cwd=str(PRICE_DIR),
             env=env,
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -380,7 +375,7 @@ def launch_task(settings: dict[str, Any], platform: str, task_id: int, dry_run: 
 
 def sync_meituan_hotel_config(settings: dict[str, Any], hotel_name: str) -> None:
     cfg = settings.get("meituan") or {}
-    path = price_dir() / "meituan_hotel_config.json"
+    path = PRICE_DIR / "meituan_hotel_config.json"
     data: dict[str, Any] = {}
     if path.exists():
         data = json.loads(path.read_text(encoding="utf-8-sig"))
