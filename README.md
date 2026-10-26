@@ -30,6 +30,8 @@ MySQL 统一存储
 - 发布者通过 GitHub Actions 的 **Build release update** 工作流构建；默认只上传测试包，明确勾选 publish 且在 master 上执行才创建正式 Release。
 - 中断恢复：确认没有更新进程后移除本项目 `updater/update.lock`，执行 `runtime\python.exe updater\update.py --recover`；不要删除备份目录或酒店数据。
 
+`v0.0.4` 更新附件兼容 `v0.0.3` 的旧 PMS 路径白名单，可直接通过一键更新安装；源码仍保持规范目录命名。程序按安装清单选择实际更新的 PMS/调价代码，旧会话留在原处复用，不迁移、清理或上传酒店数据。附件默认含浏览器扩展，因此比 `v0.0.3` 更早的部署仍需先安装 `v0.0.3`。发布构建默认使用兼容布局；`--modern-pms-layout` 仅供已确认目标更新器支持新目录时使用。
+
 ## 主要能力
 
 ### 美团 OTA

@@ -51,6 +51,8 @@ def stop_login_helpers() -> None:
 
 def clear_login_sessions() -> None:
     PMS_SESSION_PATH.unlink(missing_ok=True)
+    legacy = runner.PROJECT_ROOT / "正式数据抓取-PMS（别样红）" / "PMS登录" / PMS_SESSION_PATH.name
+    legacy.unlink(missing_ok=True)
     for platform in platform_login.PLATFORMS:
         profile = platform_login.profile_path(platform)
         if profile.exists():

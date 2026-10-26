@@ -9,6 +9,7 @@ PMS provider 注册表
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -37,11 +38,19 @@ def byh_path(value: Any = None) -> Path:
                         "别样红PMS数据采集代码/PMS登录")
     legacy = PROJECT_ROOT / "正式数据抓取-PMS（别样红）"
     current = PROJECT_ROOT / "别样红PMS数据采集代码"
-    try:
-        relative = path.relative_to(legacy)
-    except ValueError:
-        return path
-    return current / relative if current.is_dir() else path
+    for base in (current, legacy):
+        if path.is_relative_to(base):
+            relative = path.relative_to(base)
+            break
+    else:
+        return path  # 不重定向项目之外的自定义代码目录。
+    installed = PROJECT_ROOT / "updater" / "installed.json"
+    managed = json.loads(installed.read_text(encoding="utf-8-sig")).get("files", {}) if installed.is_file() else {}
+    for base in (current, legacy):
+        entry = base / "PMS登录" / "fetch_main.py"
+        if entry.is_file() and entry.relative_to(PROJECT_ROOT).as_posix() in managed:
+            return base / relative
+    return (current if current.is_dir() else legacy) / relative
 
 
 # ---------------------------------------------------------------------------

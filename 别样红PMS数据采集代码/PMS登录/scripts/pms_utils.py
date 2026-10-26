@@ -27,7 +27,18 @@ from pms_config import (
 )
 
 
-SESSION_PATH = Path(__file__).resolve().parents[1] / "pms_session_playwright.json"
+def session_path() -> Path:
+    current = Path(__file__).resolve().parents[1] / "pms_session_playwright.json"
+    alternate = {"别样红PMS数据采集代码": "正式数据抓取-PMS（别样红）",
+                 "正式数据抓取-PMS（别样红）": "别样红PMS数据采集代码"}.get(current.parents[1].name)
+    if alternate:
+        other = current.parents[2] / alternate / "PMS登录" / current.name
+        if not current.exists() and other.is_file():
+            return other
+    return current
+
+
+SESSION_PATH = session_path()
 # 保留旧名称，便于尚未迁移的调用方继续使用同一个绝对路径。
 SESSION_FILE = SESSION_PATH
 REQUIRED_COOKIES = ("SessionId", "Token", "OwnerId", "LoginOrgId")
