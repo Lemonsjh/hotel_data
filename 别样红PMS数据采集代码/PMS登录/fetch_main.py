@@ -129,6 +129,9 @@ def need_login(hours=12, force=False, username=""):
     if not info:
         print("🔄 会话不存在或无效，需要登录")
         return True
+    if info.get("login_mode") == "manual":
+        print("🔄 已切回账号密码模式，需要使用配置的账号密码重新登录")
+        return True
     if username and info.get("account_fingerprint") != pms_utils.account_fingerprint(username):
         print("🔄 PMS 配置账号已变化，需要重新登录")
         return True
@@ -166,7 +169,23 @@ def main() -> int:
     # 判断是否需要登录
     username = os.environ.get("PMS_USERNAME", "").strip()
     password = os.environ.get("PMS_PASSWORD", "").strip()
-    if need_login(hours=12, force=args.login, username=username):
+    mode = os.environ.get("PMS_LOGIN_MODE") or "password"
+    if mode == "manual":
+        from pms_utils import SessionCheckError, require_manual_session
+        if args.login:
+            print("❌ 手动模式请在配置页点击手动登录；原会话保留")
+            return 1
+        try:
+            hotel_name = require_manual_session(username)
+        except SessionCheckError as exc:
+            print(f"❌ {exc}")
+            return 1
+        os.environ["PMS_HOTEL_NAME"] = hotel_name
+        print("✅ 手动会话已核验，继续采集（不按12小时强制重登）")
+    elif mode != "password":
+        print("❌ PMS_LOGIN_MODE 无效，应为 password 或 manual")
+        return 1
+    elif need_login(hours=12, force=args.login, username=username):
         print("\n🔐 正在登录...")
         if not username or not password:
             print("❌ PMS_USERNAME 或 PMS_PASSWORD 未配置")
@@ -177,7 +196,8 @@ def main() -> int:
             print("❌ 登录失败，无法继续")
             return 1
 
-    hotel_name = pms_utils.ensure_hotel_name()
+    if mode != "manual":
+        hotel_name = pms_utils.ensure_hotel_name()
     if hotel_name:
         if runner.backfill_pms_hotel_name(hotel_name):
             print(f"✅ 已自动回填 PMS 酒店名称: {hotel_name}")

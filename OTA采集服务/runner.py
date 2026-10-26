@@ -385,6 +385,10 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     put_if(env, "MYSQL_DATABASE", mysql.get("database"))
     put_if(env, "PMS_USERNAME", pms.get("username"))
     put_if(env, "PMS_PASSWORD", pms.get("password"))
+    env["PMS_LOGIN_MODE"] = str(pms.get("login_mode") or "password")
+    if env["PMS_LOGIN_MODE"] == "manual":
+        env["PMS_USERNAME"] = str(pms.get("username") or "").strip()
+        env["PMS_PASSWORD"] = ""  # 人工模式不继承其他部署遗留的密码或账号。
     put_if(
         env,
         "PMS_HOTEL_NAME",
@@ -719,9 +723,9 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
         pms_script = script_path(settings, "pms", "fetch_main.py")
         if not pms_script.exists():
             warnings.append(f"pms entry script not found: {pms_script}")
-        if not pms.get("username"):
+        if pms.get("login_mode") != "manual" and not pms.get("username"):
             warnings.append("PMS username is empty.")
-        if not pms.get("password"):
+        if pms.get("login_mode") != "manual" and not pms.get("password"):
             warnings.append("PMS password is empty.")
     bypms = settings.get("bypms") or {}
     if bypms.get("enabled", False):

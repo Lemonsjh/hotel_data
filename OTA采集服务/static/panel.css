@@ -257,6 +257,13 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
   gap: 12px 14px;
 }
 .config-grid .field { margin: 0; }
+.pms-login-field { grid-column: 1 / -1; min-width: 0; }
+.pms-login-input { display: flex; align-items: center; gap: 10px; }
+.pms-login-input input { flex: 1; min-width: 0; }
+.pms-login-input button { flex-shrink: 0; white-space: nowrap; }
+.pms-login-field small { display: block; margin-top: 6px; color: var(--muted); }
+.pms-login-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.pms-login-feedback .login-state { flex: 1; min-width: 140px; max-width: 100%; text-align: left; font-size: 12px; color: var(--muted); }
 .secret-field { grid-column: 1 / -1; }
 .mysql-pair-field {
   grid-column: auto;

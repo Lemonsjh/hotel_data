@@ -41,6 +41,7 @@
   "pms": {
     "enabled": true,
     "provider": "byh",
+    "login_mode": "password",
     "hotel_name": "",
     "username": "",
     "password": "",

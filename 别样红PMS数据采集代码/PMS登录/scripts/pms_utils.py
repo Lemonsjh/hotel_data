@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import pms_config
+import requests
+
 from pms_config import (
     ACTION_TIMEOUT_MS,
     API_TIMEOUT_SECONDS,
@@ -28,6 +31,14 @@ SESSION_PATH = Path(__file__).resolve().parents[1] / "pms_session_playwright.jso
 # 保留旧名称，便于尚未迁移的调用方继续使用同一个绝对路径。
 SESSION_FILE = SESSION_PATH
 REQUIRED_COOKIES = ("SessionId", "Token", "OwnerId", "LoginOrgId")
+
+
+class SessionCheckError(RuntimeError):
+    pass
+
+
+class ManualLoginRequired(SessionCheckError):
+    pass
 
 
 def account_fingerprint(username: str) -> str:
@@ -131,10 +142,10 @@ def get_hotel_name_from_session(default_name: str = "") -> str:
     return hotel_name or default_name
 
 
-def fetch_hotel_name(cookies: dict[str, str]) -> str:
-    """从 PMS 登录校验接口读取当前组织名称。"""
-    import requests
-
+def fetch_hotel_name(cookies: dict[str, str], *, strict: bool = False) -> str:
+    """读取组织名称；人工会话须严格核验，旧调用仍在失败时返回空名称。"""
+    if strict and any(not cookies.get(key) for key in REQUIRED_COOKIES):
+        raise ManualLoginRequired("别样红会话不完整，请在配置页点击手动登录")
     url = f"{SERVICE_API_BASE_URL}/api/v1/fox/user/checkLogin"
     try:
         response = requests.post(
@@ -143,13 +154,74 @@ def fetch_hotel_name(cookies: dict[str, str]) -> str:
             cookies=cookies,
             headers=request_headers(report_url()),
             timeout=API_TIMEOUT_SECONDS,
+            allow_redirects=not strict,
         )
-        response.raise_for_status()
+        if strict:
+            redirected = response.status_code in (301, 302, 303, 307, 308) and any(
+                word in response.headers.get("Location", "").lower() for word in ("login", "passport"))
+            if response.status_code == 401 or redirected:
+                raise ManualLoginRequired("别样红会话已失效，请在配置页重新手动登录")
+            if response.status_code != 200:
+                raise SessionCheckError(f"别样红会话核验返回 HTTP {response.status_code}，原会话保留")
+        else:
+            response.raise_for_status()
         payload = response.json()
-        name = str(((payload.get("data") or {}).get("loginOrgName")) or "").strip()
+        if strict and (not isinstance(payload, dict) or payload.get("success") is False or any(
+            key in payload and str(payload[key]) not in {"0", "200"} for key in ("code", "Code")
+        )):
+            raise SessionCheckError("别样红会话核验被业务接口拒绝，原会话保留；请检查登录或权限")
+        data = payload.get("data") if isinstance(payload, dict) else None
+        name = str(data.get("loginOrgName") or "").strip() if isinstance(data, dict) else ""
+        if strict and (not name or name.lower() == "todo"):
+            raise SessionCheckError("别样红会话尚未确认有效酒店，原会话保留；请完成登录和酒店选择")
         return name if name and name.lower() != "todo" else ""
-    except (requests.RequestException, ValueError, TypeError):
+    except requests.RequestException as exc:
+        if strict:
+            raise SessionCheckError("别样红会话核验网络失败，原会话保留；不能据此认定登录失效") from exc
         return ""
+    except (ValueError, TypeError) as exc:
+        if strict:
+            raise SessionCheckError("别样红会话核验未返回有效 JSON，原会话保留；请检查登录和网络") from exc
+        return ""
+
+
+def check_identity(cookies: dict[str, str]) -> str:
+    return fetch_hotel_name(cookies, strict=True)
+
+
+def same_server(saved: str, current: str) -> bool:
+    def normalized(value):
+        parts = urlsplit(str(value).rstrip("/"))
+        return parts.scheme.lower(), parts.netloc.lower(), parts.path.removesuffix("/login")
+    return normalized(saved) == normalized(current)
+
+
+def session_matches(session: dict, username: str = "") -> bool:
+    addresses = {"url": pms_config.LOGIN_BASE_URL, "report_base_url": REPORT_BASE_URL,
+                 "service_api_base_url": SERVICE_API_BASE_URL}
+    changed_address = any(not same_server(session.get(key, ""), value)
+                          for key, value in addresses.items() if key == "url" or session.get(key))
+    changed_hotel = session.get("hotel_id") and session["hotel_id"] != os.environ.get("HOTEL_ID", "").strip()
+    changed_account = username and session.get("account_fingerprint") != account_fingerprint(username)
+    return not (changed_address or changed_hotel or changed_account)
+
+
+def require_manual_session(username: str = "") -> str:
+    session = read_session(require_cookies=True, quiet=True)
+    if not session:
+        raise ManualLoginRequired("尚无可用的别样红会话，请在配置页点击手动登录")
+    if not session_matches(session, username):
+        raise ManualLoginRequired("别样红地址或配置账号/酒店标识已变化，请重新手动登录")
+    return check_identity(session["cookies"])
+
+
+def browser_cookies(context) -> dict[str, str]:
+    # 同名 Cookie 可合法存在于不同域/路径；只取核验接口适用项，优先更具体的作用域。
+    cookies = context.cookies([f"{SERVICE_API_BASE_URL}/api/v1/fox/user/checkLogin"])
+    cookies.sort(key=lambda item: (len(item.get("path", "/")),
+                                  len(item.get("domain", "").lstrip(".")),
+                                  not item.get("domain", "").startswith(".")))
+    return {item["name"]: item["value"] for item in cookies}
 
 
 def ensure_hotel_name(*, force: bool = False) -> str:
