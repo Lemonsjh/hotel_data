@@ -129,11 +129,12 @@ order by date,class
 # JY01 使用酒店原生历史营业日报；日结房型表只作独立房量/房费控制。
 JY01_DAILY_QUERY = """
 select convert(char(8),date,112) as business_date, class as metric_code,
-       convert(numeric(18,4),day) as metric_value
+       convert(numeric(18,4),day) as metric_value,
+       convert(numeric(18,4),day_rebate) as daily_rebate
 from yjourrep
 where date >= '{start_date}' and date < '{end_date}'
   and class in ('010100','010110','010120','010130','010190',
-                '011000','012000','013000','014000','018530','018560')
+                '011000','012000','013000','014000','017000','018000','018530','018560')
 order by date,class
 """.strip()
 

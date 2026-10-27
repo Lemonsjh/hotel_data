@@ -20,7 +20,9 @@ COLUMNS = ["hotel_name", "hotel_id", "source_platform", "business_date", "dimens
 CONTROL_FIELDS = {"010100": "total_rooms", "010110": "maintain_rooms", "010120": "locked_rooms",
                   "010130": "own_use_rooms", "010190": "available_rooms", "011000": "room_nights",
                   "012000": "occupancy_rate", "013000": "room_revenue", "014000": "adr",
+                  "017000": "room_other_income", "018000": "room_income_total",
                   "018530": "free_rooms", "018560": "revpar"}
+REVENUE_CODES = ("013000", "017000", "018000")
 ROOM_FIELDS = ("total_rooms", "maintain_rooms", "locked_rooms", "own_use_rooms", "available_rooms",
                "remaining_rooms", "sold_rooms", "free_rooms", "room_revenue")
 
@@ -60,6 +62,7 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
                snapshot: datetime) -> tuple[list[dict], dict]:
     days = collection_dates(snapshot.date())
     metrics = {day: {} for day in days}
+    rebates = {day: {} for day in days}
     for record in records:
         day = report_date(record.get("business_date"))
         code = record.get("metric_code")
@@ -69,6 +72,8 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
         if field in metrics[day]:
             raise FoxhisError("JY01 同日指标重复。")
         metrics[day][field] = number(record.get("metric_value"))
+        if code in REVENUE_CODES:
+            rebates[day][code] = number(record.get("daily_rebate"))
     if any(len(item) != len(CONTROL_FIELDS) for item in metrics.values()):
         raise FoxhisError("JY01 最近 30 天日结指标不完整，保留目标表。")
 
@@ -108,9 +113,15 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
             if sum((r[field] for r in details[day]), Decimal(0)) != total[field]:
                 raise FoxhisError(f"JY01 {day} 房型明细与总计 {field} 不一致。")
         for field in ("total_rooms", "maintain_rooms", "locked_rooms", "own_use_rooms",
-                      "available_rooms", "free_rooms", "room_revenue"):
+                      "available_rooms", "free_rooms"):
             if metric[field] != total[field]:
                 raise FoxhisError(f"JY01 {day} 酒店日报与房型日结 {field} 不一致。")
+        if metric["room_revenue"] + rebates[day]["013000"] != total["room_revenue"]:
+            raise FoxhisError(f"JY01 {day} 房租净收入与房型日结不一致。")
+        if (metric["room_income_total"] != metric["room_revenue"] + metric["room_other_income"]
+                or rebates[day]["018000"] != rebates[day]["013000"] + rebates[day]["017000"]):
+            raise FoxhisError(f"JY01 {day} 客房收入合计与房租、其他收入不一致。")
+        revenue = metric["room_income_total"] + rebates[day]["018000"]
         for field in ("total_rooms", "maintain_rooms", "locked_rooms", "own_use_rooms",
                       "available_rooms", "free_rooms", "room_nights"):
             whole(metric[field])
@@ -128,19 +139,22 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
         rows.append({"hotel_name": config.hotel_name, "hotel_id": config.hotel_id, "source_platform": SOURCE_PLATFORM,
                      "business_date": day, "dimension_type": DIMENSION, "dimension_name": DIMENSION,
                      "room_type_id": None, "room_count": whole(metric["total_rooms"]),
-                     "room_nights": metric["room_nights"], "room_revenue": rounded(metric["room_revenue"]),
-                     "occupancy_rate": rounded(metric["occupancy_rate"]), "adr": rounded(metric["adr"]),
-                     "revpar": rounded(metric["revpar"]), "sold_rooms": whole(total["sold_rooms"]),
+                     "room_nights": metric["room_nights"], "room_revenue": rounded(revenue),
+                     "occupancy_rate": rounded(metric["occupancy_rate"]),
+                     "adr": rounded(revenue / metric["room_nights"]) if metric["room_nights"] else Decimal(0),
+                     "revpar": rounded(revenue / metric["total_rooms"]) if metric["total_rooms"] else Decimal(0),
+                     "sold_rooms": whole(total["sold_rooms"]),
                      "remaining_rooms": whole(total["remaining_rooms"]), "orders_today": None,
                      "snapshot_time": snapshot.replace(microsecond=0)})
-        audits[day.isoformat()] = {**metric, "sold_rooms": total["sold_rooms"], "remaining_rooms": total["remaining_rooms"]}
+        audits[day.isoformat()] = {**metric, "net_room_income_total": revenue, "room_rebate": rebates[day]["018000"],
+                                  "sold_rooms": total["sold_rooms"], "remaining_rooms": total["remaining_rooms"]}
     return rows, {"requested_dates": [d.isoformat() for d in days], "by_date": audits,
                   "manual_zero_rows": manual_zero_rows,
                   "manual_adjustments_included": manual_adjustments,
                   "room_revenue_total": sum((r["room_revenue"] for r in rows), Decimal(0)),
                   "room_nights_total": sum((r["room_nights"] for r in rows), Decimal(0)),
                   "unmapped_fields": {"orders_today": "未验证当日新增订单数的等价指标，保留 NULL"},
-                  "basis": "yjourrep 原生日结：计费出租间夜不含免费房；已售房及余房取同期房型日结，已售房含免费房"}
+                  "basis": "yjourrep 018000客房收入合计含返减及其他客房收入；ADR、RevPAR按客房净收入重算；计费间夜不含免费房"}
 
 
 def fetch_rows(config: Config, snapshot: datetime) -> tuple[list[dict], dict]:
@@ -149,7 +163,7 @@ def fetch_rows(config: Config, snapshot: datetime) -> tuple[list[dict], dict]:
     closed = query("select convert(char(8),bdate,112) as current_business_date from sysdata", config, timeout=30)
     if len(closed) != 1 or report_date(closed[0].get("current_business_date")) <= days[-1]:
         raise FoxhisError("JY01 西软尚未切换到下一营业日，拒绝采集未完成日结。")
-    require_columns(config, "yjourrep", ["date", "class", "day"])
+    require_columns(config, "yjourrep", ["date", "class", "day", "day_rebate"])
     require_columns(config, "yrmsalerep_new", ["date", "gkey", "hall", "code", "ttl", "mnt", "os", "htl", "avl", "vac", "ent",
                                                "soldf", "soldg", "soldc", "soldl", "incomef", "incomeg", "incomec", "incomel"])
     params = {"start_date": days[0].strftime("%Y%m%d"), "end_date": snapshot.strftime("%Y%m%d")}

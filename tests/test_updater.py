@@ -170,8 +170,57 @@ class UpdaterTests(unittest.TestCase):
         response = MagicMock()
         response.__enter__.return_value.url = f"https://github.com/{fmt.REPOSITORY}/releases/tag/v1.2.3"
         limited = urllib.error.HTTPError("https://api.github.com/", 403, "rate limit", {}, None)
-        with patch.object(update, "download", side_effect=limited), patch.object(update.urllib.request, "urlopen", return_value=response):
+        context = update.https_context()
+        with patch.object(update, "download", side_effect=limited), patch.object(update.urllib.request, "urlopen", return_value=response) as open_url, \
+                patch.object(update, "https_context", return_value=context):
             self.assertEqual(update.latest_release()["tag_name"], "v1.2.3")
+        self.assertIs(open_url.call_args.kwargs['context'], context)
+
+    def test_https_context_adds_bundle_to_existing_system_trust(self):
+        context = MagicMock()
+        with patch.object(update.ssl, 'create_default_context', return_value=context) as create:
+            self.assertIs(update.https_context(), context)
+        create.assert_called_once_with()
+        context.load_verify_locations.assert_called_once_with(cafile=update.certifi.where())
+        with patch.object(update.certifi, 'where', return_value=str(self.root / 'missing.pem')):
+            with self.assertRaises(OSError):
+                update.https_context()
+
+    def test_https_context_works_without_system_roots_and_keeps_verification(self):
+        context = update.ssl.SSLContext(update.ssl.PROTOCOL_TLS_CLIENT)
+        self.assertEqual(context.cert_store_stats()['x509_ca'], 0)
+        with patch.object(update.ssl, 'create_default_context', return_value=context):
+            self.assertIs(update.https_context(), context)
+        self.assertGreater(context.cert_store_stats()['x509_ca'], 0)
+        self.assertEqual(context.verify_mode, update.ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+
+    def test_download_uses_verified_context_and_preserves_limits(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.url, response.read.return_value = 'https://example.test/asset', b'abc'
+        context = update.https_context()
+        with patch.object(update, 'https_context', return_value=context), \
+                patch.object(update.urllib.request, 'urlopen', return_value=response) as open_url:
+            self.assertEqual(update.download(response.url, 3), b'abc')
+            self.assertIs(open_url.call_args.kwargs['context'], context)
+            response.read.assert_called_once_with(4)
+            response.read.return_value = b'abcd'
+            with self.assertRaises(ValueError):
+                update.download(response.url, 3)
+            response.url = 'http://example.test/asset'
+            with self.assertRaises(ValueError):
+                update.download('https://example.test/asset', 3)
+
+    def test_certificate_failure_does_not_retry_without_verification(self):
+        error = urllib.error.URLError(update.ssl.SSLCertVerificationError('untrusted issuer'))
+        with patch.object(update.urllib.request, 'urlopen', side_effect=error) as open_url:
+            with self.assertRaises(urllib.error.URLError):
+                update.download('https://example.test/asset', 3)
+        open_url.assert_called_once()
+        context = open_url.call_args.kwargs['context']
+        self.assertEqual(context.verify_mode, update.ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
 
     def lifecycle_fixture(self):
         path, manifest, content = self.package()

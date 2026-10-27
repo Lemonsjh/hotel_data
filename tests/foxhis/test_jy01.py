@@ -21,12 +21,14 @@ class JY01Tests(unittest.TestCase):
         self.metrics, self.rooms = [], []
         self.values = dict(total_rooms=61, maintain_rooms=6, locked_rooms=0, own_use_rooms=0,
                            available_rooms=55, room_nights=41, occupancy_rate="74.55",
-                           room_revenue="4603.62", adr="112.28", free_rooms=0, revpar="75.47")
+                           room_revenue="4603.62", room_other_income="0", room_income_total="4603.62",
+                           adr="112.28", free_rooms=0, revpar="75.47")
         self.room = dict(total_rooms="61", maintain_rooms="6", locked_rooms="0", own_use_rooms="0",
                          available_rooms="55", remaining_rooms="14", sold_rooms="41", free_rooms="0", room_revenue="4603.62")
         for day in self.days:
             self.metrics.extend({"business_date": day.strftime("%Y%m%d"), "metric_code": code,
-                                 "metric_value": str(self.values[field])} for code, field in jy.CONTROL_FIELDS.items())
+                                 "metric_value": str(self.values[field]), "daily_rebate": "0"}
+                                for code, field in jy.CONTROL_FIELDS.items())
             self.rooms.extend({"business_date": day.strftime("%Y%m%d"), "gkey": "t", "hall": hall,
                                "room_type_code": code, **self.room} for code, hall in [("AR", "A"), ("{{{", "{")])
         self.db = DatabaseAdapter()
@@ -69,7 +71,8 @@ class JY01Tests(unittest.TestCase):
     def test_free_room_is_occupied_but_not_a_paid_night(self):
         # 西软 2026-09-30 的实际反例：37 间占用，1 间免费，计费出租 36。
         changed = dict(total_rooms=62, maintain_rooms=5, available_rooms=57, room_nights=36,
-                       room_revenue="7363.63", free_rooms=1, occupancy_rate="63.16", adr="204.55", revpar="118.77")
+                       room_revenue="7363.63", room_income_total="7363.63", free_rooms=1,
+                       occupancy_rate="63.16", adr="204.55", revpar="118.77")
         day = self.days[0].strftime("%Y%m%d")
         metrics = [{**r, "metric_value": str(changed[jy.CONTROL_FIELDS[r["metric_code"]]])}
                    if r["business_date"] == day and jy.CONTROL_FIELDS[r["metric_code"]] in changed else r for r in self.metrics]
@@ -104,10 +107,58 @@ class JY01Tests(unittest.TestCase):
         metrics = []
         for r in self.metrics:
             field = jy.CONTROL_FIELDS[r["metric_code"]]
-            metrics.append({**r, "metric_value": str(-Decimal(r["metric_value"]))} if field in ("room_revenue", "adr", "revpar") else r)
+            metrics.append({**r, "metric_value": str(-Decimal(r["metric_value"]))}
+                           if field in ("room_revenue", "room_income_total", "room_other_income", "adr", "revpar") else r)
         rooms = [{**r, "room_revenue": "-4603.62"} for r in self.rooms]
         rows, _ = self.build(metrics, rooms)
         self.assertEqual(rows[0]["room_revenue"], Decimal("-4603.62"))
+
+    def test_guest_room_income_includes_other_income_and_rebates(self):
+        day = self.days[0].strftime('%Y%m%d')
+        changes = {'017000': ('36', '-2'), '018000': ('4639.62', '-12'), '013000': ('4603.62', '-10')}
+        records = [{**r, 'metric_value': changes[r['metric_code']][0], 'daily_rebate': changes[r['metric_code']][1]}
+                   if r['business_date'] == day and r['metric_code'] in changes else r for r in self.metrics]
+        rooms = [{**r, 'room_revenue': '4593.62'} if r['business_date'] == day else r for r in self.rooms]
+        rows, summary = self.build(records, rooms)
+        self.assertEqual(rows[0]['room_revenue'], Decimal('4627.62'))
+        self.assertEqual(rows[0]['adr'], jy.rounded(Decimal('4627.62') / 41))
+        self.assertEqual(rows[0]['revpar'], jy.rounded(Decimal('4627.62') / 61))
+        audit = summary['by_date'][self.days[0].isoformat()]
+        self.assertEqual(audit['net_room_income_total'], Decimal('4627.62'))
+        self.assertEqual(audit['room_rebate'], Decimal('-12'))
+
+    def test_inconsistent_guest_room_income_is_not_written(self):
+        for code in ('017000', '018000'):
+            for field in ('metric_value', 'daily_rebate'):
+                records = [{**r, field: '9999'} if r['metric_code'] == code else r for r in self.metrics]
+                with self.subTest(code=code, field=field), self.assertRaises(FoxhisError):
+                    self.build(records)
+
+    def test_missing_or_invalid_rebate_is_not_silently_zeroed(self):
+        for code in jy.REVENUE_CODES:
+            records = [{k: v for k, v in r.items() if k != 'daily_rebate'}
+                       if r['metric_code'] == code else r for r in self.metrics]
+            with self.subTest(code=code), self.assertRaises(FoxhisError):
+                self.build(records)
+        for value in (None, '', 'NaN', 'Infinity'):
+            records = [{**r, 'daily_rebate': value} if r['metric_code'] == '018000' else r for r in self.metrics]
+            with self.subTest(value=value), self.assertRaises(FoxhisError):
+                self.build(records)
+
+    def test_fetch_requires_rebate_column_and_queries_all_income_codes(self):
+        def fake_query(sql, config, **kwargs):
+            if 'from sysdata' in sql:
+                return [{'current_business_date': '20261019'}]
+            if 'from yjourrep' in sql:
+                self.assertIn('day_rebate', sql)
+                for code in jy.REVENUE_CODES:
+                    self.assertIn("'" + code + "'", sql)
+                return self.metrics
+            return self.rooms
+        with patch.object(jy, 'require_columns') as require, patch.object(jy, 'query', side_effect=fake_query):
+            rows, _ = jy.fetch_rows(self.config, self.stamp)
+        require.assert_any_call(self.config, 'yjourrep', ['date', 'class', 'day', 'day_rebate'])
+        self.assertEqual(len(rows), 30)
 
     def test_unknown_day_dimension_or_metric_fails(self):
         for key, value in (("business_date", "20261019"), ("metric_code", "UNKNOWN")):

@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -13,6 +14,8 @@ import urllib.request
 from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
+
+import certifi
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from install_core import apply_files, atomic_write, finish, prepare, read_json, restore
@@ -23,9 +26,16 @@ SERVICE = "OTA采集服务"
 LOCK_NAME = "update.lock"
 
 
+def https_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    # 补充便携环境的公共 CA，保留系统/企业证书和主机名校验。
+    context.load_verify_locations(cafile=certifi.where())
+    return context
+
+
 def download(url: str, limit: int) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "HotelCollector-Updater/1", "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(request, timeout=30, context=https_context()) as response:
         if not response.url.startswith("https://"):
             raise ValueError("Insecure download redirect")
         data = response.read(limit + 1)
@@ -44,7 +54,7 @@ def latest_release() -> dict:
             # Official stable-release redirect avoids anonymous API rate limits.
             request = urllib.request.Request(f"https://github.com/{REPOSITORY}/releases/latest",
                                              headers={"User-Agent": "HotelCollector-Updater/1"})
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=30, context=https_context()) as response:
                 target = urlparse(response.url)
             prefix = f"/{REPOSITORY}/releases/tag/"
             if target.scheme != "https" or target.netloc != "github.com" or not target.path.startswith(prefix):

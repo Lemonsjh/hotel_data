@@ -32,11 +32,6 @@ def load_config(values: dict[str, str]):
 
 
 class PmsEndpointDerivationTests(unittest.TestCase):
-    def test_manual_address_can_already_end_in_login(self):
-        config = load_config({"PMS_LOGIN_BASE_URL": "https://example.test:8101/login/"})
-        self.assertEqual(config.LOGIN_URL, "https://example.test:8101/login")
-        self.assertEqual(config.REPORT_BASE_URL, "https://example.test:8081")
-
     def test_blank_service_urls_follow_login_host(self):
         config = load_config({"PMS_LOGIN_BASE_URL": "https://yinmo.beyondh.com:8101"})
         self.assertEqual(config.REPORT_BASE_URL, "https://yinmo.beyondh.com:8081")

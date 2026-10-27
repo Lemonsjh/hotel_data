@@ -131,8 +131,6 @@ def validate_settings(settings: Any) -> list[str]:
             errors.append("foxhis.reports 包含无效报表（不支持 KF11）")
 
     provider = get_path(settings, "pms.provider")
-    if get_path(settings, "pms.login_mode") not in (None, "", "password", "manual"):
-        errors.append("pms.login_mode 必须是 password 或 manual")
     if provider not in (None, "", *pms_providers.PMS_PROVIDERS):
         errors.append(
             "pms.provider 必须是 " + " / ".join(pms_providers.PMS_PROVIDERS)

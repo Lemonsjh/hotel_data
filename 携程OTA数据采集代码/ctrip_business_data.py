@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ ENDPOINTS = {
     "visitor_title": "/datacenter/api/dataCenter/current/fetchVisitorTitleV2",
     "management_data": "/restapi/soa2/24588/getManagementData",
     "flow_data": "/restapi/soa2/24588/getFlowData",
+    "flow_funnel": "/datacenter/api/inland/marketanalysis/flowanalysis/queryFlowTransforNewV1?hostType=Ebooking",
 }
 DEFAULT_OUTPUT = OUTPUT_DIR / "ctrip_ota_business_metrics.xlsx"
 COMPETITION_CAPTURE = OUTPUT_DIR / "ctrip_competition_profile_dom_capture.json"
@@ -78,9 +80,11 @@ METRIC_LABELS = {
     "realtime_ctrip_app_conversion_rate": ("\u5b9e\u65f6\u7ecf\u8425", "\u5b9e\u65f6\u643a\u7a0bAPP\u8f6c\u5316\u7387"),
     "list_page_exposure_count": ("流量漏斗", "列表页曝光量"),
     "detail_page_visitor_count": ("流量漏斗", "详情页访客量"),
-    "order_submit_count": ("流量漏斗", "订单量"),
+    "order_page_visitor_count": ("流量漏斗", "订单页访客量"),
+    "order_submit_count": ("流量漏斗", "订单提交人数"),
     "exposure_conversion_rate": ("流量漏斗", "曝光转化率"),
     "order_conversion_rate": ("流量漏斗", "下单转化率"),
+    "transaction_conversion_rate": ("流量漏斗", "成交转化率"),
     "lost_order_count": ("流失诊断", "流失订单量"),
     "lost_room_night_count": ("流失诊断", "流失间夜量"),
     "lost_order_amount": ("流失诊断", "流失订单金额"),
@@ -317,6 +321,11 @@ class CtripBusinessClient(CtripClient):
                 "header": {"platform": "WEB"},
             },
         )
+        data["flow_funnel"] = self.post_json(
+            ENDPOINTS["flow_funnel"],
+            {"platform": "Ctrip", "startDate": (datetime.strptime(yesterday, "%Y-%m-%d").date() - timedelta(days=7)).isoformat(),
+             "endDate": yesterday, "fingerPrintKeys": "", "spiderkey": "", "spiderVersion": "2.0"},
+        )
         return data
 
 
@@ -540,36 +549,53 @@ def management_data_rows(
 FLOW_DATA_METRICS = {
     6: ("list_page_exposure_count", "count"),
     7: ("detail_page_visitor_count", "person"),
-    8: ("order_submit_count", "order"),
+    8: ("order_page_visitor_count", "person"),
     9: ("exposure_conversion_rate", "%"),
     10: ("order_conversion_rate", "%"),
 }
 
 
+def funnel_values(item: dict[str, Any]) -> dict[str, Any]:
+    values = {}
+    for code, field in (("list_page_exposure_count", "listExposure"), ("detail_page_visitor_count", "detailExposure"),
+                        ("order_page_visitor_count", "orderFillingNum"), ("order_submit_count", "orderSubmitNum")):
+        try:
+            value = Decimal(str(item.get(field)))
+        except InvalidOperation:
+            raise CtripApiError(f"流量漏斗字段 {field} 缺失或无效") from None
+        if not value.is_finite() or value < 0 or value != value.to_integral_value():
+            raise CtripApiError(f"流量漏斗字段 {field} 不是有效人数/次数")
+        values[code] = int(value)
+    exposure, detail, filling, submit = values.values()
+    values.update({code: round(numerator / denominator * 100, 2) if denominator else None
+                   for code, numerator, denominator in (("exposure_conversion_rate", detail, exposure),
+                       ("order_conversion_rate", filling, detail), ("transaction_conversion_rate", submit, filling))})
+    return values
+
+
 def flow_data_rows(data: dict[str, Any], captured_at: datetime, business_date: Any, hotel_name: str) -> list[list[Any]]:
     response = payload_data(data.get("flow_data")) or {}
     items = response.get("dataList") or []
-    rows: list[list[Any]] = []
-    for item in items:
-        if not isinstance(item, dict) or item.get("indexType") not in FLOW_DATA_METRICS:
-            continue
-        metric_code, metric_unit = FLOW_DATA_METRICS[item["indexType"]]
-        is_percentage = metric_unit == "%"
-        rows.append(
-            row(
-                captured_at,
-                business_date,
-                hotel_name,
-                metric_code,
-                percent_points(item.get("val")) if is_percentage else item.get("val"),
-                metric_unit,
-                "较前日",
-                percent_points(item.get("lastVal")) if is_percentage else item.get("lastVal"),
-                item.get("rankComp", ""),
-                percent_points(item.get("avgComp")) if is_percentage else item.get("avgComp"),
-            )
-        )
-    return rows
+    ranks = {FLOW_DATA_METRICS[item["indexType"]][0]: item.get("rankComp")
+             for item in items if isinstance(item, dict) and item.get("indexType") in FLOW_DATA_METRICS}
+    funnel = data.get("flow_funnel")
+    if not isinstance(funnel, list) or any(not isinstance(item, dict) for item in funnel):
+        raise CtripApiError("完整流量漏斗接口未返回有效数据，保留原有记录")
+    current = [item for item in funnel if item.get("date") == str(business_date)]
+    hotel = [item for item in current if item.get("hotelId") not in (None, -1)]
+    peers = [item for item in current if item.get("hotelId") == -1]
+    if len(hotel) != 1 or len(peers) != 1:
+        raise CtripApiError("昨日流量漏斗缺少唯一的本店/竞争圈数据")
+    previous_date = (business_date - timedelta(days=7)).isoformat()
+    previous = [item for item in funnel if item.get("date") == previous_date and item.get("hotelId") == hotel[0]["hotelId"]]
+    if len(previous) > 1:
+        raise CtripApiError("流量漏斗上周同期数据重复")
+    values, averages = funnel_values(hotel[0]), funnel_values(peers[0])
+    comparisons = funnel_values(previous[0]) if previous else {}
+    return [row(captured_at, business_date, hotel_name, code, value,
+                "%" if code.endswith("_rate") else "count" if code == "list_page_exposure_count" else "person",
+                "较上周同期" if previous else "", comparisons.get(code), ranks.get(code), averages[code])
+            for code, value in values.items()]
 
 
 def normalize_rows(payload: dict[str, Any], captured_at: datetime, hotel_name: str | None = None) -> list[list[Any]]:

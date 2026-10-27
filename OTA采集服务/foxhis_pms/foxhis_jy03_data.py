@@ -8,12 +8,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from foxhis_common import Config, FoxhisError, SOURCE_PLATFORM, mysql_connection, query, require_columns, report_main, save_output
-from foxhis_jy01_data import CONTROL_FIELDS, number, rounded, whole, report_date
+from foxhis_jy01_data import number, rounded, whole, report_date
 from foxhis_sql import JY03_TABLE, JY03_DAILY_QUERY
 
 SUMMARY_FILE = "foxhis_jy03_summary.json"
 TOTAL = "总营业指标"
 DIMENSIONS = (TOTAL,)
+# 月报保留既有指标口径，不随 JY01 新增客房其他收入而变化。
+CONTROL_FIELDS = ("010100", "010110", "010120", "010130", "010190",
+                  "011000", "012000", "013000", "014000", "018530", "018560")
 COLUMNS = ["hotel_name", "hotel_id", "source_platform", "period_month", "dimension_type", "dimension_name",
            "room_type_id", "room_count", "room_nights", "room_revenue", "maintain_rooms", "occupancy_rate", "adr", "revpar", "snapshot_time"]
 

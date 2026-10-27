@@ -26,7 +26,6 @@ from meituan_page_capture import browser_profile_lock, save_login_session
 
 
 PLATFORMS = {
-    "pms": {"label": "别样红 PMS"},
     "meituan": {
         "label": "美团",
         "url": "https://me.meituan.com/ebooking/merchant/comment-manage-react",
@@ -252,7 +251,7 @@ def start(platform: str, settings: dict[str, Any], switch_account: bool = False)
         process = subprocess.Popen(
             command,
             cwd=str(runner.ROOT),
-            env=runner.build_env(settings, "pms") if platform == "pms" else runner.build_env(settings),
+            env=runner.build_env(settings),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -435,9 +434,6 @@ def run(platform: str, switch_account: bool = False) -> int:
     refresh_identity = False
     diagnostic = LoginDiagnostics(runner.LOG_DIR, enabled=platform == "meituan", switch_account=switch_account)
     try:
-        if platform == "pms":
-            from pms_manual_login import run as manual_login
-            return manual_login()
         profile_guard = browser_profile_lock(timeout_seconds=600) if platform == "meituan" else nullcontext()
         with profile_guard, sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(

@@ -102,9 +102,6 @@ browser_cookie_routes.register(app)
 
 
 def config_control(settings: dict[str, Any], key: str, label: str, secret: bool) -> str:
-    if key == "pms.login_base_url":
-        from pms_manual_login import login_control
-        return login_control(settings)
     current = get_path(settings, key)
     pair_class = " mysql-pair-field" if key in {"mysql.password", "mysql.database"} else ""
     if secret:
@@ -334,12 +331,6 @@ async function refreshLoginStates() {{
         success: 'good', failed: 'danger', waiting: 'warn',
         syncing: 'warn', starting: 'warn'
       }}[data.status] || 'idle');
-      const completed = data.completed_at || data.updated_at;
-      if (platform === 'pms' && data.status === 'success' && data.hotel_name && completed && box.dataset.completedAt !== completed) {{
-        const input = document.querySelector('[name="pms.hotel_name"]');
-        if (input) input.value = input.defaultValue = data.hotel_name;
-        box.dataset.completedAt = completed;
-      }}
     }} catch (_) {{}}
   }}
 }}
@@ -392,19 +383,7 @@ def start_platform_login(platform: str):
         return redirect(url_for("config_page", error="不支持的平台"))
     try:
         settings = apply_form_to_settings(runner.load_settings())
-        if platform == "pms":
-            from pms_manual_login import ensure_idle
-            ensure_idle()
-            if runner.active_pms_provider(settings) != "byh":
-                raise ValueError("请先选择别样红 PMS 平台")
-            password_mode = request.form.get("login_mode") == "password"
-            if password_mode:
-                if not platform_login.cancel("pms"):
-                    raise RuntimeError("请先关闭别样红登录助手")
-            settings.setdefault("pms", {})["login_mode"] = "password" if password_mode else "manual"
         runner.save_json(runner.CONFIG_PATH, settings)
-        if platform == "pms" and password_mode:
-            return redirect(url_for("config_page", notice="已切回别样红账号密码自动登录；下一次采集按原有方式执行"))
         if platform == "meituan" and request.form.get("login_mode") == "manual":
             platform_login.open_local_edge()
             return redirect(url_for("config_page", notice="已请求打开本机 Edge；请手动完成美团登录，再在高级参数填写 ME/EB Cookie 并保存配置。"))
@@ -437,8 +416,6 @@ def platform_login_status(platform: str):
             "updated_at": data.get("updated_at", ""),
             "completed_at": data.get("completed_at", ""),
             "cookie_count": data.get("cookie_count", 0),
-            "hotel_name": (get_path(runner.load_settings(), "pms.hotel_name") or "")
-            if platform == "pms" and data.get("status") == "success" else "",
         }
     )
 

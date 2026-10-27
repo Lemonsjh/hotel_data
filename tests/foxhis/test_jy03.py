@@ -71,6 +71,13 @@ class JY03Tests(unittest.TestCase):
         self.assertLess(jy.month_end(self.month, self.month), self.month)
         self.assertLess(jy.month_end(date(2025, 10, 1), self.month), date(2025, 10, 1))
 
+    def test_monthly_control_fields_keep_existing_revenue_basis(self):
+        self.assertEqual(len(jy.CONTROL_FIELDS), 11)
+        self.assertIn('013000', jy.CONTROL_FIELDS)
+        for code in ('017000', '018000'):
+            self.assertNotIn(code, jy.CONTROL_FIELDS)
+            self.assertNotIn("'" + code + "'", jy.JY03_DAILY_QUERY)
+
     def test_net_rebate_weighted_rates_and_only_total(self):
         rows, audit = self.build(); total = rows[0]
         self.assertEqual((total["room_count"], total["maintain_rooms"], total["room_nights"], total["room_revenue"]), (30, 3, D(14), D(390)))
