@@ -227,6 +227,8 @@ def main() -> int:
     if args.reports:
         selected = set(args.reports)
         fetch_jobs = [job for job in fetch_jobs if job[0] in selected]
+    else:
+        fetch_jobs = [job for job in fetch_jobs if job[0] not in {"KF11", "JD04"}]
     fetch_results = run_fetch_jobs(
         fetch_jobs,
         enable_circuit_breaker=not bool(args.reports),

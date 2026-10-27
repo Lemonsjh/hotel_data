@@ -122,6 +122,15 @@ PMS_PROVIDERS: dict[str, dict[str, Any]] = {
         "probe_action": "/detect-foxhis",
         "channel": "tds",
     },
+    "meituan_pms": {
+        "label": "美团 PMS", "short_label": "美团 PMS",
+        "platform": "meituan_pms", "config_key": "meituan_pms",
+        "card_key": "meituan_pms", "badge": "MEITUAN PMS",
+        "default_code_dir": ".", "cwd_from_script": False,
+        "entry_script": "", "entry_args": [], "timeout_seconds": 120,
+        "scripts": None, "probe_action": "", "channel": "",
+        "available": False,
+    },
 }
 
 
@@ -178,6 +187,8 @@ def task_is_available(name: str, platform: str, settings: dict[str, Any]) -> boo
         return (settings.get(platform) or {}).get("enabled", True)
     provider = active_pms_provider(settings)
     spec = PMS_PROVIDERS[provider]
+    if not spec.get("available", True):
+        return False
     # 与改造前一致：未显式配置 enabled 时，只有默认平台视为启用
     return (settings.get(spec["config_key"]) or {}).get("enabled", provider == DEFAULT_PROVIDER)
 
@@ -186,7 +197,10 @@ def task_unavailable_reason(name: str, platform: str, settings: dict[str, Any]) 
     if task_is_available(name, platform, settings):
         return ""
     if name == "pms_fetch":
-        label = PMS_PROVIDERS[active_pms_provider(settings)]["label"]
+        spec = PMS_PROVIDERS[active_pms_provider(settings)]
+        label = spec["label"]
+        if not spec.get("available", True):
+            return f"{label}采集尚未接入"
     else:
         label = {"meituan": "美团", "ctrip": "携程"}.get(platform, platform)
     return f"{label}采集已禁用，请先在配置页启用"
@@ -197,6 +211,8 @@ def task_specs(name: str, settings: dict[str, Any]) -> list[tuple[str, str, list
     if name != "pms_fetch":
         return None
     spec = PMS_PROVIDERS[active_pms_provider(settings)]
+    if not spec.get("available", True):
+        raise ValueError(f"{spec['label']}采集尚未接入")
     if spec["scripts"]:
         scripts = spec["scripts"]
         if active_pms_provider(settings) == "foxhis":

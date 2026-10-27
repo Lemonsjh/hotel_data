@@ -103,6 +103,22 @@ class PmsPasswordLoginTests(unittest.TestCase):
         login.assert_not_called()
         reports.assert_not_called()
 
+    def test_paused_reports_are_excluded_by_default_but_can_be_selected_manually(self):
+        for args, expected in (([], set()), (['--reports', 'KF11'], {'KF11'}),
+                               (['--reports', 'JD04'], {'JD04'})):
+            with self.subTest(args=args), \
+                    patch.object(sys, 'argv', ['fetch_main.py', *args]), \
+                    patch.object(self.fetch, 'need_login', return_value=False), \
+                    patch.object(pms_utils, 'ensure_hotel_name', return_value=''), \
+                    patch.object(self.fetch, 'run_fetch_jobs', side_effect=RuntimeError('stop before ETL')) as jobs:
+                with self.assertRaisesRegex(RuntimeError, 'stop before ETL'):
+                    self.fetch.main()
+                codes = [job[0] for job in jobs.call_args.args[0]]
+                self.assertEqual(set(codes) & {'KF11', 'JD04'}, expected)
+                self.assertEqual(jobs.call_args.kwargs['enable_circuit_breaker'], not bool(args))
+                if not args:
+                    self.assertEqual(len(codes), 9)
+
 
 if __name__ == '__main__':
     unittest.main()

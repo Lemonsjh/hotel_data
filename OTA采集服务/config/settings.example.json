@@ -86,6 +86,9 @@
     "reports": "room_status,room_revenue,jl01,jy01,jy03,jl11,jd01",
     "timeout_seconds": 600
   },
+  "meituan_pms": {
+    "enabled": false
+  },
   "mysql": {
     "host": "127.0.0.1",
     "port": 3306,

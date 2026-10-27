@@ -11,12 +11,13 @@ import price_tasks
 PMS_BYH_PLATFORM = "pms_byh"
 PMS_BYPMS_PLATFORM = "pms_bypms"
 PMS_FOXHIS_PLATFORM = "pms_foxhis"
+PMS_MEITUAN_PLATFORM = "pms_meituan"
 PMS_PLATFORM = PMS_BYH_PLATFORM
 BYPMS_SOURCE_LABEL = "PMS（宝寓）"
 FOXHIS_SOURCE_LABEL = "PMS（Foxhis）"
 MEITUAN_PLATFORM = "meituan"
 CTRIP_PLATFORM = "ctrip"
-PMS_PLATFORMS = (PMS_BYH_PLATFORM, PMS_BYPMS_PLATFORM, PMS_FOXHIS_PLATFORM)
+PMS_PLATFORMS = (PMS_BYH_PLATFORM, PMS_BYPMS_PLATFORM, PMS_FOXHIS_PLATFORM, PMS_MEITUAN_PLATFORM)
 BASE_PLATFORMS = (*PMS_PLATFORMS, MEITUAN_PLATFORM, CTRIP_PLATFORM)
 PRODUCT_PLATFORMS = {
     MEITUAN_PLATFORM: ("美团", "meituan"),
@@ -51,11 +52,13 @@ LABELS = {
 
 def active_pms_platform(settings: dict[str, Any]) -> str:
     provider = str((settings.get("pms") or {}).get("provider") or "byh").strip().lower()
-    return {"bypms": PMS_BYPMS_PLATFORM, "foxhis": PMS_FOXHIS_PLATFORM}.get(provider, PMS_BYH_PLATFORM)
+    return {"bypms": PMS_BYPMS_PLATFORM, "foxhis": PMS_FOXHIS_PLATFORM,
+            "meituan_pms": PMS_MEITUAN_PLATFORM}.get(provider, PMS_BYH_PLATFORM)
 
 
 def defaults(settings: dict[str, Any]) -> dict[str, Any]:
-    pms_key = {PMS_BYPMS_PLATFORM: "bypms", PMS_FOXHIS_PLATFORM: "foxhis"}.get(active_pms_platform(settings), "pms")
+    pms_key = {PMS_BYPMS_PLATFORM: "bypms", PMS_FOXHIS_PLATFORM: "foxhis",
+               PMS_MEITUAN_PLATFORM: "meituan_pms"}.get(active_pms_platform(settings), "pms")
     return {
         "hotel_id": str(settings.get("hotel", {}).get("hotel_id", "")).strip(),
         "pms_hotel_name": str(settings.get(pms_key, {}).get("hotel_name", "")).strip(),
@@ -130,7 +133,8 @@ def room_options(
     settings: dict[str, Any],
 ) -> tuple[list[str], list[str], list[str], list[str]]:
     hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
-    source_label = {PMS_BYPMS_PLATFORM: BYPMS_SOURCE_LABEL, PMS_FOXHIS_PLATFORM: FOXHIS_SOURCE_LABEL}.get(active_pms_platform(settings))
+    source_label = {PMS_BYPMS_PLATFORM: BYPMS_SOURCE_LABEL, PMS_FOXHIS_PLATFORM: FOXHIS_SOURCE_LABEL,
+                    PMS_MEITUAN_PLATFORM: "PMS（美团）"}.get(active_pms_platform(settings))
     hotel_filter = " WHERE hotel_id=%s" if hotel_id else ""
     pms_params = (hotel_id, hotel_id) if hotel_id else ()
     forecast_filter = "WHERE hotel_id=%s AND" if hotel_id else "WHERE"

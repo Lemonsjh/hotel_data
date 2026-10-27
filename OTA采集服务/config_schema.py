@@ -259,6 +259,12 @@ CONFIG_SECTIONS = [
         ],
     },
     {
+        "key": "meituan_pms",
+        "title": "PMS（美团）",
+        "hint": "美团 PMS 采集尚未接入，当前仅支持选择该平台。",
+        "fields": [],
+    },
+    {
         "key": "foxhis",
         "title": "PMS（西软 Foxhis）",
         "hint": "数据库只读直连（Sybase）。房态随每轮刷新，日结经营报表夜审后每天成功采集一次，失败会重试；与别样红 / 宝寓互斥启用。",
