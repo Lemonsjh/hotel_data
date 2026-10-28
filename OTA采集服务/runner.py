@@ -12,6 +12,7 @@ from typing import Any
 from process_runner import ProcessCancelledError, ProcessTimeoutError, run_streamed
 from settings_validation import require_valid_settings
 from data_retention import DEFAULT_RETENTION
+from collection_schema import ensure_task_tables
 import pms_providers
 import config_transaction
 
@@ -409,6 +410,13 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     put_if(env, "BYPMS_PAYMENT_URL", bypms.get("payment_url"))
     put_if(env, "BYPMS_TIMEOUT_SECONDS", bypms.get("timeout_seconds"))
 
+    if platform == "meituan_pms":
+        config = settings.get("meituan_pms") or {}
+        env["HOTEL_ID"] = internal_hotel_id(settings)
+        env["MEITUAN_PMS_HOTEL_NAME"] = str(config.get("hotel_name") or "").strip()
+        env["MEITUAN_PMS_ORG_ID"] = str(config.get("org_id") or "").strip()
+        env["MEITUAN_PMS_COOKIE"] = str(config.get("cookie") or "").strip()
+
     # Foxhis X5：Sybase 直连（子进程调 isql），口令与 MySQL 一样纳入日志脱敏
     env["FOXHIS_HOTEL_NAME"] = str(foxhis.get("hotel_name") or "").strip()
     put_if(env, "FOXHIS_ISQL_PATH", foxhis.get("isql_path"))
@@ -545,6 +553,7 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
 
     begin = datetime.now()
     try:
+        ensure_task_tables(name, settings, resolved_specs)
         if name == "pms_fetch":
             if active_pms_provider(settings) == "foxhis":
                 ensure_foxhis_hotel_name(settings)
@@ -610,6 +619,8 @@ def first_error_line(output: str) -> str:
 
 
 def enrich_room_type_ids(name: str, settings: dict[str, Any], log_path: Path) -> None:
+    if name == "pms_fetch" and active_pms_provider(settings) == "meituan_pms":
+        return  # 独立采集器已按 pms_meituan 精确补全本批数据，不触碰其他报表。
     try:
         product_message = ""
         if name == "ctrip_goods_price":
@@ -735,6 +746,10 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
         for key in ("isql_path", "interfaces_file", "server", "database", "username"):
             if not foxhis.get(key):
                 warnings.append(f"Foxhis {key} is empty; please complete its read-only connection settings.")
+    if (settings.get("meituan_pms") or {}).get("enabled", False):
+        for key in ("cookie", "hotel_name", "org_id"):
+            if not (settings.get("meituan_pms") or {}).get(key):
+                warnings.append(f"Meituan PMS {key} is empty; collection cannot run.")
     if (settings.get("meituan") or {}).get("enabled", True) and not (settings.get("meituan") or {}).get("me_cookie"):
         warnings.append("MEITUAN_ME_COOKIE is empty; Meituan collection cannot run.")
     if (settings.get("ctrip") or {}).get("enabled", True) and not (settings.get("ctrip") or {}).get("cookie"):

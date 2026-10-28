@@ -87,7 +87,10 @@
     "timeout_seconds": 600
   },
   "meituan_pms": {
-    "enabled": false
+    "enabled": false,
+    "hotel_name": "",
+    "org_id": "",
+    "cookie": ""
   },
   "mysql": {
     "host": "127.0.0.1",

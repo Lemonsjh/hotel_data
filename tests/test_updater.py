@@ -308,7 +308,8 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(manifest["removed"], [])
 
     def test_publisher_includes_only_tracked_program_files(self):
-        required = ["mysql_connection.py", "ota_mysql_writer.py", "OTA采集服务/runner.py", "OTA采集服务/panel.py"]
+        required = ["mysql_connection.py", "ota_mysql_writer.py", "OTA采集服务/runner.py", "OTA采集服务/panel.py",
+                    "meituan_pms/collector.py"]
         for name in required:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)

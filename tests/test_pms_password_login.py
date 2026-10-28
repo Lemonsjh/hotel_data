@@ -48,7 +48,7 @@ class PmsPasswordLoginTests(unittest.TestCase):
         save.assert_not_called()
 
     def test_other_platform_login_helpers_are_unchanged(self):
-        self.assertEqual(set(platform_login.PLATFORMS), {'meituan', 'ctrip', 'bypms'})
+        self.assertEqual(set(platform_login.PLATFORMS), {'meituan', 'ctrip', 'bypms', 'meituan_pms'})
         self.assertFalse((SERVICE / 'pms_manual_login.py').exists())
 
     def test_defaults_have_no_login_mode_and_old_flag_does_not_skip_credentials(self):

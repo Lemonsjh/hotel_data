@@ -176,12 +176,12 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<button type='submit' class='secondary compact' formaction='/detect-hotel/ctrip'>识别酒店</button>"
             "</div>"
         )
-    elif section_key == "bypms":
+    elif section_key in {"bypms", "meituan_pms"}:
         actions = (
             "<div class='config-actions'>"
-            "<button type='submit' class='compact' formaction='/platform-login/bypms'>打开Edge登录</button>"
-            "<button type='submit' class='secondary compact' name='login_mode' value='switch' formaction='/platform-login/bypms'>切换账号</button>"
-            "<button type='submit' class='secondary compact' formaction='/platform-login/bypms/cancel'>关闭登录助手</button>"
+            f"<button type='submit' class='compact' formaction='/platform-login/{section_key}'>打开Edge登录</button>"
+            f"<button type='submit' class='secondary compact' name='login_mode' value='switch' formaction='/platform-login/{section_key}'>切换账号</button>"
+            f"<button type='submit' class='secondary compact' formaction='/platform-login/{section_key}/cancel'>关闭登录助手</button>"
             "</div>"
         )
     elif section_key == "foxhis":
@@ -192,14 +192,15 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<button type='submit' class='secondary compact' name='deep' value='1' formaction='/detect-foxhis'>校验数据库连通性</button>"
             "</div>"
         )
-    if section_key in {"meituan", "ctrip", "bypms"}:
+    if section_key in {"meituan", "ctrip", "bypms", "meituan_pms"}:
         login = platform_login.read_status(section_key)
         state = str(login.get("status") or "never")
         state_class = {"success": "good", "failed": "danger", "waiting": "warn", "syncing": "warn", "starting": "warn"}.get(state, "idle")
         login_hint = ("使用专用 Edge 会话手动登录，Cookie 自动保存；遇到登录验证问题，可在高级参数中使用日常 Edge 手动填写 Cookie。"
                       if section_key == "meituan" else "使用可见Edge手动登录，Cookie自动保存；高级参数中仍可手动填写。")
         login_html = (
-            f"<div class='login-assistant' data-login-platform='{section_key}'>"
+            f"<div class='login-assistant' data-login-platform='{section_key}' "
+            f"data-login-completed-at='{esc(login.get('completed_at') or '')}'>"
             "<div><strong>浏览器登录助手</strong>"
             f"<small>{login_hint}</small></div>"
             f"<span class='pill {state_class} login-state' data-login-state>{esc(login.get('message') or '尚未使用')}</span>"
@@ -331,6 +332,15 @@ async function refreshLoginStates() {{
         success: 'good', failed: 'danger', waiting: 'warn',
         syncing: 'warn', starting: 'warn'
       }}[data.status] || 'idle');
+      if (platform === 'meituan_pms' && data.status === 'success' && data.completed_at &&
+          box.dataset.loginCompletedAt !== data.completed_at) {{
+        for (const [key, value] of Object.entries(data.hotel_identity || {{}})) {{
+          if (!['hotel_name', 'org_id'].includes(key)) continue;
+          const input = document.querySelector('[name="meituan_pms.' + key + '"]');
+          if (input && value) input.value = value;
+        }}
+        box.dataset.loginCompletedAt = data.completed_at;
+      }}
     }} catch (_) {{}}
   }}
 }}
@@ -409,6 +419,13 @@ def platform_login_status(platform: str):
     if platform not in platform_login.PLATFORMS:
         return jsonify({"status": "failed", "message": "不支持的平台"}), 404
     data = platform_login.read_status(platform)
+    identity = {}
+    if platform == "meituan_pms" and data.get("status") == "success" and data.get("identity_updated"):
+        settings = runner.load_settings()
+        if (runner.active_pms_provider(settings) == platform
+                and runner.internal_hotel_id(settings) == data.get("hotel_id")):
+            section = settings.get(platform) or {}
+            identity = {key: str(section.get(key) or "") for key in ("hotel_name", "org_id")}
     return jsonify(
         {
             "status": data.get("status", "never"),
@@ -416,6 +433,7 @@ def platform_login_status(platform: str):
             "updated_at": data.get("updated_at", ""),
             "completed_at": data.get("completed_at", ""),
             "cookie_count": data.get("cookie_count", 0),
+            "hotel_identity": identity,
         }
     )
 

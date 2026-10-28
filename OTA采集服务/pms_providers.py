@@ -126,10 +126,13 @@ PMS_PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "美团 PMS", "short_label": "美团 PMS",
         "platform": "meituan_pms", "config_key": "meituan_pms",
         "card_key": "meituan_pms", "badge": "MEITUAN PMS",
-        "default_code_dir": ".", "cwd_from_script": False,
+        "default_code_dir": "meituan_pms", "cwd_from_script": False,
         "entry_script": "", "entry_args": [], "timeout_seconds": 120,
-        "scripts": None, "probe_action": "", "channel": "",
-        "available": False,
+        "scripts": [("meituan_pms", "collector.py", []), ("meituan_pms", "daily_report.py", []),
+                    ("meituan_pms", "monthly_report.py", []), ("meituan_pms", "performance_report.py", []),
+                    ("meituan_pms", "booking_report.py", []), ("meituan_pms", "classification_report.py", []),
+                    ("meituan_pms", "room_performance_report.py", []), ("meituan_pms", "revenue_report.py", [])],
+        "probe_action": "", "channel": "http",
     },
 }
 

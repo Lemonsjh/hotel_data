@@ -43,6 +43,10 @@ PLATFORMS = {
         "url": "https://www.bypms.cn/console/state/",
         "protected_url_prefix": "https://www.bypms.cn/console/state/",
     },
+    "meituan_pms": {
+        "label": "美团 PMS",
+        "url": "https://pms.meituan.com/#qk-reception-prediction",
+    },
 }
 STATE_DIR = runner.ROOT / "state"
 KERNEL32 = None
@@ -429,6 +433,11 @@ def keep_open(context: Any, platform: str) -> None:
 
 
 def run(platform: str, switch_account: bool = False) -> int:
+    if platform == "meituan_pms":
+        if str(runner.PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(runner.PROJECT_ROOT))
+        from meituan_pms.manual_login import run as run_manual_login
+        return run_manual_login(switch_account, api=sys.modules[__name__])
     info = require_platform(platform)
     stop_path(platform).unlink(missing_ok=True)
     refresh_identity = False

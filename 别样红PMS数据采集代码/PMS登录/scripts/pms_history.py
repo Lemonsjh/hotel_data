@@ -32,7 +32,7 @@ def previous_months(months: int = 6, today: date | None = None) -> list[tuple[st
 def incremental_window(report: str, today: date | None = None) -> tuple[str, str, str]:
     latest = (today or date.today()) - timedelta(days=1)
     if report == "JY01":
-        return ("最近7天", (latest - timedelta(days=6)).isoformat(), latest.isoformat())
+        return ("最近30天", (latest - timedelta(days=29)).isoformat(), latest.isoformat())
     start = latest.replace(day=1).isoformat()
     return ("本月至昨日", start, latest.isoformat())
 
@@ -61,6 +61,8 @@ def mysql_config(settings: dict[str, Any]) -> dict[str, Any]:
 def query_plan(table: str, report: str, months: int = 6) -> tuple[bool, list[tuple[str, str, str]]]:
     if table not in TABLES:
         raise ValueError(f"不支持的历史表: {table}")
+    if report == "JY01":
+        return False, [incremental_window(report)]
     settings = load_settings()
     hotel_id = os.environ.get("HOTEL_ID") or str((settings.get("hotel") or {}).get("hotel_id") or "")
     if not hotel_id:
@@ -70,14 +72,11 @@ def query_plan(table: str, report: str, months: int = 6) -> tuple[bool, list[tup
     for attempt in range(2):
         try:
             with pymysql.connect(**mysql_config(settings)) as conn, conn.cursor() as cursor:
-                room_filter = " AND dimension_type=%s" if report == "JY01" else ""
                 params: tuple[Any, ...] = (hotel_id, windows[0][1], windows[-1][2])
-                if room_filter:
-                    params += ("房型",)
                 cursor.execute(
                     f"""SELECT COUNT(DISTINCT DATE_FORMAT(business_date, '%%Y-%%m')) AS month_count
                         FROM {table}
-                        WHERE hotel_id=%s AND business_date BETWEEN %s AND %s{room_filter}""",
+                        WHERE hotel_id=%s AND business_date BETWEEN %s AND %s""",
                     params,
                 )
                 covered = int(cursor.fetchone()["month_count"] or 0)
@@ -92,11 +91,6 @@ def query_plan(table: str, report: str, months: int = 6) -> tuple[bool, list[tup
         return False, [incremental_window(report)]
     if covered < months:
         print(f"{report} 历史覆盖 {covered}/{months} 个月，本轮补采前{months}个完整月")
-        if report == "JY01":
-            latest = date.today() - timedelta(days=1)
-            month_start = latest.replace(day=1)
-            if month_start <= latest:
-                windows.append(("本月至昨日", month_start.isoformat(), latest.isoformat()))
         return True, windows
     window = incremental_window(report)
     print(f"{report} 历史已完整，本轮增量采集: {window[1]} ~ {window[2]}")
