@@ -76,6 +76,36 @@ class PromotionStatusAPITests(unittest.TestCase):
         eb.evaluate.assert_called_once()
         self.page.goto.assert_not_called()
 
+    def test_invoice_explicit_closed_page_needs_neither_legacy_title_nor_request(self):
+        eb = frame("eb.meituan.com", body="当前门店暂未开通，\n快去开通预约发票吧！")
+        self.page.frames = [eb]
+        with patch.object(checks, "find_visible_text", return_value=None):
+            self.assertEqual(checks.fetch_scheduled_invoice_status(), "CLOSED")
+        eb.evaluate.assert_not_called()
+
+    def test_invoice_unknown_text_and_other_origins_are_not_closed(self):
+        for host, text in (("other.example", checks.INVOICE_CLOSED_TEXT),
+                           ("eb.meituan.com", "预约发票功能介绍，未开通的门店可申请"),
+                           ("eb.meituan.com", "正在加载")):
+            item = frame(host, body=text)
+            self.page.frames = [item]
+            with self.subTest(host=host, text=text), patch.object(checks, "find_visible_text", return_value=None):
+                with self.assertRaises(RuntimeError):
+                    checks.fetch_scheduled_invoice_status()
+            item.evaluate.assert_not_called()
+
+    def test_unrecognized_diagnostics_distinguish_access_issue_and_hide_url_parameters(self):
+        self.page.url = "https://me.meituan.com/ebooking/merchant/ebIframe?cookie=PRIVATE#token=PRIVATE"
+        self.page.frames = [frame("tdc.meituan.com", body="安全验证")]
+        with self.assertRaisesRegex(RuntimeError, "页面不可用：安全验证"):
+            checks.raise_unrecognized_status(self.page, checks.HIGHLIGHTS_NAME)
+        self.page.frames = [frame("tdc.meituan.com", body="正在加载")]
+        with self.assertRaises(RuntimeError) as error:
+            checks.raise_unrecognized_status(self.page, checks.HIGHLIGHTS_NAME)
+        self.assertIn("tdc.meituan.com", str(error.exception))
+        self.assertNotIn("PRIVATE", str(error.exception))
+        self.assertNotIn("cookie=", str(error.exception))
+
     def test_invoice_failures_never_fall_back_to_open_or_retry(self):
         eb = frame("eb.meituan.com", body="酒店发票信息维护")
         self.page.frames = [eb]
@@ -145,6 +175,29 @@ class PromotionStatusAPITests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
                 checks.highlight_query_status(invalid)
         self.assertIsNone(checks.highlight_query_status({"code": 0, "data": {"total": 1}}))
+
+    def test_highlights_uses_query_null_and_ignores_merchant_judgment(self):
+        self.page.frames = []
+        self.capture("https://tdc.meituan.com/gw/api/publish/eb/highlight/judge/merchant?poiId=123",
+                     {"code": 0, "data": False})
+        with self.assertRaises(RuntimeError):
+            checks.fetch_hotel_highlights_status()
+        self.capture("https://tdc.meituan.com/gw/api/publish/eb/highlight/query?poiId=123",
+                     {"code": 0, "message": "success", "data": None})
+        self.assertEqual(checks.fetch_hotel_highlights_status(), "CLOSED")
+        self.assertIsNone(checks.highlight_query_status({"code": 0, "data": False}))
+
+    def test_business_travel_joined_marker_supports_eb_and_me_without_dynamic_attributes(self):
+        for host in ("eb.meituan.com", "me.meituan.com"):
+            self.page.frames = [frame(host, body="商旅专享\n已加入商旅合作\n设置商旅专享价")]
+            with self.subTest(host=host):
+                self.assertEqual(checks.fetch_business_travel_status(), "OPEN")
+        for host, text in (("other.example", "已加入商旅合作"),
+                           ("eb.meituan.com", "商旅专享价参与福利"),
+                           ("me.meituan.com", "正在加载")):
+            self.page.frames = [frame(host, body=text)]
+            with self.subTest(host=host, text=text), self.assertRaises(RuntimeError):
+                checks.fetch_business_travel_status()
 
     def test_highlights_page_requires_real_cards_not_url_parameters(self):
         self.page.url += "?hasVpoiSelect=true"

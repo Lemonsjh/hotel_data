@@ -9,6 +9,7 @@ from meituan_config import (
     MEITUAN_HIGHLIGHTS_COOKIE, MEITUAN_PUBLIC_WELFARE_COOKIE, PARTNER_ID, POI_ID,
 )
 from meituan_status_session import require_backend_session, status_page
+from meituan_page_capture import page_access_issue
 
 BUSINESS_TRAVEL_NAME = "商旅专享价"
 HIGHLIGHTS_NAME = "酒店亮点"
@@ -26,6 +27,7 @@ AUTO_ORDER_URL = (
 )
 SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
 HIGHLIGHTS_EMPTY_TEXT = "当前酒店暂无特色亮点数据"
+INVOICE_CLOSED_TEXT = "当前门店暂未开通，快去开通预约发票吧"
 PAGE_CHECK_SECONDS = 10
 PAGE_ACTION_TIMEOUT_MS = 5_000
 WORKBENCH_MENU_TIMEOUT_MS = 20_000
@@ -77,14 +79,19 @@ def raise_unrecognized_status(page: Any, name: str) -> None:
            or (urlparse(url).hostname == "me.meituan.com" and urlparse(url).path.startswith("/login/"))
            for url in urls):
         raise RuntimeError(f"{name}内页未登录，请在普通浏览器登录对应后台后重新导入 Cookie。")
-    raise RuntimeError(f"{name}未返回明确的开通状态，保留原值")
+    if issue := page_access_issue(page):
+        raise RuntimeError(f"{name}页面不可用：{issue}，保留原值")
+    # 只记录域名及内页数，不记录可能携带酒店参数、签名或凭证的 URL。
+    hosts = sorted({urlparse(url).hostname for url in urls if urlparse(url).hostname})
+    raise RuntimeError(f"{name}未返回明确的开通状态，保留原值；"
+                       f"页面域名={','.join(hosts[:8]) or '无'}，内页数={len(page.frames)}")
 
 
 def fetch_business_travel_status() -> str:
     with status_page(BUSINESS_TRAVEL_URL) as page:
         for _ in range(PAGE_CHECK_SECONDS * 2):
             for frame in page.frames:
-                if urlparse(frame.url).hostname != "eb.meituan.com":
+                if urlparse(frame.url).hostname not in {"eb.meituan.com", "me.meituan.com"}:
                     continue
                 try:
                     if "已加入商旅合作" in frame.locator("body").inner_text(timeout=2_000):
@@ -102,6 +109,8 @@ def highlight_query_status(payload: Any) -> str | None:
 
 
 def fetch_hotel_highlights_status() -> str:
+    if not POI_ID:
+        raise RuntimeError("酒店亮点采集缺少酒店参数，请先识别酒店")
     require_backend_session(MEITUAN_HIGHLIGHTS_COOKIE, HIGHLIGHTS_NAME)
     with status_page(WORKBENCH_URL) as page:
         responses = []
@@ -112,9 +121,10 @@ def fetch_hotel_highlights_status() -> str:
                     and url.path == "/gw/api/publish/eb/highlight/query"
                     and parse_qs(url.query).get("poiId") == [POI_ID]):
                 try:
-                    responses.append(response.json() if response.status == 200 else {})
+                    payload = response.json() if response.status == 200 else {}
                 except ValueError:
-                    responses.append({})
+                    payload = {}
+                responses.append(payload)
 
         page.on("response", capture_highlights)
         wait_for_workbench_wrapper(page)
@@ -234,6 +244,12 @@ def fetch_scheduled_invoice_status() -> str:
             for frame in page.frames:
                 if urlparse(frame.url).hostname != "eb.meituan.com":
                     continue
+                try:
+                    body = frame.locator("body").inner_text(timeout=1_000)
+                except Exception:
+                    continue
+                if INVOICE_CLOSED_TEXT in "".join(body.split()):
+                    return "CLOSED"
                 if not find_visible_text(frame, "酒店发票信息维护"):
                     continue
                 response = frame.evaluate("""async ids => {
