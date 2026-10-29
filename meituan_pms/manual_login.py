@@ -11,17 +11,21 @@ ROOM_TYPES_PATH = "/hotelpms/api/v1/inventory/rooms/getRealTimeRoomCount"
 HOTEL_INFO_URL = "https://pms.meituan.com/hotelpms/api/v1/queryUserCurrentLoginInfo"
 
 
-def verified_cookie(response):
-    """只接受已成功读取有效房型的目标站点 GET，不接受静态页或登录跳转。"""
+def verified_login(response):
+    """以当前酒店信息或有效房型响应验证登录，不接受静态页或登录跳转。"""
     url = urlsplit(response.url)
-    if (url.scheme != "https" or url.netloc != "pms.meituan.com" or url.path != ROOM_TYPES_PATH
+    if (url.scheme != "https" or url.netloc != "pms.meituan.com"
+            or url.path not in {urlsplit(HOTEL_INFO_URL).path, ROOM_TYPES_PATH}
             or response.status != 200 or response.request.method != "GET"):
-        return ""
-    parse_room_types(response.json())
+        return "", None
     cookie = str(response.request.all_headers().get("cookie") or "").strip()
     if not cookie or "\r" in cookie or "\n" in cookie:
-        return ""
-    return cookie
+        return "", None
+    payload = response.json()
+    if url.path == ROOM_TYPES_PATH:
+        parse_room_types(payload)
+        return cookie, None
+    return cookie, parse_hotel_identity(payload)
 
 
 def fetch_hotel_identity(context, cookie):
@@ -29,7 +33,10 @@ def fetch_hotel_identity(context, cookie):
     response = context.request.get(HOTEL_INFO_URL, headers={"Cookie": cookie}, timeout=15000, max_redirects=0)
     if response.status != 200 or response.url != HOTEL_INFO_URL:
         raise ValueError("当前酒店信息接口未返回成功响应")
-    payload = response.json()
+    return parse_hotel_identity(response.json())
+
+
+def parse_hotel_identity(payload):
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict) or payload.get("code") != 10000 or str(data.get("orgType")) != "4":
         raise ValueError("当前登录机构不是有效酒店")
@@ -73,19 +80,19 @@ def run(switch_account, *, api):
             context.add_init_script("Object.defineProperty(Navigator.prototype, 'webdriver', {get: () => false});")
             if switch_account:
                 context.clear_cookies()
-            observed = {"cookie": ""}
+            observed = {"cookie": "", "identity": None}
 
             def observe(response):
                 try:
-                    cookie = verified_cookie(response)
-                    if cookie:
-                        observed["cookie"] = cookie
+                    cookie, identity = verified_login(response)
+                    if cookie and not observed["identity"]:
+                        observed.update(cookie=cookie, identity=identity)
                 except Exception:
                     pass  # 不把响应正文、请求头或原始错误写入日志。
 
             context.on("response", observe)
             page = api.initial_login_page(context, PLATFORM)
-            api.write_status(PLATFORM, "waiting", "请在 Edge 手动登录美团 PMS，并进入房类预测页")
+            api.write_status(PLATFORM, "waiting", "请在 Edge 手动登录美团 PMS")
             api.navigate(page, api.PLATFORMS[PLATFORM]["url"])
             deadline = time.monotonic() + 600
             while not observed["cookie"]:
@@ -98,11 +105,12 @@ def run(switch_account, *, api):
             context.remove_listener("response", observe)
             if api.stop_path(PLATFORM).exists():
                 raise api.LoginCancelled("美团 PMS 登录已取消")
-            identity = None
-            try:
-                identity = fetch_hotel_identity(context, observed["cookie"])
-            except Exception:
-                pass  # 保留旧酒店参数并在成功提示中告警，不记录响应或认证信息。
+            identity = observed["identity"]
+            if identity is None:
+                try:
+                    identity = fetch_hotel_identity(context, observed["cookie"])
+                except Exception:
+                    pass  # 保留旧酒店参数并在成功提示中告警，不记录响应或认证信息。
             if api.stop_path(PLATFORM).exists():
                 raise api.LoginCancelled("美团 PMS 登录已取消")
             save_verified_cookie(api, observed["cookie"], hotel_id, identity)

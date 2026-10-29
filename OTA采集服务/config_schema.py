@@ -262,10 +262,10 @@ CONFIG_SECTIONS = [
     {
         "key": "meituan_pms",
         "title": "PMS（美团）",
-        "hint": "采集当日房态、最近 30 天预订中订单（含今天）、最近 30 个完整营业日日报及 JL11 房型汇总、月报、JL02 经营业绩日报、JL01 昨日及去年同日房型日报和 RS01 房费明细。经营报表仅采总营业指标（JL01/JL11 按房型统计），月报首次采本年和去年，后续刷新本月。RS01 首次回补前 3 个完整月及本月至昨日，后续刷新本月至昨日。支持 Edge 手动登录或手工填写 Cookie。",
+        "hint": "",
         "fields": [
-            ("meituan_pms.hotel_name", "酒店名称（登录成功后自动更新，可手工填写）", False, False),
-            ("meituan_pms.org_id", "美团 PMS 报表机构 ID（登录后自动更新，取平台 hotelId）", False, False),
+            ("meituan_pms.hotel_name", "酒店名称", False, False),
+            ("meituan_pms.org_id", "美团 PMS 报表机构 ID", False, False),
             ("meituan_pms.cookie", "美团 PMS 登录 Cookie（手动登录后自动保存，可选手工填写）", True, True),
         ],
     },

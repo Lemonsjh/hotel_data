@@ -22,29 +22,35 @@ def response():
 
 def identity_response():
     value = MagicMock(url=manual_login.HOTEL_INFO_URL, status=200)
+    value.request.method = "GET"
+    value.request.all_headers.return_value = {"cookie": "session=identity"}
     value.json.return_value = {"code": 10000, "data": {"hotelId": 987654, "orgId": 123456,
                                "orgType": 4, "orgName": " 新登录酒店 "}}
     return value
 
 
 class MeituanPmsManualLoginTests(unittest.TestCase):
-    def test_only_verified_room_api_can_supply_cookie(self):
-        self.assertEqual(manual_login.verified_cookie(response()), "session=private")
+    def test_only_verified_login_apis_can_supply_cookie(self):
+        self.assertEqual(manual_login.verified_login(response()), ("session=private", None))
+        self.assertEqual(manual_login.verified_login(identity_response()),
+                         ("session=identity", {"hotel_name": "新登录酒店", "org_id": "987654"}))
         for field, value in (("url", "https://pms.meituan.com/login"), ("status", 302),
                              ("url", "https://other.example" + manual_login.ROOM_TYPES_PATH)):
             reply = response()
             setattr(reply, field, value)
-            self.assertEqual(manual_login.verified_cookie(reply), "")
+            self.assertEqual(manual_login.verified_login(reply), ("", None))
         reply = response()
         reply.json.return_value["code"] = 401
         with self.assertRaises(ValueError):
-            manual_login.verified_cookie(reply)
-        reply = response()
-        reply.request.all_headers.return_value = {}
-        self.assertEqual(manual_login.verified_cookie(reply), "")
-        reply = response()
-        reply.request.method = "POST"
-        self.assertEqual(manual_login.verified_cookie(reply), "")
+            manual_login.verified_login(reply)
+        for factory in (response, identity_response):
+            for cookie in ("", "session=bad\r\nheader=value"):
+                reply = factory()
+                reply.request.all_headers.return_value = {"cookie": cookie}
+                self.assertEqual(manual_login.verified_login(reply), ("", None))
+            reply = factory()
+            reply.request.method = "POST"
+            self.assertEqual(manual_login.verified_login(reply), ("", None))
 
     def test_save_is_scoped_to_current_hotel_and_separate_cookie(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:
@@ -87,6 +93,11 @@ class MeituanPmsManualLoginTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 manual_login.fetch_hotel_identity(context, "verified-cookie")
             context.request.get.assert_called_once()
+            if reply.status == 200 and reply.url == manual_login.HOTEL_INFO_URL:
+                with self.assertRaises(ValueError):
+                    manual_login.verified_login(reply)
+            else:
+                self.assertEqual(manual_login.verified_login(reply), ("", None))
 
     def test_missing_identity_retains_existing_params_and_invalid_identity_does_not_save(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:
@@ -146,6 +157,26 @@ class MeituanPmsManualLoginTests(unittest.TestCase):
             message = api.write_status.call_args_list[-1].args[2]
             self.assertIn("当前酒店识别失败", message)
             self.assertNotIn("secret", message)
+
+            def login_home(*_):
+                observe = context.on.call_args.args[1]
+                invalid = identity_response()
+                invalid.json.return_value["code"] = 401
+                observe(invalid)
+                observe(identity_response())
+                if switch_account:
+                    observe(response())  # 后续房型响应不能拆散已验证的 Cookie 与酒店信息。
+
+            api.navigate = login_home
+            for switch_account in (False, True):
+                context.request.get.reset_mock()
+                with patch.object(manual_login, "save_verified_cookie") as save:
+                    self.assertEqual(manual_login.run(switch_account, api=api), 0)
+                save.assert_called_once_with(api, "session=identity", "hotel",
+                                             {"hotel_name": "新登录酒店", "org_id": "987654"})
+                context.request.get.assert_not_called()
+                waiting = [call.args[2] for call in api.write_status.call_args_list if call.args[1] == "waiting"]
+                self.assertTrue(all("预测页" not in message for message in waiting))
 
     def test_dispatch_and_profile_are_independent(self):
         with patch.object(manual_login, "run", return_value=0) as run:

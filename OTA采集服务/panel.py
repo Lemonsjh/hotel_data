@@ -226,7 +226,7 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         </div>
         {heading_actions}
       </div>
-      <p class="config-hint">{esc(section['hint'])}</p>
+      {f'<p class="config-hint">{esc(section["hint"])}</p>' if section.get('hint') else ''}
       {platform_actions}
       {login_html}
       <div class="config-grid">{''.join(regular)}</div>

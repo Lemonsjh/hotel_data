@@ -85,7 +85,7 @@ const fetch = async()=>({json:async()=>data});
                 client = panel.app.test_client()
                 page = client.get("/config").get_data(as_text=True)
                 self.assertIn("美团 PMS", page)
-                self.assertIn("经营报表仅采总营业指标", page)
+                self.assertNotIn("经营报表仅采总营业指标", page)
                 self.assertIn("formaction='/platform-login/meituan_pms'", page)
                 self.assertIn("data-login-platform='meituan_pms'", page)
                 client.post("/config", data={"pms_provider": "meituan_pms", "task.pms_fetch": "on"})
