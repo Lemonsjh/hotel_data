@@ -190,7 +190,7 @@ class RevenueTests(unittest.TestCase):
         db = self.database()
         rows = self.rows()
         db.seed(dict(rows[0], room_fee=Decimal("1")))
-        db.seed(dict(rows[0], business_date=date(2025, 1, 1)))
+        db.seed(dict(rows[0], business_date=date(2026, 1, 1)))
         db.seed(dict(rows[0], hotel_id="other"))
         db.db.executemany("INSERT INTO hotel_room_type_mapping VALUES ('hotel','pms_meituan',1,'',?,?)",
                           [("测试大床房", "ROOM-1"), ("另一个别名", "ROOM-1"), ("测试大床房 ", "WRONG")])

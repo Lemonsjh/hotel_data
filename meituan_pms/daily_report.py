@@ -16,6 +16,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from collector import BASE_URL, now_shanghai, request_json
 from room_status import metric, room_count
+from meituan_pms.retention import cleanup_history
 
 REPORT_URL = BASE_URL + "/hotelpms/api/v1/report/jy03"
 TABLE = "jy01_hotel_statistics_daily"
@@ -148,6 +149,7 @@ def sync_mysql(rows, connection=None):
             cur.executemany(f"INSERT INTO `{TABLE}` ({', '.join(columns)}) VALUES "
                         f"({', '.join('%(' + key + ')s' for key in columns)}) ON DUPLICATE KEY UPDATE "
                         + ', '.join(f"{key}=COALESCE(VALUES({key}), {key})" for key in updates), rows)
+            cleanup_history(cur, TABLE, first["hotel_id"], first["snapshot_time"])
         connection.commit()
     except Exception:
         connection.rollback()

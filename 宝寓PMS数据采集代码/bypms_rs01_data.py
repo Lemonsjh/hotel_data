@@ -15,6 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 from bypms_room_status_data import fetch_room_master
+from OTA采集服务.pms_history_retention import cleanup_rows
 
 
 PAYMENT_URL = os.environ.get("BYPMS_PAYMENT_URL", "https://www.bypms.cn/console/finance/payment/get")
@@ -195,6 +196,7 @@ def sync_mysql(rows: list[dict[str, Any]], connection=None) -> None:
     try:
         with connection.cursor() as cursor:
             cursor.executemany(sql, rows)
+            cleanup_rows(cursor, PAYMENT_TABLE_NAME, rows, HOTEL_ID, SOURCE_PLATFORM)
         connection.commit()
     except Exception:
         connection.rollback()

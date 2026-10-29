@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -11,6 +12,8 @@ from typing import Any
 import pymysql
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from OTA采集服务.pms_history_retention import cleanup_rows
 
 STATE_URL = os.environ.get("BYPMS_STATE_URL", "https://www.bypms.cn/console/state/get")
 ROOM_MASTER_URL = os.environ.get("BYPMS_ROOM_MASTER_URL", "").strip()
@@ -354,6 +357,8 @@ def sync_mysql(inventory_rows: list[dict[str, Any]], snapshot_hour: datetime, co
                     )""",
                     forecast_rows,
                 )
+                cleanup_rows(cursor, STANDARD_ROOM_TYPE_TABLE_NAME, standard_inventory_rows(inventory_rows),
+                             HOTEL_ID, SOURCE_PLATFORM)
         connection.commit()
     except Exception:
         connection.rollback()

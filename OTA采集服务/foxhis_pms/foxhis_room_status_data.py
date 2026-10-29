@@ -29,6 +29,7 @@ from foxhis_common import (  # noqa: E402
     save_output,
     table_columns,
 )
+from foxhis_common import cleanup_history
 from foxhis_sql import (  # noqa: E402
     ROOM_STATUS_NAME_QUERY,
     ROOM_STATUS_QUERY,
@@ -256,6 +257,7 @@ def sync_inventory(rows: list[dict], config: Config) -> int:
                 f"VALUES ({', '.join(['%s'] * len(HOURLY_COLUMNS))})",
                 [tuple(row[name] for name in HOURLY_COLUMNS) for row in hourly_rows],
             )
+            cleanup_history(cursor, ROOM_TYPE_HOURLY_STATUS_TABLE, hourly_rows, config)
         connection.commit()
     except Exception:
         connection.rollback()

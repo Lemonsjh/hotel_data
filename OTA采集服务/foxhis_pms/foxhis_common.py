@@ -24,6 +24,8 @@ from typing import Any, Callable, Iterable
 
 from foxhis_config import Config, DEFAULT_CHARSET, FoxhisError
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from OTA采集服务.pms_history_retention import cleanup_rows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -31,6 +33,11 @@ SOURCE_PLATFORM = "PMS（Foxhis）"
 DEFAULT_OUTPUT_DIR = "OTA数据"
 DAILY_REPORTS = {"jl01", "jy01", "jy03", "jl11"}
 DAILY_STATE_FILE = "foxhis_daily_runs.json"
+
+
+def cleanup_history(cursor, table, rows, config):
+    cleanup_rows(cursor, table, rows, config.hotel_id, SOURCE_PLATFORM)
+
 
 class ReadonlyViolation(FoxhisError):
     pass

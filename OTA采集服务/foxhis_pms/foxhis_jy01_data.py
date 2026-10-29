@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from foxhis_common import (Config, FoxhisError, SOURCE_PLATFORM, mysql_connection,
                            query, report_main, require_columns, save_output)
+from foxhis_common import cleanup_history
 from foxhis_sql import JY01_TABLE, JY01_DAILY_QUERY, JY01_ROOM_CONTROL_QUERY
 
 RECENT_DAYS = 30
@@ -195,6 +196,7 @@ def sync_rows(rows: list[dict], config: Config) -> int:
             cursor.execute(f"DELETE FROM `{JY01_TABLE}` WHERE {condition}", args)
             cursor.executemany(f"INSERT INTO `{JY01_TABLE}` ({', '.join('`'+c+'`' for c in COLUMNS)}) "
                                f"VALUES ({', '.join(['%s']*len(COLUMNS))})", [tuple(r[c] for c in COLUMNS) for r in rows])
+            cleanup_history(cursor, JY01_TABLE, rows, config)
         connection.commit()
     except Exception:
         connection.rollback()

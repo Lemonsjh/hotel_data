@@ -98,6 +98,9 @@ class BypmsDailyReportTests(unittest.TestCase):
             def executemany(self, sql, _rows):
                 self.sql = sql
 
+            def execute(self, sql, args):
+                self.cleanup = (sql, args)
+
         class Connection:
             def __init__(self):
                 self.cursor_instance = Cursor()
@@ -112,11 +115,13 @@ class BypmsDailyReportTests(unittest.TestCase):
                 pass
 
         connection = Connection()
-        target.sync_mysql([{"hotel_id": "test-hotel"}], connection)
+        rows = [{"hotel_id": target.HOTEL_ID, "source_platform": target.SOURCE_PLATFORM,
+                 "snapshot_time": datetime(2026, 10, 29)}]
+        target.sync_mysql(rows, connection)
         self.assertIn("jl01_room_type_performance_daily", connection.cursor_instance.sql)
         self.assertIn("ON DUPLICATE KEY UPDATE", connection.cursor_instance.sql)
 
-        target.sync_jy01([{"hotel_id": "test-hotel"}], connection)
+        target.sync_jy01(rows, connection)
         self.assertIn("jy01_hotel_statistics_daily", connection.cursor_instance.sql)
 
 

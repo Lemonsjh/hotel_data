@@ -71,6 +71,9 @@ class BypmsRs01Tests(unittest.TestCase):
             def executemany(self, sql, _rows):
                 self.sql = sql
 
+            def execute(self, sql, args):
+                self.cleanup = (sql, args)
+
         class Connection:
             def __init__(self):
                 self.cursor_instance = Cursor()
@@ -85,7 +88,8 @@ class BypmsRs01Tests(unittest.TestCase):
                 pass
 
         connection = Connection()
-        target.sync_mysql([{"hotel_id": "test-hotel"}], connection)
+        target.sync_mysql([{"hotel_id": target.HOTEL_ID, "source_platform": target.SOURCE_PLATFORM,
+                            "snapshot_time": datetime(2026, 10, 29)}], connection)
         self.assertIn("rs01_room_revenue_daily", connection.cursor_instance.sql)
         self.assertIn("channel_unit_id", connection.cursor_instance.sql)
         self.assertIn("ON DUPLICATE KEY UPDATE", connection.cursor_instance.sql)

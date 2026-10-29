@@ -28,6 +28,7 @@ class JD01Tests(unittest.TestCase):
         self.rates = [self.rate("LIVE"),self.rate("FUTURE",quantity="2")]
         self.db = DatabaseAdapter()
         self.db.db.execute("CREATE TABLE jd01_booking_detail ("+','.join('`'+c+'` TEXT' for c in jd.COLUMNS)+")")
+        self.db.db.execute("ALTER TABLE jd01_booking_detail ADD COLUMN created_at TEXT")
         self.db.db.commit()
         self.db_patch = patch.object(jd,"mysql_connection",return_value=self.db)
         self.db_patch.start()

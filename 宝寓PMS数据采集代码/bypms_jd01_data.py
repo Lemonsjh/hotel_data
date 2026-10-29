@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import os
+import sys
 from calendar import monthrange
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 import pymysql
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from OTA采集服务.pms_history_retention import cleanup_rows
 
 URL = os.environ.get("BYPMS_CONTRACT_URL", "https://pms-api.bypms.cn/core/api/v1/contract/get")
 COOKIE = os.environ.get("BYPMS_COOKIE", "").strip()
@@ -165,6 +169,7 @@ def sync_mysql(rows: list[dict[str, Any]], cutoff: date) -> None:
             )
             if rows:
                 cursor.executemany(sql, rows)
+                cleanup_rows(cursor, TABLE, rows, HOTEL_ID, SOURCE)
         connection.commit()
     except Exception:
         connection.rollback()

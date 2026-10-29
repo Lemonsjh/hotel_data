@@ -11,7 +11,7 @@ from typing import Any
 
 from process_runner import ProcessCancelledError, ProcessTimeoutError, run_streamed
 from settings_validation import require_valid_settings
-from data_retention import DEFAULT_RETENTION
+from data_retention import DEFAULT_RETENTION, retention_settings
 from collection_schema import ensure_task_tables
 import pms_providers
 import config_transaction
@@ -360,6 +360,7 @@ def internal_hotel_id(settings: dict[str, Any], platform: str | None = None) -> 
 def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PMS_RETENTION"] = json.dumps(retention_settings(settings))
     hotel = settings.get("hotel") or {}
     mysql = settings.get("mysql") or {}
     meituan = settings.get("meituan") or {}

@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from foxhis_common import Config, FoxhisError, SOURCE_PLATFORM, mysql_connection, query, report_main, require_columns, save_output
+from foxhis_common import cleanup_history
 from foxhis_sql import JL01_TABLE, JL01_REPORT_QUERY, JL01_CONTROL_QUERY
 
 SUMMARY_FILE = "foxhis_jl01_summary.json"
@@ -177,6 +178,7 @@ def sync_rows(rows: list[dict], config: Config) -> int:
             cursor.executemany(f"INSERT INTO `{JL01_TABLE}` ({', '.join('`'+c+'`' for c in COLUMNS)}) "
                                f"VALUES ({', '.join(['%s']*len(COLUMNS))})",
                                [tuple(row[c] for c in COLUMNS) for row in rows])
+            cleanup_history(cursor, JL01_TABLE, rows, config)
         connection.commit()
     except Exception:
         connection.rollback()

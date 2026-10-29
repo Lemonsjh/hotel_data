@@ -1,4 +1,5 @@
 """美团 PMS 当前日期快照及小时快照，同一事务写入。"""
+from meituan_pms.retention import cleanup_history
 
 SOURCE = "PMS（美团）"
 FORECAST = "pms_room_type_forecast"
@@ -51,6 +52,7 @@ def sync_mysql(rows, connection=None):
                 columns += ["snapshot_hour"] if time_key else ["room_revenue", "adr", "revpar"]
                 cur.executemany(f"INSERT INTO `{table}` ({', '.join(columns)}) VALUES "
                                 f"({', '.join('%(' + key + ')s' for key in columns)})", records)
+            cleanup_history(cur, HOURLY, first["hotel_id"], first["snapshot_time"])
         connection.commit()
     except Exception:
         connection.rollback()

@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from foxhis_common import Config, FoxhisError, SOURCE_PLATFORM, query, mysql_connection, report_main, save_output
 from foxhis_jy01_data import number, rounded
+from foxhis_common import cleanup_history
 from foxhis_sql import JD01_TABLE, JD01_ORDERS_QUERY, JD01_LEDGER_QUERY, JD01_RATE_QUERY
 
 SUMMARY_FILE = "foxhis_jd01_summary.json"
@@ -143,6 +144,7 @@ def sync_rows(rows: list[dict], config: Config) -> int:
             cursor.execute(f"DELETE FROM `{JD01_TABLE}` WHERE {condition}", args)
             cursor.executemany(f"INSERT INTO `{JD01_TABLE}` ({', '.join('`'+c+'`' for c in COLUMNS)}) VALUES ({', '.join(['%s']*len(COLUMNS))})",
                                [tuple(r[c] for c in COLUMNS) for r in rows])
+            cleanup_history(cursor, JD01_TABLE, rows, config)
         connection.commit()
     except Exception:
         connection.rollback()

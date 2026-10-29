@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pymysql
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from OTA采集服务.pms_history_retention import cleanup_rows
 
 REPORT_URL = os.environ.get("BYPMS_MONTHLY_REPORT_URL", "https://pms-api.bypms.cn/report/api/v1/normal-report/list")
 COOKIE = os.environ.get("BYPMS_COOKIE", "").strip()
@@ -154,6 +158,7 @@ def sync_mysql(rows: list[dict[str, Any]], connection=None) -> None:
                 (HOTEL_ID, SOURCE_PLATFORM, *months),
             )
             cursor.executemany(sql, rows)
+            cleanup_rows(cursor, TABLE_NAME, rows, HOTEL_ID, SOURCE_PLATFORM)
         connection.commit()
     except Exception:
         connection.rollback()

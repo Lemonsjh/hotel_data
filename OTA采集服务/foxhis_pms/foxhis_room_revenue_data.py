@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from foxhis_common import Config, FoxhisError, SOURCE_PLATFORM, db_version, mysql_connection, query, report_main, require_columns, save_output, table_columns
+from foxhis_common import cleanup_history
 from foxhis_sql import ROOM_REVENUE_ORDERS_QUERY, ROOM_REVENUE_QUERY, ROOM_REVENUE_REQUIRED, ROOM_REVENUE_TABLE
 
 SUMMARY_FILE = "foxhis_room_revenue_summary.json"
@@ -192,6 +193,7 @@ def sync_rows(rows: list[dict], config: Config, start: date, end: date) -> int:
                 f"VALUES ({', '.join(['%s'] * len(INSERT_COLUMNS))})",
                 [tuple(row[name] for name in INSERT_COLUMNS) for row in rows],
             )
+            cleanup_history(cursor, ROOM_REVENUE_TABLE, rows, config)
         connection.commit()
     except Exception:
         connection.rollback()

@@ -94,7 +94,9 @@ class MeituanPmsPerformanceTests(unittest.TestCase):
         report.sync_mysql(self.batch(), connection)
         self.assertIn("INSERT INTO `jl02_hotel_performance_daily`", cursor.executemany.call_args.args[0])
         self.assertTrue(all(row["category"] == "总营业指标" for row in cursor.executemany.call_args.args[1]))
-        self.assertFalse(any("DELETE" in call.args[0] for call in cursor.execute.call_args_list))
+        cleanup = cursor.execute.call_args
+        self.assertIn("DELETE FROM `jl02_hotel_performance_daily`", cleanup.args[0])
+        self.assertEqual(cleanup.args[1][:2], ("hotel", report.SOURCE))
         connection.commit.assert_called_once()
 
     def test_other_pms_collision_and_write_failure_roll_back(self):

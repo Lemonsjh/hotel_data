@@ -127,12 +127,12 @@ class MeituanPmsDailyReportTests(unittest.TestCase):
         env = runner.build_env({"meituan_pms": {"org_id": "123"}}, "meituan_pms")
         self.assertEqual(env["MEITUAN_PMS_ORG_ID"], "123")
 
-    def test_upsert_is_only_daily_total_and_never_deletes_history(self):
+    def test_upsert_is_only_daily_total_and_cleans_expired_history(self):
         connection = MagicMock()
         cur = connection.cursor.return_value.__enter__.return_value
         cur.fetchall.return_value = [("hotel",)]
         report.sync_mysql(self.rows(), connection)
-        self.assertEqual(cur.execute.call_count, 1)
+        self.assertEqual(cur.execute.call_count, 2)
         sql, rows = cur.executemany.call_args.args
         self.assertIn("INSERT INTO `jy01_hotel_statistics_daily`", sql)
         self.assertNotIn("jy03_hotel_statistics_month", sql)
