@@ -151,16 +151,19 @@ def build_row(
         target = peer_rows if source_hotel_id == -1 else hotel_rows
         target[str(item.get("date") or "")] = item
 
-    if set(hotel_rows) != set(peer_rows) or len(hotel_rows) != DATE_RANGE:
-        expected = {(start + timedelta(days=day)).isoformat() for day in range((end - start).days + 1)}
-        hotel_missing = sorted(expected - hotel_rows.keys())
-        peer_missing = sorted(expected - peer_rows.keys())
+    expected = {(start + timedelta(days=day)).isoformat() for day in range((end - start).days + 1)}
+    hotel_missing = sorted(expected - hotel_rows.keys())
+    peer_missing = sorted(expected - peer_rows.keys())
+    if not hotel_rows or set(peer_rows) != expected or not hotel_rows.keys() <= expected:
         raise RuntimeError(
             f"{platform_scope} 流量日期不完整：区间 {start} ~ {end}；"
             f"本店 {len(hotel_rows)}/{DATE_RANGE} 天，同业 {len(peer_rows)}/{DATE_RANGE} 天；"
             f"本店缺失 {len(hotel_missing)} 天（{', '.join(hotel_missing[:5]) or '无'}）；"
             f"同业缺失 {len(peer_missing)} 天（{', '.join(peer_missing[:5]) or '无'}）"
         )
+    if hotel_missing:
+        print(f"WARN {platform_scope} 本店缺失 {len(hotel_missing)} 天（{', '.join(hotel_missing[:5])}）；"
+              f"按接口返回的 {len(hotel_rows)} 天汇总", flush=True)
 
     def total(rows: dict[str, dict[str, Any]], field: str) -> int | float:
         return sum(number(item.get(field)) or 0 for item in rows.values())
