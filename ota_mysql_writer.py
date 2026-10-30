@@ -398,7 +398,8 @@ def sync_meituan_scan_orders(
 
 
 def sync_order_detail_history(
-    table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]], hotel_id: str, retention_start: date
+    table_name: str, headers: Sequence[str], rows: Sequence[Sequence[Any]], hotel_id: str, retention_start: date,
+    *, key_column: str = "form_id", date_column: str = "arrival_date", scope: dict[str, Any] | None = None,
 ) -> None:
     if not rows:
         raise MysqlSyncError(f"Refusing to sync empty order details: {table_name}")
@@ -406,6 +407,17 @@ def sync_order_detail_history(
     try:
         with connection.cursor() as cursor:
             column_types = load_column_types(cursor, table_name)
+            if table_name == "ctrip_ota_order_detail":
+                for column, definition, kind in (
+                    ("client_name", "VARCHAR(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL", "varchar"),
+                    ("order_amount", "DECIMAL(14,2) DEFAULT NULL COMMENT '预计收入'", "decimal"),
+                    ("origin_total_price", "DECIMAL(14,2) DEFAULT NULL COMMENT '原卖价'", "decimal"),
+                    ("total_price", "DECIMAL(14,2) DEFAULT NULL COMMENT '优惠后卖价'", "decimal"),
+                    ("origin_total_cost", "DECIMAL(14,2) DEFAULT NULL COMMENT '原底价'", "decimal"),
+                ):
+                    if column in headers and column not in column_types:
+                        cursor.execute(f"ALTER TABLE `ctrip_ota_order_detail` ADD COLUMN `{column}` {definition}")
+                        column_types[column] = kind
             missing = [header for header in headers if header not in column_types]
             if missing:
                 raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
@@ -414,15 +426,17 @@ def sync_order_detail_history(
             values = ", ".join(["%s"] * len(headers))
             updates = ", ".join(
                 f"{quote}{column}{quote}=VALUES({quote}{column}{quote})"
-                for column in headers if column not in {"hotel_id", "form_id"}
+                for column in headers if column not in {"hotel_id", key_column}
             )
             cursor.executemany(
                 f"INSERT INTO {quote}{table_name}{quote} ({columns}) VALUES ({values}) ON DUPLICATE KEY UPDATE {updates}",
                 [tuple(convert_value(value, column_types[column]) for column, value in zip(headers, row)) for row in rows],
             )
+            scope = scope or {}
+            filters = "".join(f" AND `{column}`=%s" for column in scope)
             cursor.execute(
-                f"DELETE FROM {quote}{table_name}{quote} WHERE hotel_id=%s AND arrival_date < %s",
-                (hotel_id, retention_start),
+                f"DELETE FROM {quote}{table_name}{quote} WHERE hotel_id=%s{filters} AND `{date_column}` < %s",
+                (hotel_id, *scope.values(), retention_start),
             )
             deleted = cursor.rowcount
         connection.commit()

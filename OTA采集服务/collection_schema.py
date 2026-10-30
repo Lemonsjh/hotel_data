@@ -15,6 +15,7 @@ TASK_TABLES = {
     'meituan_promotion_performance': ('meituan_ota_promotion_performance_30d',),
     'meituan_order_loss': ('meituan_ota_order_loss_monthly',),
     'meituan_scan_order': ('meituan_ota_scan_order_detail',),
+    'meituan_order_detail': ('meituan_ota_order_detail',),
     'meituan_user_source': ('meituan_ota_user_source_monthly',),
     'meituan_review': ('meituan_ota_review_overview', 'meituan_ota_review_ranking'),
     'meituan_review_detail': ('meituan_ota_review_detail', 'meituan_ota_review_overview'),

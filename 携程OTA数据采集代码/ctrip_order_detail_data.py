@@ -5,26 +5,35 @@ import os
 import sys
 import time
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from ctrip_config import DEFAULT_HOTEL_NAME
 from ctrip_flow_conversion_data import FlowBrowserClient, number
+from ctrip_promotion_status_data import ensure_logged_in
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import OUTPUT_DIR, sync_order_detail_history
 
 
 API_URL = "https://ebooking.ctrip.com/restapi/soa2/27204/queryOrderList"
+DETAIL_API_URL = "https://ebooking.ctrip.com/restapi/soa2/27204/getOrderDetail"
 TABLE_NAME = "ctrip_ota_order_detail"
 PAGE_SIZE = 20
-MAX_PAGES = 100
+MAX_PAGES = 1000
+AMOUNT_FIELDS = {
+    "order_amount": "amount",  # 预计收入
+    "origin_total_price": "originTotalPrice",  # 原卖价
+    "total_price": "totalPrice",  # 优惠后卖价
+    "origin_total_cost": "originTotalCost",  # 原底价
+}
 HEADERS = [
-    "hotel_id", "hotel_name", "platform_scope", "ctrip_hotel_id", "form_id", "order_id",
+    "hotel_id", "hotel_name", "platform_scope", "ctrip_hotel_id", "form_id", "order_id", "client_name",
     "order_source_type", "ctrip_source_type", "alliance_name", "order_type", "order_type_name",
     "order_status_code", "order_status", "order_status_type", "booking_time", "arrival_date",
     "departure_date", "room_type_name", "room_quantity", "room_night_count", "guest_count",
-    "currency", "payment_type", "payment_term", "is_auto_confirmed", "is_guaranteed",
+    "currency", *AMOUNT_FIELDS, "payment_type", "payment_term", "is_auto_confirmed", "is_guaranteed",
     "is_hour_room", "is_credit_order", "is_free_room_order", "snapshot_time",
 ]
 PLATFORM_SCOPES = {
@@ -144,9 +153,32 @@ def fetch_orders(client: FlowBrowserClient, start: date, end: date, captured_at:
         if len(page_items) < PAGE_SIZE:
             break
         previous_ids = page_ids
+    else:
+        raise RuntimeError("Ctrip order-list pagination exceeded the limit")
     if not orders_by_form_id:
         raise RuntimeError("Ctrip order-list response contains no orders")
     return list(orders_by_form_id.values())
+
+
+def fetch_order_amounts(client: FlowBrowserClient, items: list[dict[str, Any]]) -> None:
+    for index, item in enumerate(items):
+        if index:
+            time.sleep(1)
+        payload = client.post_json(DETAIL_API_URL, {
+            "hotel": item["hotel"], "orderId": item["orderId"], "formID": item["formId"],
+            "orderSource": item.get("sourceType"), "sourceType": item.get("ctripSourceType"),
+            "viewForm": True, "timeZone": 8,
+            "extraMap": {"DOMESTIC_NEW_WEB": "T", "OVERSEA_WEB": "F"},
+            "header": {"platform": "WEB"},
+        })
+        detail = payload.get("detail")
+        if (payload.get("resStatus") or {}).get("rcode") != 200 or not isinstance(detail, dict):
+            raise RuntimeError("Ctrip order-detail request failed; order amounts were not saved")
+        for column, source in AMOUNT_FIELDS.items():
+            amount = detail.get(source)
+            item[column] = None if amount in (None, "") else Decimal(str(amount).replace(",", ""))
+        if (index + 1) % PAGE_SIZE == 0 or index + 1 == len(items):
+            print(f"Ctrip order amounts fetched: {index + 1}/{len(items)}", flush=True)
 
 
 def platform_scope(item: dict[str, Any]) -> str:
@@ -164,12 +196,14 @@ def build_rows(items: list[dict[str, Any]], captured_at: datetime) -> list[list[
             continue
         rows.append([
             hotel_id, DEFAULT_HOTEL_NAME, platform_scope(item), int_value(item.get("hotel")), form_id,
-            str(item.get("orderId") or "").strip() or None, item.get("sourceType"), item.get("ctripSourceType"),
+            str(item.get("orderId") or "").strip() or None, item.get("clientName"),
+            item.get("sourceType"), item.get("ctripSourceType"),
             item.get("allinanceName"), item.get("orderType"), item.get("orderTypeDesc"),
             int_value(item.get("orderStatus")), item.get("orderStatusDesc"), item.get("orderStatusType"),
             datetime_value(item.get("formDateOriginal") or item.get("formDate")), arrival_date,
             date_value(item.get("departure")), item.get("roomName"), int_value(item.get("quantity")),
             int_value(item.get("liveDays")), int_value(item.get("persons")), item.get("currency"),
+            *[item.get(column) for column in AMOUNT_FIELDS],
             item.get("paymentType"), item.get("paymentTerm"), flag(item.get("isAutoConfirmed")),
             flag(item.get("isGuaranteed")), flag(item.get("isHourRoom")), flag(item.get("isCreditOrder")),
             flag(item.get("isFreeRoomOrder")), captured_at,
@@ -193,7 +227,7 @@ def write_output(rows: list[list[Any]], start: date, end: date, captured_at: dat
             for row in rows
         ],
     }
-    (OUTPUT_DIR / f"{TABLE_NAME}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUTPUT_DIR / f"{TABLE_NAME}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 
 def main() -> int:
@@ -201,9 +235,12 @@ def main() -> int:
     end = captured_at.date()
     start = end - timedelta(days=30)
     with FlowBrowserClient() as client:
-        rows = build_rows(fetch_orders(client, start, end, captured_at), captured_at)
-    write_output(rows, start, end, captured_at)
+        ensure_logged_in(client.page)
+        items = fetch_orders(client, start, end, captured_at)
+        fetch_order_amounts(client, items)
+        rows = build_rows(items, captured_at)
     sync_order_detail_history(TABLE_NAME, HEADERS, rows, require_hotel_id(), start)
+    write_output(rows, start, end, captured_at)
     print(f"Ctrip order detail sync completed: rows={len(rows)} period={start}..{end}")
     return 0
 

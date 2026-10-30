@@ -78,6 +78,7 @@ class CollectionSchemaTests(unittest.TestCase):
         self.connection.close.assert_called_once()
 
     def test_ota_tasks_only_select_their_own_tables(self):
+        self.assertEqual(schema.required_tables('meituan_order_detail', []), {'meituan_ota_order_detail'})
         tables = schema.required_tables('ctrip_business', [])
         self.assertEqual(tables, {'ctrip_ota_business_metrics', 'ctrip_ota_business_metrics_hourly'})
         for task in ('ctrip_goods_price', 'meituan_goods_price'):

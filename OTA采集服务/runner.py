@@ -54,6 +54,7 @@ TASKS = {
     "meituan_promotion_performance": ("meituan", "meituan_promotion_performance_data.py", []),
     "meituan_order_loss": ("meituan", "meituan_order_loss_data.py", []),
     "meituan_scan_order": ("meituan", "meituan_scan_order_data.py", []),
+    "meituan_order_detail": ("meituan", "meituan_order_detail_data.py", []),
     "meituan_user_source": ("meituan", "meituan_user_source_data.py", []),
     "meituan_review": ("meituan", "meituan_review_data.py", []),
     "meituan_review_detail": ("meituan", "meituan_review_detail_data.py", []),
@@ -569,7 +570,8 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
                     [py, str(script), *extra_args],
                     cwd=str(script.parent if item_platform == "pms" else base_dir),
                     env=build_env(settings, item_platform),
-                    timeout=task_timeout(settings, item_platform),
+                    timeout=(max(7200, task_timeout(settings, item_platform))
+                             if name == "ctrip_order_detail" else task_timeout(settings, item_platform)),
                     log_path=log_path,
                     append=index > 0,
                     transform=lambda line: sanitize(line, settings),

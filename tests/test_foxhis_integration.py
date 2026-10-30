@@ -38,7 +38,7 @@ class FoxhisIntegrationTests(unittest.TestCase):
 
     def test_task_registry_and_defaults_still_match_confirmed_rules(self):
         settings = local_reset.default_settings()
-        self.assertEqual(len(runner.TASKS), 30)
+        self.assertEqual(len(runner.TASKS), 31)
         self.assertNotIn("meituan_exposure_source", runner.TASKS)
         self.assertEqual(settings["pms"]["provider"], "byh")
         self.assertFalse(settings["foxhis"]["enabled"])

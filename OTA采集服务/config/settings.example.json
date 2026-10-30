@@ -120,7 +120,6 @@
   "ctrip": {
     "enabled": true,
     "hotel_name": "",
-    "internal_hotel_id": "",
     "hotel_id": "",
     "cookie": "",
     "rating_url": "",
@@ -137,6 +136,7 @@
     "meituan_promotion_performance": true,
     "meituan_order_loss": true,
     "meituan_scan_order": true,
+    "meituan_order_detail": true,
     "meituan_user_source": true,
     "meituan_review": true,
     "meituan_review_detail": true,

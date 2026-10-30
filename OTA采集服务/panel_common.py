@@ -33,6 +33,7 @@ TASK_LABELS = {
     "meituan_promotion_performance": "美团近30天推广效果",
     "meituan_order_loss": "美团流失订单",
     "meituan_scan_order": "美团扫码订单明细",
+    "meituan_order_detail": "美团近30天订单明细",
     "meituan_user_source": "美团用户来源",
     "meituan_review": "美团评价",
     "meituan_review_detail": "美团评价明细",

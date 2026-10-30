@@ -211,7 +211,6 @@ CONFIG_SECTIONS = [
         "hint": "携程酒店独立标识、登录 Cookie 和采集接口集中维护。",
         "fields": [
             ("ctrip.hotel_name", "酒店名称", False, False),
-            ("ctrip.internal_hotel_id", "内部酒店 ID（仅携程）", False, False),
             ("ctrip.cookie", "登录 Cookie（经营数据、评价、活动、调价商品与执行）", True, True),
             ("ctrip.hotel_id", "携程酒店 ID", False, True),
             ("ctrip.rating_url", "评价概览 URL", True, True),

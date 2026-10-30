@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_order_detail` (
   `ctrip_hotel_id` bigint DEFAULT NULL,
   `form_id` bigint unsigned NOT NULL,
   `order_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `client_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `order_source_type` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `ctrip_source_type` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `alliance_name` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -203,6 +204,10 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_order_detail` (
   `room_night_count` int DEFAULT NULL,
   `guest_count` int DEFAULT NULL,
   `currency` varchar(12) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `order_amount` decimal(14,2) DEFAULT NULL COMMENT '预计收入，getOrderDetail.amount',
+  `origin_total_price` decimal(14,2) DEFAULT NULL COMMENT '原卖价，getOrderDetail.originTotalPrice',
+  `total_price` decimal(14,2) DEFAULT NULL COMMENT '优惠后卖价，getOrderDetail.totalPrice',
+  `origin_total_cost` decimal(14,2) DEFAULT NULL COMMENT '原底价，getOrderDetail.originTotalCost',
   `payment_type` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `payment_term` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_auto_confirmed` tinyint DEFAULT NULL,
@@ -1180,6 +1185,47 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_review_ranking` (
   PRIMARY KEY (`id`),
   KEY `idx_meituan_ota_review_ranking_snapshot` (`snapshot_time`,`channel_source`,`ranking_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Table: meituan_ota_order_detail
+-- 普通订单列表；购买日期最近30天，金额由接口分转换为元。
+CREATE TABLE IF NOT EXISTS `meituan_ota_order_detail` (
+  `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `hotel_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `poi_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `partner_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `order_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source_order_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `order_status` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `order_type` int DEFAULT NULL,
+  `payment_type` int DEFAULT NULL,
+  `booking_time` datetime NOT NULL,
+  `arrival_date` date DEFAULT NULL,
+  `departure_date` date DEFAULT NULL,
+  `room_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `room_type_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `goods_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `room_quantity` int DEFAULT NULL,
+  `order_price` decimal(14,2) DEFAULT NULL,
+  `total_fee` decimal(14,2) DEFAULT NULL,
+  `commission` decimal(14,2) DEFAULT NULL,
+  `real_commission` decimal(14,2) DEFAULT NULL,
+  `floor_price` decimal(14,2) DEFAULT NULL,
+  `real_floor_price` decimal(14,2) DEFAULT NULL,
+  `channel_label` tinyint DEFAULT NULL COMMENT '平台渠道标记，非渠道名称',
+  `user_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `member_level` int DEFAULT NULL COMMENT '平台原值；未知等级仍保留',
+  `member_level_name` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `member_benefits` tinyint DEFAULT NULL COMMENT '平台会员权益标记',
+  `member_mark` tinyint DEFAULT NULL COMMENT '酒店大美卡会员标记',
+  `member_display_mode` int DEFAULT NULL,
+  `check_in_status` int DEFAULT NULL,
+  `snapshot_time` datetime NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`hotel_id`,`order_id`),
+  KEY `idx_meituan_order_booking` (`hotel_id`,`booking_time`),
+  KEY `idx_meituan_order_arrival` (`hotel_id`,`arrival_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Table: meituan_ota_scan_order_detail
 CREATE TABLE IF NOT EXISTS `meituan_ota_scan_order_detail` (
