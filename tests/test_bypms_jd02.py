@@ -57,7 +57,7 @@ class BypmsGuestTests(unittest.TestCase):
             result = report.fetch_nights(MagicMock(), self.day, wait)
         self.assertEqual(len(result), 2)
         self.assertEqual(request.call_args_list[0].args[2],
-                         {"type": "checkout", "date": "2026-10-29,2026-10-29", "page": 1, "pageSize": 20})
+                         {"type": "checkout", "date": "2026-10-29,2026-10-29", "page": 1, "pageSize": 20, "state": "E"})
         self.assertEqual(request.call_args_list[1].args[2]["page"], 2)
         wait.assert_called_once_with(1)
 
@@ -69,8 +69,10 @@ class BypmsGuestTests(unittest.TestCase):
                 report.fetch_nights(MagicMock(), self.day, MagicMock())
         with patch.object(report, "request_data", return_value={"nightList": [], "total": 0}):
             self.assertEqual(report.fetch_nights(MagicMock(), self.day), [])
+        with patch.object(report, "request_data", return_value={"nightList": [dict(self.night, state="S")], "total": 1}), self.assertRaises(ValueError):
+            report.fetch_nights(MagicMock(), self.day)
 
-    def test_room_and_contract_mismatch_or_wrong_departure_fail(self):
+    def test_room_and_contract_mismatch_or_invalid_departure_fail(self):
         original = copy.deepcopy(self.data)
         for change in (lambda: self.data["night"].update(id=999), lambda: self.data.update(binds=None),
                        lambda: self.data["binds"][0].update(roomNightId=999),
@@ -80,9 +82,14 @@ class BypmsGuestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.rows()
         self.data = original
-        self.night["checkOut"] = "2026-10-30 14:00:00"
+        self.night["checkOut"] = "invalid"
         with self.assertRaises(ValueError):
             self.rows()
+
+    def test_checkout_list_keeps_original_planned_departure(self):
+        self.night['checkOut'] = '2026-10-30 14:00:00'
+        self.assertEqual(self.rows()[0]['departure_time'], datetime(2026, 10, 30, 14))
+        self.assertEqual(self.rows()[0]['business_date'], self.day)
 
     def test_zero_renter_count_header_does_not_hide_registered_guests(self):
         self.data["night"]["renterCount"] = 0

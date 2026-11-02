@@ -73,6 +73,13 @@ class BypmsJy03Tests(unittest.TestCase):
 
         start, end = date(2025, 9, 1), date(2025, 9, 22)
         self.assertIsNone(target.fetch_month(start, end, Session({"state": 0, "data": {}})))
+        metrics = {"roomCount": 48, "nightCount": 41, "contractIncomeTotalPrice": 2195.45,
+                   "occupancyRate": 0.8542, "contractIncomeAvgPrice": 53.55, "revPar": 45.74}
+        report = target.fetch_month(start, end, Session({"state": 0, "data": metrics}))
+        self.assertEqual(target.build_rows(report, start, datetime(2026, 11, 2))[0]["room_count"], 48)
+        with self.assertRaises(RuntimeError):
+            target.build_rows(target.fetch_month(start, end, Session({"state": 0, "data": {"roomCount": 48}})),
+                              start, datetime(2026, 11, 2))
         with self.assertRaises(RuntimeError):
             target.fetch_month(start, end, Session({"state": 0, "data": {
                 "statisticsStartDate": "2025-08-01", "statisticsEndDate": "2025-08-31",

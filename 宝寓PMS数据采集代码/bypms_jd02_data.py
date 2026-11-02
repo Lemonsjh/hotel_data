@@ -46,7 +46,7 @@ def fetch_nights(session, day, wait=time.sleep):
         if page > 1:
             wait(1)
         data = request_data(session, LIST_URL, {"type": "checkout", "date": f"{day},{day}",
-                                              "page": page, "pageSize": PAGE_SIZE})
+                                              "page": page, "pageSize": PAGE_SIZE, "state": "E"})
         batch, count = data.get("nightList"), data.get("total")
         if not isinstance(batch, list) or type(count) is not int or count < 0 or (total is not None and count != total):
             raise ValueError("宝寓 JD02 离店列表或分页总数不符")
@@ -55,6 +55,8 @@ def fetch_nights(session, day, wait=time.sleep):
             night_id = text(night.get("id")) if isinstance(night, dict) else None
             if not night_id or night_id in seen:
                 raise ValueError("宝寓 JD02 房晚记录缺失ID或分页重复")
+            if night.get("state") != "E":
+                raise ValueError("宝寓 JD02 返回非已退房记录")
             seen.add(night_id)
         nights.extend(batch)
         if len(nights) == total:
@@ -70,7 +72,8 @@ def transform(night, data, day, snapshot, hotel_id, hotel_name):
             or text(header.get("id")) != text(night.get("id"))):
         raise ValueError("宝寓 JD02 登记客人列表与房晚不符")
     arrival, departure = parse_datetime(night.get("checkIn")), parse_datetime(night.get("checkOut"))
-    if not text(night.get("contractId")) or arrival is None or departure is None or departure.date() != day or departure < arrival:
+    # 预离列表可能包含计划离店日期不等于查询日期的记录，保留接口原值。
+    if not text(night.get("contractId")) or arrival is None or departure is None or departure < arrival:
         raise ValueError("宝寓 JD02 订单或离店日期不符")
     try:
         price = Decimal(str(night["price"])) if night.get("price") not in (None, "", "****") else None

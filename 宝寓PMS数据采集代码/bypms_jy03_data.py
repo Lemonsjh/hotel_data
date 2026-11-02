@@ -92,7 +92,8 @@ def fetch_month(month: date, end: date, session: requests.Session) -> dict[str, 
     if not data.get("statisticsStartDate") and not data.get("statisticsEndDate"):
         if data.get("nightCount") is None and data.get("roomCount") is None:
             return None
-        raise RuntimeError(f"ByPMS monthly report lacks dates: {month:%Y-%m}")
+        # 有些月份接口返回完整指标但不回显统计日期；仍由 build_rows 校验必需指标。
+        return data
     if data.get("statisticsStartDate") != month.isoformat() or data.get("statisticsEndDate") != end.isoformat():
         raise RuntimeError(f"ByPMS monthly report returned wrong dates: {month:%Y-%m}")
     return data
