@@ -1,11 +1,12 @@
 """单个OTA平台也能保存房型映射。"""
 import unittest
 import sys
+import sqlite3
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "OTA采集服务"))
 from html.parser import HTMLParser
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from flask import Flask
 
@@ -47,6 +48,30 @@ class RoomMappingTests(unittest.TestCase):
         self.assertIn("required", fields["pms_room_type_name"])
         for name in ("hotel_name", "ctrip_hotel_name", "meituan_room_type_name", "ctrip_room_type_name"):
             self.assertNotIn("required", fields[name])
+        self.assertEqual(fields["ctrip_room_type_name"]["autocomplete"], "off")
+
+    def test_ctrip_options_only_include_configured_hotel_and_platform(self):
+        with sqlite3.connect(":memory:") as db:
+            db.execute("CREATE TABLE ctrip_ota_goods_price_mapping "
+                       "(hotel_id TEXT, platform_scope TEXT, room_type_name TEXT)")
+            db.executemany("INSERT INTO ctrip_ota_goods_price_mapping VALUES (?,?,?)", [
+                ("TEST", "ctrip", "本店双床房"), ("TEST", "ctrip", "本店双床房"),
+                ("OTHER", "ctrip", "其他酒店房型"), ("TEST", "qunar", "其他平台房型"),
+                ("LEGACY", "ctrip", "旧配置房型"), ("TEST", "ctrip", " "),
+            ])
+
+            def query_names(cur, sql, params=()):
+                if "ctrip_ota_goods_price_mapping" not in sql:
+                    return []
+                return [row[0] for row in db.execute(sql.replace("%s", "?"), params)]
+
+            with patch.object(store.price_tasks, "connection", return_value=MagicMock()), \
+                 patch.object(store, "_query_names", side_effect=query_names):
+                settings = {"hotel": {"hotel_id": "TEST"}}
+                self.assertEqual(store.room_options(settings)[3], ["本店双床房"])
+                settings["ctrip"] = {"internal_hotel_id": "LEGACY"}
+                self.assertEqual(store.room_options(settings)[3], ["旧配置房型"])
+                self.assertEqual(store.room_options({})[3], [])
 
     def test_ctrip_only_submission_reaches_save(self):
         app = Flask(__name__)

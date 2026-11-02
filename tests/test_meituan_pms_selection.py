@@ -102,7 +102,8 @@ const fetch = async()=>({json:async()=>data});
                                  [("meituan_pms", "collector.py", []), ("meituan_pms", "daily_report.py", []),
                                   ("meituan_pms", "monthly_report.py", []), ("meituan_pms", "performance_report.py", []),
                                   ("meituan_pms", "booking_report.py", []), ("meituan_pms", "classification_report.py", []),
-                                  ("meituan_pms", "room_performance_report.py", []), ("meituan_pms", "revenue_report.py", [])])
+                                  ("meituan_pms", "room_performance_report.py", []), ("meituan_pms", "revenue_report.py", []),
+                                  ("meituan_pms", "guest_report.py", [])])
                 self.assertEqual(runner.script_path(settings, "meituan_pms", "daily_report.py").name, "daily_report.py")
                 self.assertTrue(runner.script_path(settings, "meituan_pms", "collector.py").is_file())
                 self.assertEqual(runner.script_path(settings, "meituan_pms", "collector.py").parent, ROOT / "meituan_pms")

@@ -6,6 +6,7 @@ import pymysql
 
 from mapping_product_sync import sync_ctrip_products, sync_meituan_products
 import price_tasks
+import runner
 
 
 PMS_BYH_PLATFORM = "pms_byh"
@@ -172,7 +173,8 @@ def room_options(
     ctrip_room_sql = """
     SELECT DISTINCT room_type_name AS name
     FROM ctrip_ota_goods_price_mapping
-    WHERE room_type_name IS NOT NULL AND TRIM(room_type_name) <> ''
+    WHERE hotel_id=%s AND platform_scope='ctrip'
+      AND room_type_name IS NOT NULL AND TRIM(room_type_name) <> ''
     ORDER BY room_type_name
     """
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
@@ -187,7 +189,7 @@ def room_options(
             _query_names(cur, pms_hotel_sql, pms_params),
             _query_names(cur, pms_room_sql, forecast_params),
             _query_names(cur, meituan_room_sql),
-            _query_names(cur, ctrip_room_sql),
+            _query_names(cur, ctrip_room_sql, (runner.internal_hotel_id(settings, "ctrip"),)),
         )
 
 

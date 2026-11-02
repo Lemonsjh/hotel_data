@@ -73,7 +73,7 @@ def _datalist_input(
     return (
         f"<div class='field'><label for='{esc(name)}'>{esc(store.LABELS[name])}</label>"
         f"<input id='{esc(name)}' name='{esc(name)}' list='{esc(name)}_list' "
-        f"value='{esc(value)}' placeholder='请选择或直接输入（选填）'{required_attr}>"
+        f"value='{esc(value)}' autocomplete='off' placeholder='请选择或直接输入（选填）'{required_attr}>"
         f"<datalist id='{esc(name)}_list'>{choices}</datalist></div>"
     )
 

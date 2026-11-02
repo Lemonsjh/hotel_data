@@ -616,6 +616,49 @@ CREATE TABLE IF NOT EXISTS `jd01_booking_detail` (
   KEY `idx_hotel_room_type_id` (`hotel_id`,`room_type_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Table: jd02_guest_stay_detail
+CREATE TABLE IF NOT EXISTS `jd02_guest_stay_detail` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `hotel_id` varchar(100) NOT NULL,
+  `hotel_name` varchar(255) DEFAULT NULL,
+  `source_platform` varchar(64) NOT NULL,
+  `business_date` date NOT NULL COMMENT '查询离店营业日，每条客人记录单独保存',
+  `order_id` varchar(100) DEFAULT NULL,
+  `room_number` varchar(100) DEFAULT NULL,
+  `room_type_name` varchar(255) DEFAULT NULL,
+  `room_type_id` varchar(50) DEFAULT NULL COMMENT '系统统一房型ID，未映射时为空',
+  `customer_id` varchar(100) DEFAULT NULL,
+  `customer_name` varchar(100) DEFAULT NULL,
+  `id_card_number` varchar(100) DEFAULT NULL COMMENT '接口返回的证件号原值，通常已脱敏',
+  `customer_mobile` varchar(100) DEFAULT NULL,
+  `room_price` decimal(14,2) DEFAULT NULL COMMENT '该条客人记录的接口原生房价',
+  `arrival_time` datetime NOT NULL,
+  `departure_time` datetime DEFAULT NULL,
+  `checkin_type` varchar(100) DEFAULT NULL,
+  `order_source` varchar(100) DEFAULT NULL,
+  `guest_source` varchar(100) DEFAULT NULL,
+  `member_level_id` varchar(100) DEFAULT NULL,
+  `member_level` varchar(100) DEFAULT NULL,
+  `oneself_or_not` varchar(20) DEFAULT NULL,
+  `price_stakeholder_name` varchar(100) DEFAULT NULL,
+  `price_stakeholder_mobile` varchar(100) DEFAULT NULL,
+  `order_memo` text,
+  `check_out_tip` text,
+  `checkin_status` varchar(100) DEFAULT NULL,
+  `operator_name` varchar(100) DEFAULT NULL,
+  `total_checkin_count` int DEFAULT NULL,
+  `room_attr` varchar(255) DEFAULT NULL,
+  `main_checkin_id` varchar(100) DEFAULT NULL,
+  `main_checkin_person` tinyint DEFAULT NULL COMMENT '1主客人，0同住人，空为来源未提供',
+  `snapshot_time` datetime NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_jd02_order` (`hotel_id`,`source_platform`,`business_date`,`order_id`),
+  KEY `idx_jd02_departure` (`hotel_id`,`source_platform`,`departure_time`),
+  KEY `idx_hotel_room_type_id` (`hotel_id`,`room_type_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- Table: jd04_inhouse_extension
 CREATE TABLE IF NOT EXISTS `jd04_inhouse_extension` (
   `id` bigint NOT NULL AUTO_INCREMENT,

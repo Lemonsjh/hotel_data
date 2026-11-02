@@ -100,12 +100,14 @@ class CollectionSchemaTests(unittest.TestCase):
     def test_pms_subtasks_follow_actual_provider_and_selected_reports(self):
         for platform, script, expected in (
             ('foxhis', 'foxhis_jd01_data.py', {'jd01_booking_detail'}),
+            ('bypms', 'bypms_jd02_data.py', {'jd02_guest_stay_detail'}),
             ('bypms', 'bypms_daily_report_data.py', {'jl01_room_type_performance_daily', 'jy01_hotel_statistics_daily'}),
             ('meituan_pms', 'collector.py', {'pms_room_type_forecast', 'pms_room_type_hourly_status'}),
             ('meituan_pms', 'daily_report.py', {'jy01_hotel_statistics_daily'}),
             ('meituan_pms', 'monthly_report.py', {'jy03_hotel_statistics_month'}),
             ('meituan_pms', 'performance_report.py', {'jl02_hotel_performance_daily'}),
             ('meituan_pms', 'booking_report.py', {'jd01_booking_detail'}),
+            ('meituan_pms', 'guest_report.py', {'jd02_guest_stay_detail'}),
             ('meituan_pms', 'classification_report.py', {'jl11_room_type_classification'}),
             ('meituan_pms', 'room_performance_report.py', {'jl01_room_type_performance_daily'}),
             ('meituan_pms', 'revenue_report.py', {'rs01_room_revenue_daily'}),

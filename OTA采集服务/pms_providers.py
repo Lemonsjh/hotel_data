@@ -90,6 +90,7 @@ PMS_PROVIDERS: dict[str, dict[str, Any]] = {
             ("bypms", "bypms_jl11_data.py", []),
             ("bypms", "bypms_jy03_data.py", []),
             ("bypms", "bypms_jd01_data.py", []),
+            ("bypms", "bypms_jd02_data.py", []),
         ],
         "probe_action": "",
         "channel": "http",
@@ -131,7 +132,8 @@ PMS_PROVIDERS: dict[str, dict[str, Any]] = {
         "scripts": [("meituan_pms", "collector.py", []), ("meituan_pms", "daily_report.py", []),
                     ("meituan_pms", "monthly_report.py", []), ("meituan_pms", "performance_report.py", []),
                     ("meituan_pms", "booking_report.py", []), ("meituan_pms", "classification_report.py", []),
-                    ("meituan_pms", "room_performance_report.py", []), ("meituan_pms", "revenue_report.py", [])],
+                    ("meituan_pms", "room_performance_report.py", []), ("meituan_pms", "revenue_report.py", []),
+                    ("meituan_pms", "guest_report.py", [])],
         "probe_action": "", "channel": "http",
     },
 }

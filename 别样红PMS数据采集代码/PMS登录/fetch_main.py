@@ -159,7 +159,7 @@ def main() -> int:
     parser.add_argument('--jl01-end-date', help='JL01 补采结束营业日，未填则与开始日期相同')
     parser.add_argument('--jl02-start-date', help='JL02 补采开始营业日，格式 YYYY-MM-DD')
     parser.add_argument('--jl02-end-date', help='JL02 补采结束营业日，未填则与开始日期相同')
-    parser.add_argument('--reports', nargs='+', choices=['RS01', 'JD01', 'JD04', 'JY01', 'JY03', 'JL01', 'JL02', 'JL11', 'KF11', 'FORECAST', 'ROOM_STATUS'], help='仅执行指定报表，例如 --reports JL01')
+    parser.add_argument('--reports', nargs='+', choices=['RS01', 'JD01', 'JD04', 'JD11', 'JY01', 'JY03', 'JL01', 'JL02', 'JL11', 'KF11', 'FORECAST', 'ROOM_STATUS'], help='仅执行指定报表，例如 --reports JL01')
     args = parser.parse_args()
     
     print("=" * 60)
@@ -210,11 +210,13 @@ def main() -> int:
     from fetch_rs01 import fetch_rs01
     from fetch_jd01 import fetch_jd01
     from fetch_jd04 import fetch_jd04
+    from fetch_jd11 import fetch_jd11, etl_jd11
     
     fetch_jobs = [
         ("RS01", "房费日结", fetch_rs01),
         ("JD01", "预订", fetch_jd01),
         ("JD04", "续住", fetch_jd04),
+        ("JD11", "客人住店明细", fetch_jd11),
         ("JY01", "经营日报", fetch_jy01),
         ("JY03", "经营月报", lambda: fetch_jy03(args.jy03_backfill)),
         ("JL01", "经理综合日报", lambda: fetch_jl01(args.jl01_start_date, args.jl01_end_date)),
@@ -256,6 +258,7 @@ def main() -> int:
         ("RS01", rs01_etl_main),
         ("JD01", jd01_etl_main),
         ("JD04", jd04_etl_main),
+        ("JD11", etl_jd11),
         ("JY01", jy01_etl_main),
         ("JY03", jy03_etl_main),
         ("JL01", jl01_etl_main),

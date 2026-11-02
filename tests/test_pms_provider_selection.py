@@ -122,6 +122,7 @@ class PmsProviderSelectionTests(TestCase):
             ("bypms", "bypms_jl11_data.py", []),
             ("bypms", "bypms_jy03_data.py", []),
             ("bypms", "bypms_jd01_data.py", []),
+            ("bypms", "bypms_jd02_data.py", []),
         ])
 
     def test_bypms_runs_both_collectors_under_pms_fetch(self):
@@ -141,7 +142,7 @@ class PmsProviderSelectionTests(TestCase):
                 result = runner.run_task("pms_fetch", settings, {})
 
         self.assertEqual(result["status"], "success")
-        self.assertEqual(len(calls), 7)
+        self.assertEqual(len(calls), 8)
         self.assertTrue(calls[0][1].endswith("bypms_room_status_data.py"))
         self.assertTrue(calls[1][1].endswith("bypms_channel_mapping_data.py"))
         self.assertTrue(calls[2][1].endswith("bypms_rs01_data.py"))
@@ -149,3 +150,4 @@ class PmsProviderSelectionTests(TestCase):
         self.assertTrue(calls[4][1].endswith("bypms_jl11_data.py"))
         self.assertTrue(calls[5][1].endswith("bypms_jy03_data.py"))
         self.assertTrue(calls[6][1].endswith("bypms_jd01_data.py"))
+        self.assertTrue(calls[7][1].endswith("bypms_jd02_data.py"))

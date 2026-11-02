@@ -12,6 +12,7 @@ import runner
 
 TABLES = {
     "jd01_booking_detail": ("pms_active", "exact"),
+    "jd02_guest_stay_detail": ("pms_active", "exact"),
     "jd04_inhouse_extension": ("pms_active", "exact"),
     "jy01_hotel_statistics_daily": ("pms_active", "exact"),
     "jy03_hotel_statistics_month": ("pms_active", "exact"),
@@ -31,6 +32,7 @@ TABLES = {
 TASK_TABLES = {
     "pms_fetch": (
         "jd01_booking_detail",
+        "jd02_guest_stay_detail",
         "jd04_inhouse_extension",
         "jy01_hotel_statistics_daily",
         "jy03_hotel_statistics_month",

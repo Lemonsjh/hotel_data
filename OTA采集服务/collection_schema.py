@@ -42,6 +42,7 @@ TASK_TABLES = {
 REPORT_TABLES = {
     'rs01': ('rs01_room_revenue_daily',), 'room_revenue': ('rs01_room_revenue_daily',),
     'jd01': ('jd01_booking_detail',), 'jd04': ('jd04_inhouse_extension',),
+    'jd02': ('jd02_guest_stay_detail',), 'jd11': ('jd02_guest_stay_detail',),
     'jl01': ('jl01_room_type_performance_daily',), 'jl02': ('jl02_hotel_performance_daily',),
     'jl11': ('jl11_room_type_classification',), 'jy01': ('jy01_hotel_statistics_daily',),
     'jy03': ('jy03_hotel_statistics_month',), 'kf11': ('kf11_room_status_snapshot',),
@@ -68,7 +69,7 @@ def required_tables(task, specs):
     tables = {'hotel_room_type_mapping'}
     for platform, script, args in specs:
         if platform == 'pms':
-            reports = ['rs01', 'jd01', 'jy01', 'jy03', 'jl01', 'jl02', 'jl11', 'forecast', 'room_status']
+            reports = ['rs01', 'jd01', 'jd11', 'jy01', 'jy03', 'jl01', 'jl02', 'jl11', 'forecast', 'room_status']
             if '--reports' in args:
                 reports = []
                 for item in args[args.index('--reports') + 1:]:
@@ -80,7 +81,7 @@ def required_tables(task, specs):
                        'daily_report.py': ['jy01'], 'monthly_report.py': ['jy03'],
                        'performance_report.py': ['jl02'], 'booking_report.py': ['jd01'],
                        'classification_report.py': ['jl11'], 'room_performance_report.py': ['jl01'],
-                       'revenue_report.py': ['rs01']}[script.name]
+                       'revenue_report.py': ['rs01'], 'guest_report.py': ['jd02']}[script.name]
         else:
             reports = [script.stem.removeprefix(platform + '_').removesuffix('_data')]
         for report in reports:
@@ -116,6 +117,18 @@ def ensure_task_tables(task, settings, specs):
     config = settings.get('mysql') or {}
     if not config.get('database'):
         return  # 未配置目标数据库时，沿用采集器自身的配置校验。
-    created = ensure_tables(config, required_tables(task, specs))
+    required = required_tables(task, specs)
+    created = ensure_tables(config, required)
+    if task == 'pms_fetch' and any(platform == 'pms' for platform, _, _ in specs) and 'jd02_guest_stay_detail' in required:
+        connection = connect_mysql(config, autocommit=True, attempts=1)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+                               "AND TABLE_NAME='jd02_guest_stay_detail' AND COLUMN_NAME='order_id'")
+                column = cursor.fetchone()
+                if column and column[0] == 'NO':
+                    cursor.execute("ALTER TABLE `jd02_guest_stay_detail` MODIFY `order_id` varchar(100) DEFAULT NULL")
+        finally:
+            connection.close()
     if created:
         print('Created missing collection tables: ' + ', '.join(created))
