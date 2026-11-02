@@ -117,7 +117,8 @@ class PmsPasswordLoginTests(unittest.TestCase):
                 self.assertEqual(set(codes) & {'KF11', 'JD04'}, expected)
                 self.assertEqual(jobs.call_args.kwargs['enable_circuit_breaker'], not bool(args))
                 if not args:
-                    self.assertEqual(len(codes), 9)
+                    self.assertEqual(len(codes), 10)
+                    self.assertIn('JD11', codes)
 
 
 if __name__ == '__main__':
