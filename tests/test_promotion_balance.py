@@ -42,9 +42,8 @@ class PromotionBalanceTests(unittest.TestCase):
         with patch.dict('os.environ', {'CTRIP_COOKIE': 'fake', 'MEITUAN_PROMOTION_COOKIE': 'fake'}), \
              patch.object(balance.requests, 'post') as post, patch.object(balance.requests, 'get') as get:
             balance.fetch_balance('ctrip')
-            balance.fetch_balance('meituan')
             self.assertEqual(post.call_args.kwargs['data'], {'accountType': 'Hotel', 'specialAccountType': 'Pyramid'})
-            self.assertEqual(get.call_args.args[0], balance.URLS['meituan'])
+            get.assert_not_called()
 
 
 if __name__ == '__main__':

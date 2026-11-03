@@ -6,6 +6,7 @@ import os
 import random
 import sys
 import tempfile
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -197,7 +198,8 @@ def request_page(context: Any, page: Any, period_start: date, period_end: date, 
     return response["msg"]
 
 
-def fetch_plans(period_start: date, period_end: date) -> list[dict[str, Any]]:
+@contextmanager
+def promotion_browser():
     with browser_profile_lock(), sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile_path()),
@@ -216,16 +218,21 @@ def fetch_plans(period_start: date, period_end: date) -> list[dict[str, Any]]:
             )
             if cookies:
                 context.add_cookies(cookies)
-            page = context.pages[0] if context.pages else context.new_page()
-            plans: list[dict[str, Any]] = []
-            for page_num in range(1, 101):
-                response = request_page(context, page, period_start, period_end, page_num)
-                page_rows = response.get("planList") or []
-                plans.extend(row for row in page_rows if isinstance(row, dict))
-                if len(plans) >= int(response.get("total") or 0) or len(page_rows) < PAGE_SIZE:
-                    return plans
+            yield context
         finally:
             context.close()
+
+
+def fetch_plans(period_start: date, period_end: date) -> list[dict[str, Any]]:
+    with promotion_browser() as context:
+        page = context.pages[0] if context.pages else context.new_page()
+        plans: list[dict[str, Any]] = []
+        for page_num in range(1, 101):
+            response = request_page(context, page, period_start, period_end, page_num)
+            page_rows = response.get("planList") or []
+            plans.extend(row for row in page_rows if isinstance(row, dict))
+            if len(plans) >= int(response.get("total") or 0) or len(page_rows) < PAGE_SIZE:
+                return plans
     raise RuntimeError("Promotion performance pagination exceeded 100 pages")
 
 

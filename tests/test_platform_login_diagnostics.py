@@ -49,6 +49,7 @@ class PlatformLoginDiagnosticsTests(unittest.TestCase):
             self.mocks[name] = self.stack.enter_context(patch.object(login, name, **args))
         self.stack.enter_context(patch.object(login.runner, "LOG_DIR", self.folder))
         self.stack.enter_context(patch.object(login.time, "sleep", return_value=None))
+        self.stack.enter_context(patch.object(login, "watch_promotion_cookie", side_effect=lambda *args: nullcontext()))
         self.navigate = self.stack.enter_context(patch.object(login, "navigate", side_effect=self.observed_navigation))
 
     def observed_navigation(self, page, url):

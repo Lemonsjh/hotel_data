@@ -52,27 +52,25 @@ def build_row(platform, payload, hotel_id, captured_at):
 
 
 def fetch_balance(platform):
-    cookie_key = 'MEITUAN_PROMOTION_COOKIE' if platform == 'meituan' else 'CTRIP_COOKIE'
-    cookie = os.environ.get(cookie_key, '').strip()
+    if platform != 'ctrip':
+        raise ValueError('美团余额请通过浏览器采集入口执行')
+    cookie = os.environ.get('CTRIP_COOKIE', '').strip()
     if not cookie:
         raise RuntimeError('请先配置平台登录 Cookie')
     headers = {'Cookie': cookie, 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json, text/plain, */*',
-               'Referer': ('https://ebmidas.dianping.com/shopdiy-node/main' if platform == 'meituan'
-                           else 'https://ebooking.ctrip.com/toolcenter/cpc/pyramid')}
+               'Referer': 'https://ebooking.ctrip.com/toolcenter/cpc/pyramid'}
     try:
-        if platform == 'meituan':
-            response = requests.get(URLS[platform], headers=headers, timeout=30, allow_redirects=False)
-        else:
-            response = requests.post(URLS[platform], headers=headers, timeout=30, allow_redirects=False,
-                                     data={'accountType': 'Hotel', 'specialAccountType': 'Pyramid'})
+        response = requests.post(URLS[platform], headers=headers, timeout=30, allow_redirects=False,
+                                 data={'accountType': 'Hotel', 'specialAccountType': 'Pyramid'})
         response.raise_for_status()
         return response.json()
     except (requests.RequestException, ValueError):
         raise RuntimeError(f'{platform} 推广余额接口请求失败或登录已失效') from None
 
 
-def main(platform):
-    row = build_row(platform, fetch_balance(platform), os.environ.get('HOTEL_ID', '').strip(), datetime.now())
+def main(platform, fetcher=None):
+    payload = fetcher() if fetcher else fetch_balance(platform)
+    row = build_row(platform, payload, os.environ.get('HOTEL_ID', '').strip(), datetime.now())
     sync_table(TABLE, HEADERS, [row])
     print(f'{platform} promotion balance snapshot saved')
     return 0

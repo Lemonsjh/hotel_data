@@ -16,6 +16,7 @@ from playwright.sync_api import sync_playwright
 
 import runner
 from login_diagnostics import LoginDiagnostics
+from promotion_login_cookie import watch_promotion_cookie
 from hotel_name_probe import probe as probe_hotel
 
 
@@ -429,7 +430,14 @@ def show_success(context: Any, platform: str, count: int) -> None:
 def keep_open(context: Any, platform: str) -> None:
     browser = context.browser
     while browser and browser.is_connected() and not stop_path(platform).exists():
-        time.sleep(0.5)
+        pages = context.pages
+        if pages:
+            try:
+                pages[-1].wait_for_timeout(500)
+            except PlaywrightError:
+                pass
+        else:
+            time.sleep(0.5)
 
 
 def run(platform: str, switch_account: bool = False) -> int:
@@ -503,7 +511,12 @@ def run(platform: str, switch_account: bool = False) -> int:
                 completed_at=now_text(),
             )
             show_success(context, platform, count)
-            if had_session:
+            if platform == "meituan":
+                def promotion_saved():
+                    write_status(platform, "success", "美团推广后台 Cookie 已自动更新", completed_at=now_text())
+                with watch_promotion_cookie(context, cookie_header, promotion_saved):
+                    keep_open(context, platform)
+            elif had_session:
                 keep_open(context, platform)
             else:
                 time.sleep(3)
