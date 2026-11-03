@@ -6,6 +6,20 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
+-- Table: ota_promotion_balance
+CREATE TABLE IF NOT EXISTS `ota_promotion_balance` (
+  `hotel_id` varchar(100) NOT NULL,
+  `platform_scope` varchar(20) NOT NULL,
+  `promotion_type` varchar(30) NOT NULL,
+  `promotion_type_name` varchar(30) NOT NULL,
+  `total_balance` decimal(16,2) NOT NULL,
+  `account_balance` decimal(16,2) DEFAULT NULL,
+  `coupon_balance` decimal(16,2) DEFAULT NULL,
+  `currency` varchar(10) NOT NULL DEFAULT 'CNY',
+  `snapshot_time` datetime NOT NULL,
+  PRIMARY KEY (`hotel_id`,`platform_scope`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Table: ctrip_ota_activity_product_detail
 CREATE TABLE IF NOT EXISTS `ctrip_ota_activity_product_detail` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,

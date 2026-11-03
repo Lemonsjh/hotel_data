@@ -207,6 +207,7 @@ def fetch_plans(period_start: date, period_end: date) -> list[dict[str, Any]]:
             locale="zh-CN",
         )
         try:
+            context.add_init_script("Object.defineProperty(Navigator.prototype, 'webdriver', {get: () => false});")
             cookies = (
                 cookie_entries(MEITUAN_ME_COOKIE, "https://me.meituan.com/")
                 + cookie_entries(MEITUAN_EB_COOKIE, "https://eb.meituan.com/")

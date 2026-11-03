@@ -105,6 +105,11 @@ class ManualMeituanSessionTests(unittest.TestCase):
              patch.object(promotion, "request_page", return_value={"total": 0, "pageSize": 20, "planList": [], "pageNum": 1}) as request:
             self.assertEqual(promotion.fetch_plans(date(2026, 9, 21), date(2026, 10, 20)), [])
         context = factory.return_value.__enter__.return_value.chromium.launch_persistent_context.return_value
+        context.add_init_script.assert_called_once_with(
+            "Object.defineProperty(Navigator.prototype, 'webdriver', {get: () => false});")
+        self.assertLess(
+            [call[0] for call in context.mock_calls].index('add_init_script'),
+            [call[0] for call in context.mock_calls].index('add_cookies'))
         cookies = context.add_cookies.call_args.args[0]
         ad = next(c for c in cookies if c["url"] == "https://ebmidas.dianping.com/")
         self.assertEqual((ad["name"], ad["value"], ad["sameSite"], ad["secure"]), ("ad", "current", "None", True))

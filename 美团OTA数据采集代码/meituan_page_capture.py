@@ -22,10 +22,26 @@ def profile_path() -> Path:
 
 
 def process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return ctypes.get_last_error() != 87  # 无权访问时保守地视为进程仍存在。
     try:
         os.kill(pid, 0)
-    except (OSError, ValueError, SystemError):
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 
@@ -51,14 +67,17 @@ def browser_profile_lock(timeout_seconds: int = 120) -> Any:
         except FileExistsError:
             try:
                 owner = int(path.read_text(encoding="ascii").strip() or "0")
-                if not process_alive(owner):
-                    path.unlink(missing_ok=True)
-                    continue
+                if owner > 0 and not process_alive(owner):
+                    try:
+                        path.unlink(missing_ok=True)
+                    except PermissionError:
+                        pass  # Windows 文件句柄尚未释放，继续等待。
+                    else:
+                        continue
             except FileNotFoundError:
                 continue
             except (ValueError, OSError):
-                path.unlink(missing_ok=True)
-                continue
+                pass  # 创建方可能尚未写入 PID，等待其完成。
             if time.monotonic() >= deadline:
                 raise RuntimeError("Meituan browser profile is busy; retry after the active task finishes")
             time.sleep(1)

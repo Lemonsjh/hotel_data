@@ -52,6 +52,7 @@ TASKS = {
     "meituan_promotion_status": ("meituan", "meituan_promotion_status_data.py", []),
     "meituan_video_upload_status": ("meituan", "meituan_video_upload_status_data.py", []),
     "meituan_promotion_performance": ("meituan", "meituan_promotion_performance_data.py", []),
+    "meituan_promotion_balance": ("meituan", "meituan_promotion_balance_data.py", []),
     "meituan_order_loss": ("meituan", "meituan_order_loss_data.py", []),
     "meituan_scan_order": ("meituan", "meituan_scan_order_data.py", []),
     "meituan_order_detail": ("meituan", "meituan_order_detail_data.py", []),
@@ -72,6 +73,7 @@ TASKS = {
     "ctrip_user_profile": ("ctrip", "ctrip_user_profile_data.py", []),
     "ctrip_psi_score": ("ctrip", "ctrip_psi_score_data.py", []),
     "ctrip_promotion_performance": ("ctrip", "ctrip_promotion_performance_data.py", []),
+    "ctrip_promotion_balance": ("ctrip", "ctrip_promotion_balance_data.py", []),
     "ctrip_review": ("ctrip", "ctrip_review_data.py", ["--sync-db"]),
     "ctrip_review_detail": ("ctrip", "ctrip_review_detail_data.py", ["--sync-db"]),
     "ctrip_promotion": ("ctrip", "ctrip_promotion_data.py", ["--sync-db"]),
@@ -124,7 +126,7 @@ def load_settings() -> dict[str, Any]:
         changed = True
     for name in TASKS:
         if name not in tasks:
-            tasks[name] = False
+            tasks[name] = name in {"meituan_promotion_balance", "ctrip_promotion_balance"}
             changed = True
     pms = settings.setdefault("pms", {})
     selected, provider_changed = pms_providers.normalize_provider(settings)
