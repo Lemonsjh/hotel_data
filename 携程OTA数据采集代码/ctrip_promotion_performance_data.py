@@ -10,7 +10,10 @@ from ctrip_config import DEFAULT_HOTEL_NAME
 from ctrip_flow_conversion_data import FlowBrowserClient, number
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ota_mysql_writer import sync_table
+from ota_mysql_writer import DB_CONFIG, sync_table
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'OTA采集服务'))
+from ctrip_promotion_controls import collect_snapshot
 
 
 API_URL = "https://ebooking.ctrip.com/toolcenter/api/cpc/queryCampaignSummaryReport?hostType=HE"
@@ -65,6 +68,13 @@ def main() -> int:
     with FlowBrowserClient() as client:
         row = build_row(client.post_json(API_URL, request_payload(start, end)), start, end, captured_at)
     sync_table(TABLE_NAME, HEADERS, [row])
+    count = collect_snapshot({
+        'hotel': {'hotel_id': os.environ.get('HOTEL_ID', '')},
+        'ctrip': {'cookie': os.environ.get('CTRIP_COOKIE', ''),
+                  'hotel_id': os.environ.get('CTRIP_HOTEL_ID', ''), 'hotel_name': DEFAULT_HOTEL_NAME},
+        'mysql': DB_CONFIG,
+    })
+    print(f'Ctrip promotion plan snapshot sync completed: rows={count}')
     print("Ctrip 30-day promotion performance sync completed: rows=1")
     return 0
 

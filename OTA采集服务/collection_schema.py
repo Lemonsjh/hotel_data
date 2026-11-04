@@ -33,7 +33,7 @@ TASK_TABLES = {
     'ctrip_video_upload_status': ('ctrip_ota_video_upload_status',),
     'ctrip_user_profile': ('ctrip_ota_userprofile_distribution',),
     'ctrip_psi_score': ('ctrip_ota_psi_score', 'ctrip_ota_psi_metric'),
-    'ctrip_promotion_performance': ('ctrip_ota_promotion_performance_30d',),
+    'ctrip_promotion_performance': ('ctrip_ota_promotion_performance_30d', 'ctrip_ota_promotion_plan'),
     'ctrip_promotion_balance': ('ota_promotion_balance',),
     'ctrip_review': ('ctrip_ota_review_overview', 'ctrip_ota_review_ranking'),
     'ctrip_review_detail': ('ctrip_ota_review_detail',),

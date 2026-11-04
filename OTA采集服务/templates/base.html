@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}">
+  {% if active == 'promotions' %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='promotion.css') }}">
+  {% endif %}
 </head>
 <body>
   <main class="shell">

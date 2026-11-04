@@ -328,6 +328,19 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_performance_30d` (
   PRIMARY KEY (`hotel_id`,`platform_scope`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Table: ctrip_ota_promotion_plan
+CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_plan` (
+  `hotel_id` varchar(64) NOT NULL,
+  `hotel_name` varchar(255) NOT NULL,
+  `campaign_id` varchar(64) NOT NULL,
+  `campaign_name` varchar(255) NOT NULL,
+  `account_id` varchar(64) NOT NULL,
+  `campaign_status` int NOT NULL,
+  `promotion_status` varchar(20) NOT NULL,
+  `snapshot_time` datetime NOT NULL,
+  PRIMARY KEY (`hotel_id`,`campaign_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Table: ctrip_ota_promotion_status
 CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_status` (
   `hotel_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,

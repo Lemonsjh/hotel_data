@@ -15,13 +15,12 @@ if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
 import runner
-from mysql_connection import connect_mysql
+from promotion_queue import connect_database
 
 from meituan_page_capture import browser_profile_lock, cookie_entries, page_access_issue, profile_path
 
 
 TABLE_NAME = "meituan_ota_promotion_performance_30d"
-TASK_TABLE = "ota_promotion_control_task"
 PROMOTION_PAGE_URL = (
     "https://me.meituan.com/ebooking/merchant/fullPathIframe?"
     "iUrl=https%3A%2F%2Febmidas.dianping.com%2Fshopdiy%2Faccount%2FpcCpcEntry%3F"
@@ -74,110 +73,6 @@ def find_promotion(settings: dict[str, Any], launch_id: str) -> dict[str, Any]:
         if str(promotion.get("launch_id")) == launch_id:
             return promotion
     raise RuntimeError("未找到该推广记录，请先运行美团近30天推广效果采集")
-
-
-def enqueue_control_task(settings: dict[str, Any], promotion: dict[str, Any], action: str) -> int:
-    config = ACTION_CONFIG.get(action)
-    if not config:
-        raise RuntimeError("不支持的推广操作")
-    launch_id = str(promotion.get("launch_id") or "").strip()
-    if not launch_id.isdigit():
-        raise RuntimeError("推广 launch_id 无效")
-    current = normalized_promotion_status(promotion.get("promotion_status"))
-    if current == config["expected_status"]:
-        raise RuntimeError(f"推广当前已是{config['label']}后的状态，无需创建任务")
-    if current not in {"RUNNING", "PAUSED"}:
-        raise RuntimeError(f"当前推广状态不支持{config['label']}：{current or 'UNKNOWN'}")
-
-    hotel_id = runner.internal_hotel_id(settings, "meituan")
-    connection = connect_database(settings, autocommit=False)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"SELECT id FROM `{TASK_TABLE}` WHERE hotel_id=%s AND platform='meituan' "
-                "AND launch_id=%s AND action=%s AND status IN ('pending', 'processing') LIMIT 1",
-                (hotel_id, launch_id, action),
-            )
-            if cursor.fetchone():
-                raise RuntimeError("相同推广操作已在待执行队列中")
-            cursor.execute(
-                f"INSERT INTO `{TASK_TABLE}` (hotel_id, platform, launch_id, action) VALUES (%s, 'meituan', %s, %s)",
-                (hotel_id, launch_id, action),
-            )
-            task_id = int(cursor.lastrowid)
-        connection.commit()
-        return task_id
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
-
-
-def recent_control_tasks(settings: dict[str, Any], limit: int = 20) -> list[dict[str, Any]]:
-    hotel_id = runner.internal_hotel_id(settings, "meituan")
-    connection = connect_database(settings)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"SELECT id, launch_id, action, status, error_message, created_at, executed_at "
-                f"FROM `{TASK_TABLE}` WHERE hotel_id=%s AND platform='meituan' ORDER BY id DESC LIMIT %s",
-                (hotel_id, max(1, limit)),
-            )
-            columns = [column[0] for column in cursor.description or []]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
-    finally:
-        connection.close()
-
-
-def claim_control_tasks(settings: dict[str, Any], limit: int) -> list[dict[str, Any]]:
-    hotel_id = runner.internal_hotel_id(settings, "meituan")
-    connection = connect_database(settings, autocommit=True)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"SELECT id, launch_id, action FROM `{TASK_TABLE}` WHERE hotel_id=%s "
-                "AND platform='meituan' AND status='pending' ORDER BY id LIMIT %s",
-                (hotel_id, max(1, limit)),
-            )
-            claimed = []
-            for task_id, launch_id, action in cursor.fetchall():
-                cursor.execute(
-                    f"UPDATE `{TASK_TABLE}` SET status='processing', error_message=NULL "
-                    "WHERE id=%s AND status='pending'",
-                    (task_id,),
-                )
-                if cursor.rowcount:
-                    claimed.append({"id": task_id, "launch_id": str(launch_id), "action": str(action)})
-            return claimed
-    finally:
-        connection.close()
-
-
-def finish_control_task(settings: dict[str, Any], task_id: int, status: str, error: str | None = None) -> None:
-    connection = connect_database(settings, autocommit=True)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"UPDATE `{TASK_TABLE}` SET status=%s, error_message=%s, executed_at=%s WHERE id=%s",
-                (status, None if status == "success" else (error or "operation failed")[:500], datetime.now(), task_id),
-            )
-    finally:
-        connection.close()
-
-
-def fail_interrupted_control_tasks(settings: dict[str, Any]) -> None:
-    hotel_id = runner.internal_hotel_id(settings, "meituan")
-    connection = connect_database(settings, autocommit=True)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"UPDATE `{TASK_TABLE}` SET status='failed', error_message=%s "
-                "WHERE hotel_id=%s AND platform='meituan' AND status='processing'",
-                ("Previous promotion operation was interrupted before confirmation", hotel_id),
-            )
-    finally:
-        connection.close()
 
 
 def control_promotion(settings: dict[str, Any], promotion: dict[str, Any], action: str) -> str:
@@ -317,18 +212,3 @@ def append_audit_log(launch_id: str, action: str, result: str) -> None:
     line = f"{datetime.now():%Y-%m-%d %H:%M:%S} launch_id={launch_id} action={action} result={result}\n"
     with (runner.LOG_DIR / "meituan_promotion_control.log").open("a", encoding="utf-8") as file:
         file.write(line)
-
-
-def connect_database(settings: dict[str, Any], *, autocommit: bool = False) -> Any:
-    mysql = settings.get("mysql") or {}
-    return connect_mysql(
-        {
-            "host": mysql.get("host", "127.0.0.1"),
-            "port": int(mysql.get("port") or 3306),
-            "user": mysql.get("user", ""),
-            "password": mysql.get("password", ""),
-            "database": mysql.get("database", ""),
-            "charset": "utf8mb4",
-        },
-        autocommit=autocommit,
-    )
