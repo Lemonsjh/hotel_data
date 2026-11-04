@@ -34,9 +34,22 @@ class PromotionBalanceTests(unittest.TestCase):
             sync.assert_not_called()
 
     def test_missing_or_invalid_total_fails(self):
-        for value in (None, '', 'NaN', 'bad'):
+        for value in (None, '', 'NaN', 'bad', '1,23.45', '1,2', '--', True):
             with self.subTest(value=value), self.assertRaises(RuntimeError):
                 balance.build_row('meituan', {'code': 200, 'msg': {'balance': value}}, 'hotel', self.now)
+
+    def test_formatted_balance_preserves_amount_and_zero(self):
+        for value, expected in [('1,234.56', '1234.56'), (' 12,345,678.90 ', '12345678.90'),
+                                ('-1,234.56', '-1234.56'), ('0.00', '0.00')]:
+            with self.subTest(value=value):
+                row = balance.build_row('meituan', {'code': 200, 'msg': {'balance': value}}, 'hotel', self.now)
+                self.assertEqual(row[4], Decimal(expected))
+
+    def test_invalid_amount_does_not_replace_snapshot(self):
+        with patch.object(balance, 'sync_table') as sync, patch.dict('os.environ', {'HOTEL_ID': 'hotel'}):
+            with self.assertRaisesRegex(RuntimeError, '无效金额'):
+                balance.main('meituan', lambda: {'code': 200, 'msg': {'balance': '--'}})
+        sync.assert_not_called()
 
     def test_requests_match_platform_interfaces(self):
         with patch.dict('os.environ', {'CTRIP_COOKIE': 'fake', 'MEITUAN_PROMOTION_COOKIE': 'fake'}), \

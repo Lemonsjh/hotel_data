@@ -1,5 +1,6 @@
 """美团推广通与携程金字塔账户余额的最新快照。"""
 import os
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -22,7 +23,10 @@ def amount(value, *, required=False):
             raise RuntimeError('余额接口缺少账户余额')
         return None
     try:
-        result = Decimal(str(value))
+        text = str(value).strip()
+        if re.fullmatch(r'[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?', text):
+            text = text.replace(',', '')
+        result = Decimal(text)
         if not result.is_finite():
             raise ValueError
         return result
