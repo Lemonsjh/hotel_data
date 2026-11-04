@@ -3,6 +3,7 @@ from copy import copy
 import json
 import os
 import sys
+import time
 import requests
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -23,7 +24,7 @@ EXCEL_HEADERS = ["snapshot_time", "business_date", "hotel_name", "metric_code", 
                  "metric_value", "metric_unit", "compare_label", "compare_value", "competitor_rank", "peer_average"]
 METRIC_ORDER = [("PAY_AMT", "销售额"), ("PAY_ORDER_CNT", "支付订单"),
                 ("PAY_ROOMNIGHT", "销售间夜"), ("CONSUME_ROOMNIGHT_SPLIT_EX_7DAYS_REFUND", "入住间夜"),
-                ("EXPOSE_PV_CNT", "曝光量"), ("INTENTION_UV", "浏览人数"),
+                ("EXPOSURE_UV", "曝光人数"), ("INTENTION_UV", "浏览人数"),
                 ("PAY_ORDER_CNT_UV", "支付转化率"), ("PAY_ADR", "销售均价"),
                 ("DAY_ROOM_LOWEST_PRICE_AVG", "引流价"), ("NOT_AVAILABLE_REAL_ROOM_RATE", "满房率")]
 HOURLY_HEADERS = [
@@ -83,7 +84,16 @@ class MeituanDashboardClient:
             "csecplatform": "4",
             "csecversion": "4.2.4"
         }
-        return self._parse_dashboard(self._get_api(self.base_url, params))
+        for attempt in range(3):
+            dashboard = self._parse_dashboard(self._get_api(self.base_url, params))
+            payment = dashboard["metrics"].get("PAY_ORDER_CNT")
+            if hourly_metric_value(payment) is not None:
+                return dashboard
+            if attempt < 2:
+                delay = 5 * (attempt + 1)
+                print(f"美团经营 dateRange={date_range} 支付订单为空，{delay}秒后补采（{attempt + 1}/2）", flush=True)
+                time.sleep(delay)
+        raise RuntimeError(f"美团经营 dateRange={date_range} 支付订单为空，补采2次后仍无有效值，停止本轮入库")
     def get_report_data(self, poi_id=POI_ID, partner_id=PARTNER_ID, date_range=1):
         dashboard = self.get_dashboard(poi_id=poi_id, partner_id=partner_id, date_range=date_range)
         flow_conversion = self.get_flow_conversion(poi_id=poi_id, partner_id=partner_id, date_range=date_range)
@@ -260,7 +270,7 @@ def excel_metric_value(value, unit=""):
     try:
         if text.endswith("%"):
             text = text.rstrip("%")
-        number = float(text)
+        number = float(text.strip().replace(",", ""))
         return int(number) if number.is_integer() else number
     except ValueError:
         return value
