@@ -159,22 +159,18 @@ class UpdaterTests(unittest.TestCase):
             update_guard.ensure_not_updating()
 
     def test_latest_release_requires_stable_complete_assets(self):
-        base = {"tag_name": "v1.0.0", "assets": [{"name": fmt.ASSET_NAME}, {"name": fmt.ASSET_NAME.replace('.zip', '.sha256')}]}
+        base = {"tag_name": "v1.0.0", "assets": [{"name": fmt.ASSET_NAME, "browser_download_url": "https://gitee.com/attach/update.zip"}, {"name": fmt.ASSET_NAME.replace('.zip', '.sha256'), "browser_download_url": "https://foruda.gitee.com/attach/update.sha256"}]}
         with patch.object(update, "download", return_value=json.dumps(base).encode()):
             self.assertEqual(update.latest_release()["tag_name"], "v1.0.0")
         for changes in ({"draft": True}, {"prerelease": True}, {"assets": []}):
             with patch.object(update, "download", return_value=json.dumps({**base, **changes}).encode()), self.assertRaises(ValueError):
                 update.latest_release()
 
-    def test_api_rate_limit_uses_fixed_repository_stable_redirect(self):
-        response = MagicMock()
-        response.__enter__.return_value.url = f"https://github.com/{fmt.REPOSITORY}/releases/tag/v1.2.3"
-        limited = urllib.error.HTTPError("https://api.github.com/", 403, "rate limit", {}, None)
-        context = update.https_context()
-        with patch.object(update, "download", side_effect=limited), patch.object(update.urllib.request, "urlopen", return_value=response) as open_url, \
-                patch.object(update, "https_context", return_value=context):
-            self.assertEqual(update.latest_release()["tag_name"], "v1.2.3")
-        self.assertIs(open_url.call_args.kwargs['context'], context)
+    def test_gitee_api_error_does_not_fall_back_to_github(self):
+        limited = urllib.error.HTTPError("https://gitee.com/api/v5/", 403, "forbidden", {}, None)
+        with patch.object(update, "download", side_effect=limited) as download, self.assertRaises(urllib.error.HTTPError):
+            update.latest_release()
+        download.assert_called_once_with(f"{update.GITEE_API}/releases/latest", 1024 * 1024)
 
     def test_https_context_adds_bundle_to_existing_system_trust(self):
         context = MagicMock()

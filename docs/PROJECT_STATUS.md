@@ -1,5 +1,13 @@
 # 项目当前进度（PROJECT_STATUS）
 
+## 2026-11-06：更新器切换 Gitee 发行版
+
+按用户要求，updater/update.py 将版本查询固定到 Gitee Lemonsjh/hotel_data 的 releases/latest，优先识别发行版中的正式更新附件，缺失时通过发行版 ID 分页读取 attach_files，再按附件返回的 browser_download_url 下载 ZIP 与 SHA-256。不再使用 GitHub 版本接口、稳定版本跳转或拼接 GitHub 附件地址。初始附件 URL 仅接受 Gitee HTTPS 地址，拒绝重复必需附件、源码压缩包替代、预发布与缺失附件；保留 HTTPS 证书、大小、SHA-256、固定仓库清单、版本及依赖校验，以及原空闲检测、备份、安装和恢复流程。未改动已有未提交的 updater/package_format.py 等慧云改动。
+
+本轮 36 项更新器测试通过，覆盖真实 Gitee 数据形态、单独附件列表及分页、固定下载地址、无 GitHub 回退、预发布/缺失/重复/非 Gitee 地址拒绝、校验不一致不安装，以及已有安装回退和配置保护。实际只读检查 Gitee 当前 v1.0.1 返回成功，但 attach_files 为空，更新器按预期提示缺少 hotel-collector-update.zip 和 hotel-collector-update.sha256 后退出；未执行真实代码更新、停服务或业务数据库操作，尚未完成真实附件下载及安装验收。
+
+README 同步 Gitee 下载与旧客户端切换说明；现有 GitHub Actions 仍负责原有构建/发布，Git 双端推送不会同步 Release 附件，需要将两个构建产物上传对应 Gitee 正式发行版。旧部署需先替换新版 updater/update.py 或通过过渡版/完整包安装一次，之后使用 Gitee；本批按用户要求仅提交更新器、相关测试和说明到 GitHub/Gitee，其他未提交改动保留；正式发行版由用户后续手动发布，本批不创建 Release 或重打便携包。
+
 ## 2026-11-04：推广余额金额千分位兼容
 
 用户提供的实际响应 code=200、msg.balance="2,085.25"，确认旧代码直接转 Decimal 无法处理千分位逗号，导致余额解析失败。公共余额解析增加标准千分位格式支持，实际值已离线验证为精确Decimal 2085.25，并保留零值；错误分组、占位符、非有限数仍失败，异常时不写入或清空旧快照。7项余额处理和3项美团浏览器采集测试通过。未执行线上采集或数据库写入。

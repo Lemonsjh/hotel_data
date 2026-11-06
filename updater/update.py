@@ -1,4 +1,4 @@
-"""Explicit, interactive GitHub Releases updater for Windows deployments."""
+"""Explicit, interactive Gitee Releases updater for Windows deployments."""
 from __future__ import annotations
 
 import argparse
@@ -24,6 +24,8 @@ from package_format import ASSET_NAME, MAX_BYTES, REPOSITORY, digest, validate_p
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = "OTA采集服务"
 LOCK_NAME = "update.lock"
+GITEE_API = f"https://gitee.com/api/v5/repos/{REPOSITORY}"
+CHECKSUM_NAME = ASSET_NAME.replace(".zip", ".sha256")
 
 
 def https_context() -> ssl.SSLContext:
@@ -34,7 +36,7 @@ def https_context() -> ssl.SSLContext:
 
 
 def download(url: str, limit: int) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "HotelCollector-Updater/1", "Accept": "application/vnd.github+json"})
+    request = urllib.request.Request(url, headers={"User-Agent": "HotelCollector-Updater/1", "Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=30, context=https_context()) as response:
         if not response.url.startswith("https://"):
             raise ValueError("Insecure download redirect")
@@ -44,33 +46,57 @@ def download(url: str, limit: int) -> bytes:
     return data
 
 
+def release_asset_urls(release: dict) -> dict[str, str]:
+    required = {ASSET_NAME, CHECKSUM_NAME}
+    urls = {}
+    for item in release.get("assets", []):
+        name = item.get("name")
+        if name not in required:
+            continue
+        if name in urls:
+            raise ValueError("Duplicate Gitee update attachment: " + name)
+        url = item.get("browser_download_url", "")
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if (parsed.scheme != "https" or parsed.username or parsed.password or parsed.fragment
+                or parsed.port not in (None, 443)
+                or not (host == "gitee.com" or host.endswith(".gitee.com"))):
+            raise ValueError("Invalid Gitee attachment URL: " + name)
+        urls[name] = url
+    if urls.keys() != required:
+        raise ValueError("Gitee release update attachments are not ready: " + ", ".join(sorted(required - urls.keys())))
+    return urls
+
+
 def latest_release() -> dict:
     try:
-        release = json.loads(download(f"https://api.github.com/repos/{REPOSITORY}/releases/latest", 1024 * 1024))
+        release = json.loads(download(f"{GITEE_API}/releases/latest", 1024 * 1024))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            raise ValueError("No official Release is available yet. Existing service was not changed.") from None
-        if exc.code in {403, 429}:
-            # Official stable-release redirect avoids anonymous API rate limits.
-            request = urllib.request.Request(f"https://github.com/{REPOSITORY}/releases/latest",
-                                             headers={"User-Agent": "HotelCollector-Updater/1"})
-            with urllib.request.urlopen(request, timeout=30, context=https_context()) as response:
-                target = urlparse(response.url)
-            prefix = f"/{REPOSITORY}/releases/tag/"
-            if target.scheme != "https" or target.netloc != "github.com" or not target.path.startswith(prefix):
-                raise ValueError("No stable Release redirect is available") from None
-            tag = target.path[len(prefix):]
-            version(tag)
-            release = {"tag_name": tag, "assets": [{"name": ASSET_NAME},
-                       {"name": ASSET_NAME.replace(".zip", ".sha256")}]}
-        else:
-            raise
-    if release.get("draft") or release.get("prerelease"):
-        raise ValueError("Not a stable release")
+            raise ValueError("No public Gitee Release is available yet. Existing service was not changed.") from None
+        raise
+    if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+        raise ValueError("Not a stable Gitee release")
     version(release["tag_name"])
-    names = [item["name"] for item in release.get("assets", [])]
-    if ASSET_NAME not in names or ASSET_NAME.replace(".zip", ".sha256") not in names:
-        raise ValueError("Release update assets are not ready; service was not changed")
+    assets = release.get("assets", [])
+    if not isinstance(assets, list):
+        raise ValueError("Invalid Gitee release assets")
+    required = {ASSET_NAME, CHECKSUM_NAME}
+    if not required <= {item.get("name") for item in assets}:
+        release_id = release.get("id")
+        if type(release_id) is not int or release_id <= 0:
+            raise ValueError("Gitee release update attachments are not ready")
+        assets = list(assets)
+        for page in range(1, 11):
+            url = f"{GITEE_API}/releases/{release_id}/attach_files?page={page}&per_page=100"
+            attachments = json.loads(download(url, 1024 * 1024))
+            if not isinstance(attachments, list):
+                raise ValueError("Invalid Gitee release attachments")
+            assets.extend(attachments)
+            if required <= {item.get("name") for item in assets} or len(attachments) < 100:
+                break
+        release["assets"] = assets
+    release_asset_urls(release)
     return release
 
 
@@ -168,7 +194,7 @@ def main() -> int:
     if not args.recover:
         release = latest_release()
         tag = release["tag_name"]
-        print(f"Installed: {current}; latest official Release: {tag}")
+        print(f"Installed: {current}; latest official Gitee Release: {tag}")
         if version(tag) <= version(current):
             print("Already up to date; no downgrade will be performed.")
             return 0
@@ -194,9 +220,9 @@ def main() -> int:
         else:
             if (ROOT / "updater" / "pending.json").exists():
                 raise ValueError("An interrupted update exists; use --recover first")
-            base = f"https://github.com/{REPOSITORY}/releases/download/{tag}/"
-            checksum = download(base + ASSET_NAME.replace(".zip", ".sha256"), 256).decode("ascii").split()[0]
-            data = download(base + ASSET_NAME, MAX_BYTES)
+            urls = release_asset_urls(release)
+            checksum = download(urls[CHECKSUM_NAME], 256).decode("ascii").split()[0]
+            data = download(urls[ASSET_NAME], MAX_BYTES)
             if digest(data) != checksum:
                 raise ValueError("Release asset checksum mismatch; existing service was not changed")
             package = work / ASSET_NAME
