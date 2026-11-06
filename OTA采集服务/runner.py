@@ -722,45 +722,57 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
     warnings: list[str] = []
     py = python_path(settings)
     if not py.exists():
-        warnings.append(f"Python path not found: {py}")
+        warnings.append("找不到采集程序使用的 Python，请联系安装人员。")
+    code_labels = {"meituan": "美团", "ctrip": "携程"}
     for platform, key in (("meituan", "meituan_code_dir"), ("ctrip", "ctrip_code_dir")):
         if not (settings.get(platform) or {}).get("enabled", True):
             continue
         default = "美团OTA数据采集代码" if platform == "meituan" else "携程OTA数据采集代码"
         code_dir = project_path((settings.get("paths") or {}).get(key), default)
         if not code_dir.exists():
-            warnings.append(f"{platform} code dir not found: {code_dir}")
+            warnings.append(f"找不到{code_labels[platform]}采集程序，请联系安装人员。")
     pms = settings.get("pms") or {}
     if pms.get("enabled", True):
         pms_script = script_path(settings, "pms", "fetch_main.py")
         if not pms_script.exists():
-            warnings.append(f"pms entry script not found: {pms_script}")
+            warnings.append("找不到 PMS 采集程序，请联系安装人员。")
         if not pms.get("username"):
-            warnings.append("PMS username is empty.")
+            warnings.append("还没有填写 PMS 登录账号。")
         if not pms.get("password"):
-            warnings.append("PMS password is empty.")
+            warnings.append("还没有填写 PMS 登录密码。")
     bypms = settings.get("bypms") or {}
     if bypms.get("enabled", False):
         script = script_path(settings, "bypms", "bypms_room_status_data.py")
         if not script.exists():
-            warnings.append(f"bypms entry script not found: {script}")
+            warnings.append("找不到宝寓采集程序，请联系安装人员。")
         if not bypms.get("cookie"):
-            warnings.append("BYPMS_COOKIE is empty; Bypms collection cannot run.")
+            warnings.append("宝寓还没有登录，暂时不能采集。")
     foxhis = settings.get("foxhis") or {}
     if foxhis.get("enabled", False):
-        for key in ("isql_path", "interfaces_file", "server", "database", "username"):
+        foxhis_labels = {
+            "isql_path": "西软还没有 isql 路径。没有 isql 就读不了西软数据。",
+            "interfaces_file": "西软还没有填写接口文件。",
+            "server": "西软还没有填写服务名。",
+            "database": "西软还没有填写西软数据库名。",
+            "username": "西软还没有填写数据库账号。",
+        }
+        for key, message in foxhis_labels.items():
             if not foxhis.get(key):
-                warnings.append(f"Foxhis {key} is empty; please complete its read-only connection settings.")
-    if (settings.get("meituan_pms") or {}).get("enabled", False):
-        for key in ("cookie", "hotel_name", "org_id"):
-            if not (settings.get("meituan_pms") or {}).get(key):
-                warnings.append(f"Meituan PMS {key} is empty; collection cannot run.")
+                warnings.append(message)
+    meituan_pms = settings.get("meituan_pms") or {}
+    if meituan_pms.get("enabled", False):
+        if not meituan_pms.get("cookie"):
+            warnings.append("美团 PMS 还没有登录。美团 PMS 和美团 OTA 是两套登录。")
+        if not meituan_pms.get("hotel_name"):
+            warnings.append("美团 PMS 还没有填写酒店名称。")
+        if not meituan_pms.get("org_id"):
+            warnings.append("美团 PMS 还没有填写报表机构。")
     if (settings.get("meituan") or {}).get("enabled", True) and not (settings.get("meituan") or {}).get("me_cookie"):
-        warnings.append("MEITUAN_ME_COOKIE is empty; Meituan collection cannot run.")
+        warnings.append("美团还没有登录，请重新登录美团。")
     if (settings.get("ctrip") or {}).get("enabled", True) and not (settings.get("ctrip") or {}).get("cookie"):
-        warnings.append("CTRIP_COOKIE is empty; Ctrip collection cannot run.")
+        warnings.append("携程还没有登录，请重新登录携程。")
     if not (settings.get("mysql") or {}).get("password"):
-        warnings.append("MySQL password is empty; original script fallback or environment may be used.")
+        warnings.append("还没有填写数据库密码。如果数据库允许空密码，可以忽略这条。")
     return warnings
 
 

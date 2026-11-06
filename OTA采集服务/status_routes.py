@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from flask import redirect, url_for
+import os
+import re
+import subprocess
+import time
 
+from flask import redirect, request, url_for
+
+import panel_update
 import runner
 from price_routes import PRICE_STOP_PATH, price_scheduler_status, start_price_scheduler
 from promotion_scheduler import STOP_PATH as PROMOTION_STOP_PATH, scheduler_status as promotion_scheduler_status, start_scheduler as start_promotion_scheduler
@@ -20,11 +26,203 @@ from panel_common import (
 )
 
 
+_LEGACY_CACHE = {"at": 0.0, "value": False}
+
+
+def needs_setup(settings: dict) -> bool:
+    hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
+    database = str((settings.get("mysql") or {}).get("database") or "").strip()
+    return not hotel_id or not database
+
+
+def benign_empty_booking(text: str) -> bool:
+    """预订或订单 0 条是正常结果，不能当成失败文案。"""
+    normalized = str(text or "").replace(" ", "")
+    if "0条" not in normalized:
+        return False
+    if "预订" not in text and "订单" not in text:
+        return False
+    return not any(word in text for word in ("失败", "无效", "拒绝", "错误"))
+
+
+def hotel_sentence(settings: dict) -> str:
+    hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
+    names = []
+    meituan_name = str((settings.get("meituan") or {}).get("hotel_name") or "").strip()
+    ctrip_name = str((settings.get("ctrip") or {}).get("hotel_name") or "").strip()
+    if meituan_name:
+        names.append(f"美团：{meituan_name}")
+    if ctrip_name:
+        names.append(f"携程：{ctrip_name}")
+    if hotel_id and names:
+        return f"{hotel_id}（{'，'.join(names)}）"
+    if hotel_id:
+        return hotel_id
+    if names:
+        return "，".join(names)
+    return "尚未填写酒店"
+
+
+def collection_sentence(settings: dict, status: dict) -> str:
+    tasks = status.get("tasks") or {}
+    run_names = list(status.get("last_run_tasks") or [])
+    running = [name for name in run_names if (tasks.get(name) or {}).get("status") == "running"]
+    current = status.get("last_run_status") or "never_run"
+    if running or current in {"starting", "running", "stopping"}:
+        if running:
+            return task_label(running[0])
+        if current == "stopping":
+            return "正在停止采集"
+        return "正在采集"
+    if not bool((settings.get("service") or {}).get("scheduler_enabled", True)):
+        return "未开启自动采集"
+    if current == "success":
+        return "正常"
+    if current in {"failed", "partial_failed"}:
+        failed = [
+            str((tasks.get(name) or {}).get("error_summary") or "")
+            for name in run_names
+            if (tasks.get(name) or {}).get("status") in {"failed", "partial_failed"}
+        ]
+        if failed and all(benign_empty_booking(text) for text in failed):
+            return "正常"
+        return "最近一轮没有全部成功"
+    if current == "cancelled":
+        return "上一轮已中断"
+    if current == "never_run":
+        return "尚未开始采集"
+    return status_label(current)
+
+
+def unique_todo(settings: dict) -> dict | None:
+    if needs_setup(settings):
+        return {"text": "请完成酒店和数据库配置", "href": "/config?view=installer", "label": "去填写"}
+    meituan = settings.get("meituan") or {}
+    ctrip = settings.get("ctrip") or {}
+    if meituan.get("enabled", True) and not str(meituan.get("me_cookie") or "").strip():
+        return {"text": "请重新登录美团", "href": "/config?view=staff", "label": "去登录"}
+    if ctrip.get("enabled", True) and not str(ctrip.get("cookie") or "").strip():
+        return {"text": "请重新登录携程", "href": "/config?view=staff", "label": "去登录"}
+    return None
+
+
+def build_conclusion(settings: dict, status: dict) -> dict:
+    return {
+        "hotel": hotel_sentence(settings),
+        "collection": collection_sentence(settings, status),
+        "todo": unique_todo(settings),
+    }
+
+
+def _query_legacy_task() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        completed = subprocess.run(
+            ["schtasks", "/Query", "/TN", "HotelOTACollector", "/FO", "LIST"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if completed.returncode != 0:
+        return False
+    text = f"{completed.stdout}\n{completed.stderr}"
+    if "已禁用" in text or re.search(r"(?i)\bDisabled\b", text):
+        return False
+    return True
+
+
+def legacy_collector_enabled() -> bool:
+    now = time.time()
+    if now - _LEGACY_CACHE["at"] < 60:
+        return bool(_LEGACY_CACHE["value"])
+    value = _query_legacy_task()
+    _LEGACY_CACHE["at"] = now
+    _LEGACY_CACHE["value"] = value
+    return value
+
+
+def conclusion_html(settings: dict, status: dict) -> str:
+    summary = build_conclusion(settings, status)
+    todo = summary["todo"]
+    if not todo:
+        todo_html = "<strong>没有待办</strong>"
+    elif todo.get("href"):
+        todo_html = (
+            f"<strong>{esc(todo['text'])}</strong>"
+            f"<div class='actions'><a class='button' href='{esc(todo['href'])}'>{esc(todo['label'])}</a></div>"
+        )
+    else:
+        todo_html = (
+            f"<strong>{esc(todo['text'])}</strong>"
+            "<form method='post' action='" + esc(todo["action"]) + "'>"
+            "<input type='hidden' name='return_to' value='/'>"
+            f"<button>{esc(todo['label'])}</button></form>"
+        )
+    legacy_html = ""
+    if legacy_collector_enabled():
+        legacy_html = (
+            "<p>计划任务 HotelOTACollector 仍在启用，会和手动启动冲突。"
+            "<a href='/legacy-task'>查看卸载脚本</a>。本页不会自动删除该任务。</p>"
+        )
+    return f"""
+<section class="panel conclusion">
+  <div class="conclusion-grid">
+    <div><div class="label">酒店</div><strong>{esc(summary["hotel"])}</strong></div>
+    <div><div class="label">采集</div><strong>{esc(summary["collection"])}</strong></div>
+    <div><div class="label">待办</div>{todo_html}</div>
+  </div>
+  <p class="muted">服务在后台运行，关闭浏览器不会停止。停止请用停止脚本，或在本页暂停定时采集。</p>
+  {legacy_html}
+</section>"""
+
+
+def update_panel_html() -> str:
+    notice = panel_update.current_notice()
+    message = str(notice.get("message") or "")
+    kind = str(notice.get("kind") or "")
+    extra = ""
+    if kind == "available":
+        extra = (
+            "<form method='post' action='/update/apply'>"
+            "<input type='hidden' name='confirm' value='yes'>"
+            "<button onclick=\"return confirm('确认安装正式版代码？不会覆盖配置、Cookie、日志和运行环境，也不会迁移数据库。')\">确认安装</button>"
+            "</form>"
+        )
+    elif kind == "interrupted":
+        extra = (
+            "<form method='post' action='/update/recover'>"
+            "<input type='hidden' name='confirm' value='yes'>"
+            "<button>先恢复上次更新</button></form>"
+        )
+    message_html = f"<div class='warning'>{esc(message)}</div>" if message else ""
+    return f"""
+<section class="panel">
+  <div class="section-save">
+    <div>
+      <strong>检查更新</strong>
+      <div class="muted">只查看 GitHub 正式版。确认后才会安装，不会覆盖配置，也不会更换运行环境。</div>
+      {message_html}
+    </div>
+    <div class="save-actions">
+      <form method="post" action="/update/check"><button type="submit" class="secondary">检查更新</button></form>
+      {extra}
+    </div>
+  </div>
+</section>"""
+
+
 def register(app) -> None:
     @app.get("/")
     def index() -> str:
         status = runner.reconcile_stale_run()
         settings = runner.load_settings()
+        show_tasks = request.args.get("tasks") == "1"
         scheduler = manual_scheduler_status()
         price_scheduler = price_scheduler_status()
         reply_scheduler = reply_scheduler_status()
@@ -203,8 +401,21 @@ def register(app) -> None:
     </div>
   </section>
 </div>"""
-        body = f"""
-{scheduler_html}
+        notice = request.args.get("notice", "")
+        error = request.args.get("error", "")
+        message_html = ""
+        if notice:
+            message_html += f"<div class='success'>{esc(notice)}</div>"
+        if error:
+            message_html += f"<div class='warning'>{esc(error)}</div>"
+        tasks_link = (
+            "<p><a class='button secondary' href='/?tasks=1'>查看全部任务</a></p>"
+            if not show_tasks
+            else "<p><a class='button secondary' href='/'>返回简要状态</a></p>"
+        )
+        detail_html = ""
+        if show_tasks:
+            detail_html = f"""
 {ota_scope_panel(settings, "/")}
 <section class="summary">
   <div class="metric"><div class="label">总状态</div><div class="value"><span class="pill {status_class(current_status)}">{esc(status_label(current_status))}</span></div></div>
@@ -225,7 +436,14 @@ def register(app) -> None:
     </div>
   </div>
   <div class="grid">{''.join(cards)}</div>
-</section>
+</section>"""
+        body = f"""
+{message_html}
+{conclusion_html(settings, status)}
+{update_panel_html()}
+{scheduler_html}
+{tasks_link}
+{detail_html}
 {refresh_script}"""
         return page("酒店数据采集控制台", body, "status")
 
@@ -311,3 +529,49 @@ def register(app) -> None:
         PROMOTION_STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
         PROMOTION_STOP_PATH.write_text("stop", encoding="utf-8")
         return redirect(url_for("index"))
+
+    @app.post("/update/check")
+    def update_check():
+        try:
+            notice = panel_update.check_release()
+        except Exception as exc:
+            notice = {"kind": "error", "message": f"检查更新没有完成：{exc}"}
+        panel_update.store_notice(notice)
+        return redirect(url_for("index"))
+
+    @app.post("/update/apply")
+    def update_apply():
+        if request.form.get("confirm") != "yes":
+            panel_update.store_notice({"kind": "error", "message": "还没有确认，没有安装更新。"})
+            return redirect(url_for("index"))
+        try:
+            notice = panel_update.apply_confirmed()
+        except Exception as exc:
+            notice = {"kind": "error", "message": panel_update.classify_update_text(str(exc))}
+        panel_update.store_notice(notice)
+        return redirect(url_for("index"))
+
+    @app.post("/update/recover")
+    def update_recover():
+        if request.form.get("confirm") != "yes":
+            panel_update.store_notice({"kind": "interrupted", "message": "还没有确认，没有恢复。"})
+            return redirect(url_for("index"))
+        try:
+            notice = panel_update.recover_confirmed()
+        except Exception as exc:
+            notice = {"kind": "error", "message": panel_update.classify_update_text(str(exc))}
+        panel_update.store_notice(notice)
+        return redirect(url_for("index"))
+
+    @app.get("/legacy-task")
+    def legacy_task_page() -> str:
+        script = runner.ROOT / "uninstall_task.bat"
+        body = f"""
+<section class="panel">
+  <h2>卸载旧的计划任务</h2>
+  <p>计划任务 HotelOTACollector 和现在的手动启动会冲突。请手动运行下面的卸载脚本，本页不会自动删除它。</p>
+  <p><code>{esc(script)}</code></p>
+  <p>脚本会请求管理员权限。卸载之后，再用启动脚本打开本页。</p>
+  <p><a class="button secondary" href="/">返回状态页</a></p>
+</section>"""
+        return page("卸载旧计划任务", body, "status")

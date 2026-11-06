@@ -133,7 +133,7 @@ class PMSRunnerTests(unittest.TestCase):
             stack.enter_context(patch.object(runner, "config_warnings", return_value=[]))
             for name in ("manual_scheduler_status", "price_scheduler_status", "reply_scheduler_status", "promotion_scheduler_status"):
                 stack.enter_context(patch.object(status_routes, name, return_value={}))
-            response = panel.app.test_client().get("/")
+            response = panel.app.test_client().get("/?tasks=1")
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
         self.assertIn("部分失败", html)

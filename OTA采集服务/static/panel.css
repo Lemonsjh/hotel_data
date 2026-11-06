@@ -348,6 +348,20 @@ button.ota-scope-button.active {
 .save-bar strong { font-size: 13px; }
 .save-bar span { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .save-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.conclusion-grid {
+  display: grid;
+  grid-template-columns: 1.2fr .8fr 1.4fr;
+  gap: 16px;
+}
+.conclusion .label { color: var(--muted); font-size: 12px; font-weight: 700; }
+.conclusion strong { display: block; font-size: 20px; line-height: 1.35; margin-top: 4px; }
+.conclusion form, .section-save { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.section-save { margin-top: 14px; }
+.setup-steps { margin: 8px 0 12px; padding-left: 18px; }
+.setup-steps li { margin: 6px 0; }
+@media (max-width: 800px) {
+  .conclusion-grid { grid-template-columns: 1fr; }
+}
 button.reset-config {
   color: var(--brand-strong);
   border-color: #c8ddd3;

@@ -56,8 +56,8 @@ class PmsPasswordLoginTests(unittest.TestCase):
         self.assertNotIn('login_mode', settings['pms'])
         settings['pms'].update(enabled=True, provider='byh', login_mode='manual', username='', password='')
         warnings = runner.config_warnings(settings)
-        self.assertIn('PMS username is empty.', warnings)
-        self.assertIn('PMS password is empty.', warnings)
+        self.assertIn('还没有填写 PMS 登录账号。', warnings)
+        self.assertIn('还没有填写 PMS 登录密码。', warnings)
 
     def test_old_mode_setting_no_longer_clears_password(self):
         settings = {'pms': {'login_mode': 'manual', 'username': 'account', 'password': 'fake-password'}}

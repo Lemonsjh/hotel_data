@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Start", "Stop", "Status")]
     [string]$Action = "Status"
 )
@@ -39,7 +39,7 @@ function Get-TrackedProcess([string]$PidPath, [string]$ExpectedScript) {
 }
 
 function Read-Settings {
-    if (-not (Test-Path -LiteralPath $ConfigPath)) { throw "Missing config: $ConfigPath" }
+    if (-not (Test-Path -LiteralPath $ConfigPath)) { throw "找不到配置文件 settings.json。请先准备配置后再启动。" }
     return Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
@@ -56,26 +56,26 @@ function Resolve-PythonPath($Settings) {
     if (Test-Path -LiteralPath $bundled) { return $bundled }
     $systemPython = Get-Command python.exe -ErrorAction SilentlyContinue
     if ($systemPython) { return $systemPython.Source }
-    throw "Python runtime not found. Expected: $bundled"
+    throw "找不到便携运行环境。请检查 runtime\python.exe。"
 }
 
 function Start-ManualService {
     if (Test-Path -LiteralPath (Join-Path $ProjectRoot 'updater\pending.json')) {
-        throw 'An update is active or needs recovery. Finish it before starting services.'
+        throw '上次更新没有完成。请先恢复后再启动。'
     }
     $settings = Read-Settings
     $pythonPath = Resolve-PythonPath $settings
     $browserPath = Join-Path $ProjectRoot "runtime\playwright-browsers"
     if (Test-Path -LiteralPath $browserPath) { $env:PLAYWRIGHT_BROWSERS_PATH = $browserPath }
-    if (-not (Test-Path -LiteralPath $SchedulerPath)) { throw "Scheduler not found: $SchedulerPath" }
-    if (-not (Test-Path -LiteralPath $PriceSchedulerPath)) { throw "Price scheduler not found: $PriceSchedulerPath" }
-    if (-not (Test-Path -LiteralPath $ReplySchedulerPath)) { throw "Review reply scheduler not found: $ReplySchedulerPath" }
-    if (-not (Test-Path -LiteralPath $PromotionSchedulerPath)) { throw "Promotion scheduler not found: $PromotionSchedulerPath" }
-    if (-not (Test-Path -LiteralPath $PanelPath)) { throw "Panel not found: $PanelPath" }
+    if (-not (Test-Path -LiteralPath $SchedulerPath)) { throw "找不到定时采集程序，调度没有起来。" }
+    if (-not (Test-Path -LiteralPath $PriceSchedulerPath)) { throw "找不到调价调度程序，调度没有起来。" }
+    if (-not (Test-Path -LiteralPath $ReplySchedulerPath)) { throw "找不到评论回复调度程序，调度没有起来。" }
+    if (-not (Test-Path -LiteralPath $PromotionSchedulerPath)) { throw "找不到推广控制调度程序，调度没有起来。" }
+    if (-not (Test-Path -LiteralPath $PanelPath)) { throw "找不到管理面板程序，调度没有起来。" }
 
     $persistentTask = Get-ScheduledTask -TaskName "HotelOTACollector" -ErrorAction SilentlyContinue
     if ($persistentTask -and $persistentTask.State -ne "Disabled") {
-        throw "HotelOTACollector is enabled. Disable or uninstall it before using manual scheduling."
+        throw "计划任务 HotelOTACollector 仍在启用，和手动启动冲突。请先运行卸载脚本 uninstall_task.bat。"
     }
 
     New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
@@ -92,7 +92,7 @@ function Start-ManualService {
                 -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
             Start-Sleep -Seconds 1
             $scheduler = Get-TrackedProcess $SchedulerPidPath "manual_scheduler.py"
-            if (-not $scheduler) { throw "Manual scheduler failed to start. Check logs\manual_scheduler.log." }
+            if (-not $scheduler) { throw "定时采集调度没有启动。请查看日志 logs\manual_scheduler.log。" }
         }
     } else {
         Set-Content -LiteralPath $StopPath -Value "stop" -Encoding ASCII
@@ -110,7 +110,7 @@ function Start-ManualService {
                 -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
             Start-Sleep -Seconds 1
             $priceScheduler = Get-TrackedProcess $PriceSchedulerPidPath "price_scheduler.py"
-            if (-not $priceScheduler) { throw "Price scheduler failed to start. Check logs\price_scheduler.log." }
+            if (-not $priceScheduler) { throw "调价调度没有启动。请查看日志 logs\price_scheduler.log。" }
         }
     } else {
         Set-Content -LiteralPath $PriceStopPath -Value "stop" -Encoding ASCII
@@ -128,7 +128,7 @@ function Start-ManualService {
                 -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
             Start-Sleep -Seconds 1
             $replyScheduler = Get-TrackedProcess $ReplySchedulerPidPath "review_reply_scheduler.py"
-            if (-not $replyScheduler) { throw "Review reply scheduler failed to start. Check logs\review_reply_scheduler.log." }
+            if (-not $replyScheduler) { throw "评论回复调度没有启动。请查看日志 logs\review_reply_scheduler.log。" }
         }
     } else {
         Set-Content -LiteralPath $ReplyStopPath -Value "stop" -Encoding ASCII
@@ -146,7 +146,7 @@ function Start-ManualService {
                 -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
             Start-Sleep -Seconds 1
             $promotionScheduler = Get-TrackedProcess $PromotionSchedulerPidPath "promotion_scheduler.py"
-            if (-not $promotionScheduler) { throw "Promotion scheduler failed to start. Check logs\promotion_scheduler.log." }
+            if (-not $promotionScheduler) { throw "推广控制调度没有启动。请查看日志 logs\promotion_scheduler.log。" }
         }
     } else {
         Set-Content -LiteralPath $PromotionStopPath -Value "stop" -Encoding ASCII
@@ -157,7 +157,7 @@ function Start-ManualService {
     $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($listener) {
         $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
-        if ($owner.CommandLine -notlike "*panel.py*") { throw "Port $port is occupied by another process." }
+        if ($owner.CommandLine -notlike "*panel.py*") { throw "端口 $port 已被其他程序占用。管理面板默认使用 8765，请关闭占用该端口的程序后再启动。" }
         Set-Content -LiteralPath $PanelPidPath -Value $owner.ProcessId -Encoding ASCII
     } else {
         $panel = Get-TrackedProcess $PanelPidPath "panel.py"
@@ -173,7 +173,8 @@ function Start-ManualService {
     if (-not $hostName) { $hostName = "127.0.0.1" }
     $url = "http://${hostName}:$port"
     Start-Process $url
-    Write-Host "Hotel data collection service started: $url"
+    Write-Host "酒店数据采集已启动。请在浏览器打开：$url"
+    Write-Host "服务在后台运行，关闭浏览器不会停止。"
 }
 
 function Stop-ManualService {
