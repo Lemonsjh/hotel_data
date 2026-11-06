@@ -54,16 +54,6 @@ def read_percent(text: str, label: str) -> float:
     return float(matched.group(1))
 
 
-def validate(values: dict[str, float]) -> None:
-    invalid = [f"{LABELS[key]}={value:g}%" for key, value in values.items() if not 0 <= value <= 100]
-    if invalid:
-        raise RuntimeError(f"美团人群分析页面比例超出0–100%：{'、'.join(invalid)}；未写入数据库，保留原值")
-    if abs(values["local_user_pct"] + values["nonlocal_user_pct"] - 100) > 1:
-        raise RuntimeError("本地与异地用户占比之和异常，未写入数据库")
-    if abs(values["new_user_pct"] + values["returning_user_pct"] - 100) > 1:
-        raise RuntimeError("新客与老客占比之和异常，未写入数据库")
-
-
 def business_date(now: datetime) -> str:
     """美团每天 9 点更新前日数据；9 点前页面仍可能显示前两日窗口。"""
     days = 1 if now.hour >= 9 else 2
@@ -93,7 +83,7 @@ def collect() -> tuple[list[object], dict[str, float]]:
     except PlaywrightTimeoutError as exc:
         raise RuntimeError("美团人群分析页面加载超时，请重新执行 Edge 登录后重试") from exc
 
-    validate(values)
+    # 保留平台原值；不按0–100%范围或合计为100%阻断采集。
     now = datetime.now()
     row = [
         os.environ.get("HOTEL_ID", "").strip(),
@@ -122,7 +112,7 @@ def main() -> int:
     write_output(row)
     if not args.no_sync:
         sync_user_source_history(HEADERS, [row])
-    print("美团用户来源数据采集完成：近30天 4 项占比已校验")
+    print("美团用户来源数据采集完成：近30天 4 项占比按平台原值保存")
     return 0
 
 
