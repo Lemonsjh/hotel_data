@@ -37,17 +37,6 @@ public static class HuiyunRevenueQuery {
     }
 
     public static object Execute(IDictionary sys, string home, string hotel, string hotelName, string address, string[] args) {
-        try { return Read(sys, home, hotel, hotelName, address, args); }
-        catch (TargetInvocationException error) {
-            Exception cause = error;
-            while (cause.InnerException != null) cause = cause.InnerException;
-            // 仅对已验证的业务会话错误恢复一次，不把网络故障当作登录失效。
-            if (cause.GetType().Name != "SoapException" || !cause.Message.Contains("System Oper Error") || !Refresh(hotel)) throw;
-            return Read(sys, home, hotel, hotelName, address, args);
-        }
-    }
-
-    private static object Read(IDictionary sys, string home, string hotel, string hotelName, string address, string[] args) {
         DateTime start = DateTime.ParseExact(args[1], "yyyy-MM-dd", CultureInfo.InvariantCulture);
         DateTime end = DateTime.ParseExact(args[2], "yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (start > end || (end - start).TotalDays > 29 || end >= DateTime.Now.Date)
@@ -159,35 +148,4 @@ public static class HuiyunRevenueQuery {
             transactions, accounts = details, room_types = roomTypes, rooms };
     }
 
-    private static bool Refresh(string hotel) {
-        object root = null;
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
-            if (assembly.GetName().Name != "System.Windows.Forms") continue;
-            foreach (object form in (IEnumerable)assembly.GetType("System.Windows.Forms.Application").GetProperty("OpenForms").GetValue(null, null)) {
-                if (form.GetType().FullName != "GenericFrameWork.MainShellApp.MainShellForm") continue;
-                object work = form.GetType().GetField("workItem", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).GetValue(form);
-                root = work.GetType().GetProperty("RootWorkItem").GetValue(work, null);
-            }
-        }
-        if (root == null) return false;
-        var queue = new Queue<object>(); queue.Enqueue(root);
-        for (int i = 0; queue.Count > 0 && i < 100; i++) {
-            object work = queue.Dequeue(); MethodInfo refresh = null; FieldInfo code = null;
-            for (Type type = work.GetType(); type != null; type = type.BaseType) {
-                var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-                if (refresh == null) refresh = type.GetMethod("ReloginAppService", flags);
-                if (code == null) code = type.GetField("OperateHotelCd", flags);
-            }
-            if (refresh != null && code != null && Convert.ToString(code.GetValue(work)) == hotel) {
-                refresh.Invoke(work, new object[] { null }); return true;
-            }
-            var children = work.GetType().GetProperty("WorkItems");
-            if (children == null) continue;
-            foreach (object item in (IEnumerable)children.GetValue(work, null)) {
-                var value = item.GetType().GetProperty("Value");
-                queue.Enqueue(value == null ? item : value.GetValue(item, null));
-            }
-        }
-        return false;
-    }
 }

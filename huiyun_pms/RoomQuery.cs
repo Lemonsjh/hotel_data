@@ -10,6 +10,10 @@ using System.Threading;
 
 public static class HuiyunRoomQuery {
     public static object Execute(IDictionary sys, string home, string command) {
+        return HuiyunSessionQuery.Execute(sys, command, () => Read(sys, home, command));
+    }
+
+    private static object Read(IDictionary sys, string home, string command) {
         string hotel = Convert.ToString(sys["CurrentHotel"]);
         var pool = sys["CookieContainer"] as IDictionary;
         if (String.IsNullOrEmpty(hotel) || pool == null || !pool.Contains(hotel))
@@ -59,9 +63,8 @@ public static class HuiyunRoomQuery {
                         functions.GetMethod("UnCompressDataSet", new[] { typeof(byte[]) }).Invoke(null, new[] { response }) as DataSet;
                 }
                 catch (TargetInvocationException error) {
-                    var cause = error.InnerException ?? error;
-                    return new { ok = false, error_type = cause.GetType().Name, method,
-                        message = "慧云 " + method + " 只读查询失败" };
+                    error.Data["huiyun_method"] = method;
+                    throw;
                 }
                 if (data == null) throw new InvalidOperationException("房态响应为空");
                 results[method] = Tables(data, command == "describe");

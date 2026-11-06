@@ -59,7 +59,7 @@ def compile_query():
     RUNTIME.mkdir(parents=True, exist_ok=True)
     common = [str(compiler), '/nologo', '/platform:x86', '/reference:System.Data.dll']
     query = RUNTIME / 'RoomQuery.dll'
-    sources = [ROOT / name for name in ('RoomQuery.cs', 'BookingQuery.cs', 'GuestQuery.cs', 'ReportQuery.cs', 'RevenueQuery.cs')]
+    sources = [ROOT / name for name in ('RoomQuery.cs', 'BookingQuery.cs', 'GuestQuery.cs', 'ReportQuery.cs', 'RevenueQuery.cs', 'SessionQuery.cs')]
     digest = hashlib.sha256(b''.join(source.read_bytes() for source in sources)).hexdigest()
     marker = RUNTIME / 'query.sha256'
     if not query.exists() or not marker.exists() or marker.read_text() != digest:
