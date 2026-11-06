@@ -1,0 +1,10 @@
+<aside class="program-update" id="program-update" data-token="{{ update_token }}" aria-label="程序更新">
+  <div class="program-update-details">
+    <div><span class="muted">当前：</span><strong id="update-current">读取中…</strong></div>
+    <div id="update-latest-row" hidden><span class="muted">最新：</span><strong id="update-latest">待检查</strong></div>
+  </div>
+  <div class="program-update-actions"><button type="button" class="secondary" id="update-check">检查更新</button><button type="button" id="update-apply" hidden disabled>更新并重启</button></div>
+  <p id="update-message" class="muted" role="status" aria-live="polite" hidden></p>
+</aside>
+<link rel="stylesheet" href="{{ url_for('static', filename='program_update.css', v='20261106-2') }}">
+<script src="{{ url_for('static', filename='program_update.js', v='20261106-2') }}" defer></script>

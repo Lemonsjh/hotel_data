@@ -24,6 +24,9 @@ import price_tasks
 import promotion_routes
 import room_mappings
 import runner
+from huiyun_pms import bridge as huiyun_bridge
+import huiyun_routes
+from collection_schedule import MINUTE_CHOICES, collection_minute
 import status_routes
 from panel_common import esc, get_path, page, set_path, task_label
 
@@ -54,11 +57,11 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
             if not value and key in {"meituan.hotel_name", "meituan.poi_id", "meituan.partner_id", "meituan.biz_account_id"}:
                 continue
             old = get_path(settings, key)
-            if isinstance(old, int):
+            if isinstance(old, int) or key == 'service.collection_minute':
                 try:
                     value = int(value)
                 except ValueError:
-                    value = old
+                    value = old if old is not None else 0
             set_path(settings, key, value)
     provider = request.form.get("pms_provider")
     if provider:
@@ -99,10 +102,22 @@ log_routes.register(app)
 price_routes.register(app)
 promotion_routes.register(app)
 browser_cookie_routes.register(app)
+huiyun_routes.register(app)
 
 
 def config_control(settings: dict[str, Any], key: str, label: str, secret: bool) -> str:
     current = get_path(settings, key)
+    if key == 'service.collection_minute':
+        options = ''.join(f"<option value='{minute}'{' selected' if minute == collection_minute(settings) else ''}>{text}</option>"
+                          for minute, text in MINUTE_CHOICES.items())
+        return (f"<div class='field'><label for='collection-minute'>{esc(label)}</label>"
+                f"<select id='collection-minute' name='{key}'>{options}</select></div>")
+    if key == 'huiyun.client_path':
+        return (f"<div class='field client-path-field'><label for='huiyun-client-path'>{esc(label)}</label>"
+                "<div class='client-path-control'>"
+                f"<input id='huiyun-client-path' name='{esc(key)}' value='{esc(current)}'>"
+                "<button type='button' class='secondary compact' data-find-huiyun-client>自动查找</button></div>"
+                "<small id='huiyun-client-result' class='client-path-result' role='status' aria-live='polite'></small></div>")
     pair_class = " mysql-pair-field" if key in {"mysql.password", "mysql.database"} else ""
     if secret:
         if key in SHORT_SECRET_FIELDS:
@@ -192,6 +207,11 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<button type='submit' class='secondary compact' name='deep' value='1' formaction='/detect-foxhis'>校验数据库连通性</button>"
             "</div>"
         )
+    elif section_key == "huiyun":
+        actions = ("<div class='config-actions'><button type='submit' class='compact' "
+                   "formaction='/huiyun-login'>打开采集客户端</button></div>")
+        login_html = ("<p class='muted'>请在新打开的客户端中完成登录，并保持窗口开启；"
+                      "关闭后，请再次点击“打开采集客户端”重新登录。</p>")
     if section_key in {"meituan", "ctrip", "bypms", "meituan_pms"}:
         login = platform_login.read_status(section_key)
         state = str(login.get("status") or "never")
@@ -361,7 +381,8 @@ for (const select of document.querySelectorAll('select[name="pms_provider"]')) {
   select.addEventListener('change', () => selectPmsProvider(select.value));
 }}
 selectPmsProvider(document.querySelector('select[name="pms_provider"]')?.value || PMS_DEFAULT_PROVIDER);
-</script>"""
+</script>
+<script src='/static/huiyun_client_path.js' defer></script>"""
     return page("\u914d\u7f6e\u4e2d\u5fc3", body, "config")
 
 
@@ -385,6 +406,17 @@ def reset_config():
         )
     except Exception as exc:
         return redirect(url_for("config_page", error=str(exc)))
+
+
+@app.post('/huiyun-login')
+def start_huiyun_login():
+    try:
+        settings = apply_form_to_settings(runner.load_settings())
+        runner.save_json(runner.CONFIG_PATH, settings)
+        huiyun_bridge.start((settings.get('huiyun') or {}).get('client_path') or huiyun_bridge.DEFAULT_CLIENT)
+        return redirect(url_for('config_page', notice='慧云采集客户端已打开，请完成登录并保持窗口开启。'))
+    except Exception as error:
+        return redirect(url_for('config_page', error=str(error)))
 
 
 @app.post("/platform-login/<platform>")

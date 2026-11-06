@@ -137,11 +137,13 @@ def load_settings() -> dict[str, Any]:
         if name not in bypms:
             bypms[name] = value
             changed = True
-    foxhis = settings.setdefault("foxhis", {})
-    for name, value in pms_providers.FOXHIS_DEFAULTS.items():
-        if name not in foxhis:
-            foxhis[name] = value
-            changed = True
+    for key, defaults in (("foxhis", pms_providers.FOXHIS_DEFAULTS),
+                          ("huiyun", pms_providers.HUIYUN_DEFAULTS)):
+        section = settings.setdefault(key, {})
+        for name, value in defaults.items():
+            if name not in section:
+                section[name] = value
+                changed = True
     if pms_providers.enforce_exclusive_enable(settings, selected):
         changed = True
     legacy_bypms_tasks = ("bypms_room_status", "bypms_channel_mapping")
@@ -624,8 +626,8 @@ def first_error_line(output: str) -> str:
 
 
 def enrich_room_type_ids(name: str, settings: dict[str, Any], log_path: Path) -> None:
-    if name == "pms_fetch" and active_pms_provider(settings) == "meituan_pms":
-        return  # 独立采集器已按 pms_meituan 精确补全本批数据，不触碰其他报表。
+    if name == "pms_fetch" and active_pms_provider(settings) in {"meituan_pms", "huiyun"}:
+        return  # 美团与慧云在各自写入器中精确映射，不触碰其他报表。
     try:
         product_message = ""
         if name == "ctrip_goods_price":

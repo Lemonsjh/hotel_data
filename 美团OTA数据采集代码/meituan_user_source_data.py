@@ -48,15 +48,16 @@ def cookie_items(header: str, url: str) -> list[dict[str, str]]:
 
 
 def read_percent(text: str, label: str) -> float:
-    matched = re.search(rf"{re.escape(label)}\s*(\d+(?:\.\d+)?)%", text)
+    matched = re.search(rf"{re.escape(label)}\s*([+-]?\d+(?:\.\d+)?)\s*%", text)
     if not matched:
         raise RuntimeError(f"未在美团人群分析页面找到字段：{label}")
     return float(matched.group(1))
 
 
 def validate(values: dict[str, float]) -> None:
-    if any(value < 0 or value > 100 for value in values.values()):
-        raise RuntimeError("美团人群分析页面返回了无效比例")
+    invalid = [f"{LABELS[key]}={value:g}%" for key, value in values.items() if not 0 <= value <= 100]
+    if invalid:
+        raise RuntimeError(f"美团人群分析页面比例超出0–100%：{'、'.join(invalid)}；未写入数据库，保留原值")
     if abs(values["local_user_pct"] + values["nonlocal_user_pct"] - 100) > 1:
         raise RuntimeError("本地与异地用户占比之和异常，未写入数据库")
     if abs(values["new_user_pct"] + values["returning_user_pct"] - 100) > 1:

@@ -3,7 +3,8 @@
   "service": {
     "task_name": "HotelOTACollector",
     "scheduler_enabled": false,
-    "interval_minutes": 30,
+    "interval_minutes": 60,
+    "collection_minute": 0,
     "timeout_seconds": 300,
     "panel_host": "127.0.0.1",
     "panel_port": 8765
@@ -91,6 +92,11 @@
     "hotel_name": "",
     "org_id": "",
     "cookie": ""
+  },
+  "huiyun": {
+    "enabled": false,
+    "hotel_name": "",
+    "client_path": "C:/CshisNetProgram/Main/MainShellApp.exe"
   },
   "mysql": {
     "host": "127.0.0.1",

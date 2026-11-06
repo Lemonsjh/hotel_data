@@ -15,17 +15,18 @@ if (-not (Test-Path -LiteralPath $PythonPath)) {
 if (-not (Test-Path -LiteralPath $RunnerPath)) {
     throw "Runner not found: $RunnerPath"
 }
-$IntervalMinutes = Resolve-TaskInterval `
-    -RequestedInterval $IntervalMinutes `
-    -DefaultInterval 30 `
-    -SettingsPath $SettingsPath `
-    -PropertyPath @("service", "interval_minutes")
+$clockOptions = @{}
+if ($IntervalMinutes -le 0) {
+    $IntervalMinutes = 60
+    $clockOptions.FirstRunAt = Get-CollectionFirstRun -SettingsPath $SettingsPath
+    $clockOptions.RunImmediately = $true
+}
 
 Install-RepeatingTask `
     -TaskName $TaskName `
     -ExecutablePath $PythonPath `
     -Arguments "`"$RunnerPath`" run-once" `
     -WorkingDirectory (Split-Path -Parent $RunnerPath) `
-    -IntervalMinutes $IntervalMinutes
+    -IntervalMinutes $IntervalMinutes @clockOptions
 
 Write-Host "Scheduled task installed: $TaskName, interval=${IntervalMinutes}min"

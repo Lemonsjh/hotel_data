@@ -357,6 +357,12 @@ button.reset-config:hover { color: #fff; background: #ad3028; }
 .table-wrap { overflow-x: auto; }
 .inline-form { display: flex; gap: 8px; align-items: center; }
 .inline-form input { width: 126px; }
+.client-path-field { grid-column: 1 / -1; }
+.client-path-control { display: flex; align-items: stretch; gap: 8px; }
+.client-path-control input { flex: 1; min-width: 0; }
+.client-path-control button { flex-shrink: 0; white-space: nowrap; }
+.client-path-result { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+.client-path-result:empty { display: none; }
 .promotion-table { min-width: 760px; table-layout: fixed; }
 .promotion-table th:nth-child(1) { width: 24%; }
 .promotion-table th:nth-child(2) { width: 22%; }

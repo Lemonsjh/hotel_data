@@ -34,12 +34,12 @@ class SourceSyncDisplayTests(unittest.TestCase):
         self.assertTrue(any("Foxhis username" in warning for warning in warnings))
 
     def test_waiting_scheduler_refreshes_slowly_and_running_refreshes_quickly(self):
-        app = Flask(__name__)
+        app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / 'OTA采集服务/templates'))
         status_routes.register(app)
         for state, scheduler, delay in (
             ("success", {"alive": True, "scheduler_status": "waiting"}, "15000"),
             ("running", {"alive": True, "scheduler_status": "collecting"}, "2000"),
-            ("success", {"alive": False, "scheduler_status": "stopped"}, None),
+            ("success", {"alive": False, "scheduler_status": "stopped"}, "0"),
         ):
             with self.subTest(state=state, scheduler=scheduler), ExitStack() as stack:
                 stack.enter_context(patch.object(runner, "load_settings", return_value={}))
@@ -50,12 +50,17 @@ class SourceSyncDisplayTests(unittest.TestCase):
                     stack.enter_context(patch.object(status_routes, name, return_value={}))
                 stack.enter_context(patch.object(status_routes, "page", side_effect=lambda title, body, *args, **kwargs: body))
                 response = app.test_client().get("/")
+                partial = app.test_client().get("/?partial=1")
             self.assertEqual(response.status_code, 200)
             html = response.get_data(as_text=True)
-            if delay:
-                self.assertIn(f"location.reload(), {delay}", html)
-            else:
-                self.assertNotIn("location.reload()", html)
+            self.assertIn(f'data-refresh-ms="{delay}"', html)
+            self.assertIn('/static/status_refresh.js', html)
+            self.assertNotIn('location.reload()', html)
+            fragment = partial.get_data(as_text=True)
+            self.assertEqual(partial.status_code, 200)
+            self.assertIn(f'data-refresh-ms="{delay}"', fragment)
+            self.assertNotIn('id="program-update"', fragment)
+            self.assertNotIn('<script', fragment)
 
 
 if __name__ == "__main__":

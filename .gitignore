@@ -33,6 +33,8 @@ OTA采集服务/state/
 **/browser_profiles/
 
 # Collection outputs and exported workbooks
+/exports/
+/sites/
 OTA数据/
 **/output/
 *.xlsx

@@ -26,6 +26,12 @@ SERVICE = "OTA采集服务"
 LOCK_NAME = "update.lock"
 GITEE_API = f"https://gitee.com/api/v5/repos/{REPOSITORY}"
 CHECKSUM_NAME = ASSET_NAME.replace(".zip", ".sha256")
+PROGRESS = None
+
+
+def progress(message: str) -> None:
+    if PROGRESS:
+        PROGRESS(message)
 
 
 def https_context() -> ssl.SSLContext:
@@ -144,6 +150,7 @@ def apply_update(root: Path, package: Path, tag: str, work: Path) -> None:
     applied = False
     try:
         suspended = True  # Suspend may stop some components before reporting failure.
+        progress("正在停止面板、安装代码并重新启动…")
         service(root, guard, snapshot, "Suspend")
         applied = True
         apply_files(root, manifest, content, plan)
@@ -189,11 +196,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="Ask before installing the latest official Release")
     parser.add_argument("--recover", action="store_true", help="Recover files after an interrupted update")
+    parser.add_argument("--yes", action="store_true", help="Use a confirmation already obtained by the local panel")
+    parser.add_argument("--expected-version", help="Refuse if the release changed since panel confirmation")
     args = parser.parse_args()
     current = read_json(ROOT / "updater" / "installed.json").get("version", "0.0.0")
     if not args.recover:
         release = latest_release()
         tag = release["tag_name"]
+        if args.expected_version and tag != args.expected_version:
+            raise ValueError("最新版本已变化，请重新检查并确认更新。")
         print(f"Installed: {current}; latest official Gitee Release: {tag}")
         if version(tag) <= version(current):
             print("Already up to date; no downgrade will be performed.")
@@ -203,7 +214,7 @@ def main() -> int:
             return 0
     if os.name != "nt":
         raise ValueError("Automatic installation supports Windows deployments only")
-    if input("Back up and update program files? Configuration/data are kept. [y/N] ").strip().lower() != "y":
+    if not args.yes and input("Back up and update program files? Configuration/data are kept. [y/N] ").strip().lower() != "y":
         return 0
     lock = ROOT / "updater" / LOCK_NAME
     # Exclusive file lock; a crash leaves a visible lock requiring explicit recovery.
@@ -221,6 +232,7 @@ def main() -> int:
             if (ROOT / "updater" / "pending.json").exists():
                 raise ValueError("An interrupted update exists; use --recover first")
             urls = release_asset_urls(release)
+            progress("正在下载并校验更新包…")
             checksum = download(urls[CHECKSUM_NAME], 256).decode("ascii").split()[0]
             data = download(urls[ASSET_NAME], MAX_BYTES)
             if digest(data) != checksum:
@@ -228,6 +240,7 @@ def main() -> int:
             package = work / ASSET_NAME
             package.write_bytes(data)
             try:
+                progress("正在检查任务空闲状态并备份代码…")
                 apply_update(ROOT, package, tag, work)
             finally:
                 # Only resume if rollback/install fully completed, never during pending recovery.

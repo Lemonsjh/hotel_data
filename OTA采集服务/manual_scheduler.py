@@ -5,11 +5,12 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from log_maintenance import maintain_logs
+from collection_schedule import collection_minute, next_collection_time, now_shanghai
 
 
 ROOT = Path(__file__).resolve().parent
@@ -24,16 +25,11 @@ LOG_PATH = ROOT / "logs" / "manual_scheduler.log"
 
 
 def now_text() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return now_shanghai().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def load_settings() -> dict[str, Any]:
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
-
-
-def interval_minutes() -> int:
-    value = (load_settings().get("service") or {}).get("interval_minutes", 30)
-    return max(1, int(value))
 
 
 def scheduler_enabled() -> bool:
@@ -97,12 +93,26 @@ def run_collection() -> int:
     return completed.returncode
 
 
+def collection_busy() -> bool:
+    import runner
+    status = runner.reconcile_stale_run()
+    # 面板手动采集有可核验PID；无PID的旧定时状态可能是上次退出留下的，不能永久阻塞新调度。
+    return bool(status.get('run_process_pid')) and status.get('last_run_status') in {'starting', 'running', 'stopping'}
+
+
 def wait_for_next_run(target: datetime) -> bool:
-    while datetime.now() < target:
-        if STOP_PATH.exists():
+    while True:
+        settings = load_settings()
+        if STOP_PATH.exists() or not (settings.get('service') or {}).get('scheduler_enabled', True):
             return True
-        time.sleep(min(2, max(0.1, (target - datetime.now()).total_seconds())))
-    return STOP_PATH.exists()
+        now = now_shanghai()
+        minute = collection_minute(settings)
+        if minute != target.minute:
+            target = next_collection_time(now, minute)
+            save_status(next_run_at=target.strftime('%Y-%m-%d %H:%M:%S'))
+        if now >= target:
+            return False
+        time.sleep(min(2, max(0.1, (target - now).total_seconds())))
 
 
 def run_scheduler() -> int:
@@ -124,9 +134,20 @@ def run_scheduler() -> int:
         message="manual scheduler started",
     )
 
+    run_immediately = True
     try:
         while not STOP_PATH.exists() and scheduler_enabled():
-            run_started = datetime.now()
+            # 首次立即执行；以后始终等待未来时刻，不补跑已经错过的小时。
+            if not run_immediately:
+                next_run = next_collection_time(now_shanghai(), collection_minute(load_settings()))
+                save_status(scheduler_status='waiting', next_run_at=next_run.strftime('%Y-%m-%d %H:%M:%S'),
+                            message='waiting for next collection')
+                if wait_for_next_run(next_run):
+                    break
+            run_immediately = False
+            if collection_busy():
+                save_status(last_skipped_at=now_text(), message='collection already running; skipped this hour')
+                continue
             save_status(
                 scheduler_status="collecting",
                 current_run_started_at=now_text(),
@@ -144,15 +165,6 @@ def run_scheduler() -> int:
             if STOP_PATH.exists():
                 break
 
-            # Keep a stable cadence from the start of each collection run.
-            next_run = run_started + timedelta(minutes=interval_minutes())
-            save_status(
-                scheduler_status="waiting",
-                next_run_at=next_run.strftime("%Y-%m-%d %H:%M:%S"),
-                message="waiting for next collection",
-            )
-            if wait_for_next_run(next_run):
-                break
         return 0
     finally:
         save_status(

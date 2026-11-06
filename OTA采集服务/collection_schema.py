@@ -63,6 +63,8 @@ def table_definitions():
 
 
 def required_tables(task, specs):
+    if task == 'pms_fetch' and specs and all(platform == 'huiyun' and '--dry-run' in args for platform, _, args in specs):
+        return set()
     if task != 'pms_fetch':
         tables = set(TASK_TABLES[task])
         if task in {'meituan_goods_price', 'ctrip_goods_price'}:
@@ -78,6 +80,11 @@ def required_tables(task, specs):
                     if item.startswith('--'):
                         break
                     reports.append(item.lower())
+        elif platform == 'huiyun':
+            reports = {'booking_report.py': ['jd01'], 'guest_report.py': ['jd02'], 'daily_report.py': ['jy01'],
+                       'monthly_report.py': ['jy03'], 'revenue_report.py': ['rs01'], 'room_performance_report.py': ['jl01'],
+                       'classification_report.py': ['jl11'],
+                       'collector.py': ['forecast', 'room_status']}[script.name]
         elif platform == 'meituan_pms':
             reports = {'collector.py': ['forecast', 'room_status'],
                        'daily_report.py': ['jy01'], 'monthly_report.py': ['jy03'],

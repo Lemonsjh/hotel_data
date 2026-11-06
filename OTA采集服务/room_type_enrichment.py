@@ -277,7 +277,7 @@ def _update_active_pms_alias(cur, table: str, hotel_id: str) -> int:
                  MIN(room_type_id) AS room_type_id
           FROM hotel_room_type_mapping
           WHERE is_active=1 AND source_product_id='' AND source_room_type_name<>''
-            AND source_platform IN ('pms_byh','pms_bypms','pms_foxhis','pms_meituan')
+            AND source_platform IN ('pms_byh','pms_bypms','pms_foxhis','pms_meituan','pms_huiyun')
           GROUP BY hotel_id, source_platform, source_room_type_name
           HAVING COUNT(DISTINCT room_type_id)=1
         ) m
@@ -287,7 +287,8 @@ def _update_active_pms_alias(cur, table: str, hotel_id: str) -> int:
            (t.source_platform='PMS（宝寓）' AND m.source_platform='pms_bypms')
            OR (t.source_platform='PMS（Foxhis）' AND m.source_platform='pms_foxhis')
            OR (t.source_platform='PMS（美团）' AND m.source_platform='pms_meituan')
-           OR (t.source_platform NOT IN ('PMS（宝寓）','PMS（Foxhis）','PMS（美团）') AND m.source_platform='pms_byh')
+           OR (t.source_platform='PMS（慧云）' AND m.source_platform='pms_huiyun')
+           OR (t.source_platform NOT IN ('PMS（宝寓）','PMS（Foxhis）','PMS（美团）','PMS（慧云）') AND m.source_platform='pms_byh')
          )
         SET t.room_type_id=m.room_type_id
         WHERE t.room_type_id IS NULL{_room_rows(table, 't')}{scope}
@@ -304,7 +305,7 @@ def _clear_mapping_scope(
     name_column = _name_column(table)
     hotel_ids = sorted(value for value in change["hotel_ids"] if value)
     room_ids = sorted(value for value in change["room_type_ids"] if value)
-    alias_platforms = ("pms_byh", "pms_bypms", "pms_foxhis", "pms_meituan") if platform == "pms_active" else (platform,)
+    alias_platforms = ("pms_byh", "pms_bypms", "pms_foxhis", "pms_meituan", "pms_huiyun") if platform == "pms_active" else (platform,)
     aliases = sorted(
         value for key in alias_platforms for value in change["aliases"].get(key, ()) if value
     )

@@ -5,7 +5,7 @@ import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +115,42 @@ class MeituanBusinessHourlyTests(unittest.TestCase):
         for period in ("today_realtime", "yesterday"):
             rows = self.module.build_metric_rows(data, period, 0, datetime(2026, 11, 4, 15, 23))
             self.assertEqual(rows[0][3:6], ["EXPOSURE_UV", "曝光人数", 776])
+
+    def test_api_error_reports_endpoint_and_reason_without_retry(self):
+        client = self.module.MeituanDashboardClient("test-cookie")
+        response = Mock(status_code=200)
+        response.json.return_value = {"code": 401, "message": "请重新登录"}
+        with patch.object(self.module.requests, "get", return_value=response) as get, patch.object(self.module.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "businessData.*status=缺失, code=401, message=请重新登录") as error:
+                client.get_dashboard()
+        get.assert_called_once()
+        sleep.assert_not_called()
+        self.assertNotIn("test-cookie", str(error.exception))
+
+    def test_missing_status_is_not_treated_as_success(self):
+        client = self.module.MeituanDashboardClient("")
+        for data in ({"code": 0, "data": {}}, {"status": 5, "msg": "接口异常"}, {"data": {}}, []):
+            with self.subTest(data=data):
+                response = Mock()
+                response.json.return_value = data
+                with patch.object(self.module.requests, "get", return_value=response):
+                    with self.assertRaises(RuntimeError):
+                        client._get_api(client.base_url, {})
+
+    def test_non_json_api_response_has_clear_error(self):
+        client = self.module.MeituanDashboardClient("")
+        response = Mock(status_code=200)
+        response.json.side_effect = ValueError("not json")
+        with patch.object(self.module.requests, "get", return_value=response):
+            with self.assertRaisesRegex(RuntimeError, "businessData.*非JSON.*HTTP 200"):
+                client._get_api(client.base_url, {})
+
+    def test_successful_api_response_is_preserved(self):
+        client = self.module.MeituanDashboardClient("")
+        response = Mock()
+        response.json.return_value = self.dashboard_response("10")
+        with patch.object(self.module.requests, "get", return_value=response):
+            self.assertEqual(client._get_api(client.base_url, {}), response.json.return_value)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pms_providers
+from collection_schedule import MINUTE_CHOICES
 
 
 POSITIVE_NUMBERS = (
@@ -53,6 +54,7 @@ PATH_FIELDS = (
     "foxhis.entry_script",
     "foxhis.isql_path",
     "foxhis.interfaces_file",
+    "huiyun.client_path",
 )
 
 
@@ -85,6 +87,10 @@ def validate_settings(settings: Any) -> list[str]:
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
             errors.append(f"{dotted} 必须是大于 0 的数字")
+
+    minute = get_path(settings, 'service.collection_minute')
+    if minute is not None and (type(minute) is not int or minute not in MINUTE_CHOICES):
+        errors.append('service.collection_minute 必须是0、30或50的整数')
 
     port = get_path(settings, "mysql.port")
     if port not in (None, "") and (

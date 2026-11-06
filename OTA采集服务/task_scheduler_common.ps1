@@ -37,6 +37,23 @@ function Resolve-TaskInterval {
     return $DefaultInterval
 }
 
+function Get-CollectionFirstRun {
+    param([string]$SettingsPath, [datetime]$Now = (Get-Date))
+    $minute = 0
+    if (Test-Path -LiteralPath $SettingsPath) {
+        $settings = Get-Content -LiteralPath $SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($null -ne $settings.service.collection_minute) {
+            $configured = $settings.service.collection_minute
+            if ($configured -isnot [int] -and $configured -isnot [long]) { throw "Invalid collection minute" }
+            $minute = [int]$configured
+        }
+    }
+    if ($minute -notin @(0, 30, 50)) { throw "Collection minute must be 0, 30 or 50" }
+    $target = $Now.Date.AddHours($Now.Hour).AddMinutes($minute)
+    if ($target -le $Now) { $target = $target.AddHours(1) }
+    return $target
+}
+
 function Install-RepeatingTask {
     param(
         [string]$TaskName,
@@ -44,7 +61,9 @@ function Install-RepeatingTask {
         [string]$Arguments,
         [string]$WorkingDirectory,
         [int]$IntervalMinutes,
-        [System.Management.Automation.PSCredential]$Credential
+        [System.Management.Automation.PSCredential]$Credential,
+        [datetime]$FirstRunAt = [datetime]::MinValue,
+        [switch]$RunImmediately
     )
 
     if ($IntervalMinutes -le 0) {
@@ -55,18 +74,21 @@ function Install-RepeatingTask {
         -Execute $ExecutablePath `
         -Argument $Arguments `
         -WorkingDirectory $WorkingDirectory
-    $startupTrigger = New-ScheduledTaskTrigger -AtStartup `
-        -RandomDelay (New-TimeSpan -Minutes 1)
-    $repeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+    $fixedClock = $FirstRunAt -ne [datetime]::MinValue
+    if (-not $fixedClock) { $FirstRunAt = (Get-Date).AddMinutes(1) }
+    $repeatTrigger = New-ScheduledTaskTrigger -Once -At $FirstRunAt `
         -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
         -RepetitionDuration (New-TimeSpan -Days 3650)
-    $taskSettings = New-ScheduledTaskSettingsSet `
-        -AllowStartIfOnBatteries `
-        -DontStopIfGoingOnBatteries `
-        -MultipleInstances IgnoreNew `
-        -StartWhenAvailable `
-        -RestartCount 3 `
-        -RestartInterval (New-TimeSpan -Minutes 2)
+    $triggers = @($repeatTrigger)
+    $options = @{ AllowStartIfOnBatteries = $true; DontStopIfGoingOnBatteries = $true; MultipleInstances = 'IgnoreNew' }
+    if (-not $fixedClock) {
+        $startupTrigger = New-ScheduledTaskTrigger -AtStartup -RandomDelay (New-TimeSpan -Minutes 1)
+        $triggers = @($startupTrigger, $repeatTrigger)
+        $options.StartWhenAvailable = $true
+        $options.RestartCount = 3
+        $options.RestartInterval = New-TimeSpan -Minutes 2
+    }
+    $taskSettings = New-ScheduledTaskSettingsSet @options
 
     if ($null -eq $Credential) {
         $defaultUser = "$env:USERDOMAIN\$env:USERNAME"
@@ -84,7 +106,7 @@ function Install-RepeatingTask {
         Register-ScheduledTask `
             -TaskName $TaskName `
             -Action $action `
-            -Trigger @($startupTrigger, $repeatTrigger) `
+            -Trigger $triggers `
             -Settings $taskSettings `
             -User $Credential.UserName `
             -Password $plainPassword `
@@ -95,4 +117,5 @@ function Install-RepeatingTask {
         $plainPassword = $null
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
     }
+    if ($RunImmediately) { Start-ScheduledTask -TaskName $TaskName }
 }

@@ -14,7 +14,7 @@ RULES = {
     "rs01_room_revenue_daily": ("business_date", "pms_daily_days"),
     "jd01_booking_detail": ("COALESCE(booking_time, snapshot_time, created_at)", "pms_daily_days"),
 }
-SOURCES = {"PMS（宝寓）", "PMS（Foxhis）", "PMS（美团）"}
+SOURCES = {"PMS（宝寓）", "PMS（Foxhis）", "PMS（美团）", "PMS（慧云）"}
 
 
 def cleanup_history(cursor, table, hotel_id, source, snapshot):

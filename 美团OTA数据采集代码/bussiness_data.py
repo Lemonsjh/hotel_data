@@ -8,6 +8,7 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -69,9 +70,18 @@ class MeituanDashboardClient:
         resp = requests.get(url, params=params, headers=self.headers, timeout=30)
         resp.raise_for_status()
         resp.encoding = "utf-8"
-        data = resp.json()
-        if data["status"] != 0:
-            raise Exception(data)
+        endpoint = urlsplit(url).path
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise RuntimeError(f"美团接口 {endpoint} 返回非JSON响应，HTTP {resp.status_code}") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(f"美团接口 {endpoint} 返回异常JSON类型：{type(data).__name__}")
+        if data.get("status") not in (0, "0"):
+            message = str(data.get("message") or data.get("msg") or "无错误提示")[:200]
+            status = data.get("status", "缺失")
+            code = data.get("code", "无")
+            raise RuntimeError(f"美团接口 {endpoint} 响应异常：status={status}, code={code}, message={message}")
         return data
     def get_dashboard(self, poi_id=POI_ID, partner_id=PARTNER_ID, date_range=1):
         params = {

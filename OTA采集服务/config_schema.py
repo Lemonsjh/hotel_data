@@ -2,7 +2,7 @@ TEXT_GROUPS = [
     (
         "基础配置",
         [
-            ("service.interval_minutes", "定时间隔（分钟）"),
+            ("service.collection_minute", "每小时采集时刻"),
             ("price_scheduler.interval_minutes", "调价检查间隔（分钟）"),
         ],
     ),
@@ -159,7 +159,7 @@ CONFIG_SECTIONS = [
         "hint": "全局标识、采集频率和数据落库位置。",
         "fields": [
             ("hotel.hotel_id", "酒店 ID", False, False),
-            ("service.interval_minutes", "采集间隔（分钟）", False, False),
+            ("service.collection_minute", "每小时采集时刻", False, False),
             ("price_scheduler.interval_minutes", "调价检查间隔（分钟）", False, False),
             ("mysql.host", "MySQL 地址", False, False),
             ("mysql.port", "MySQL 端口", False, False),
@@ -286,6 +286,15 @@ CONFIG_SECTIONS = [
             ("foxhis.charset", "字符集", False, True),
             ("foxhis.business_date_offset_days", "业务日偏移（天）", False, True),
             ("foxhis.timeout_seconds", "超时（秒）", False, True),
+        ],
+    },
+    {
+        "key": "huiyun",
+        "title": "PMS（慧云）",
+        "hint": "",
+        "fields": [
+            ("huiyun.hotel_name", "酒店名称", False, False),
+            ("huiyun.client_path", "客户端路径", False, False),
         ],
     },
 ]

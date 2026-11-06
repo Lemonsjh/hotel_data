@@ -18,6 +18,82 @@ from process_runner import ProcessResult
 
 
 class PmsProviderSelectionTests(TestCase):
+    def test_huiyun_client_discovery_never_saves_or_starts_the_client(self):
+        import panel
+        import huiyun_routes
+        client = panel.app.test_client()
+        for found in ('D:/慧云/Main/MainShellApp.exe', None):
+            with self.subTest(found=found), patch.object(huiyun_routes, 'find_client', return_value=found) as find, \
+                    patch.object(runner, 'save_json') as save, patch.object(panel.huiyun_bridge, 'start') as start:
+                response = client.post('/api/huiyun/client-path', json={'client_path': '旧路径'})
+                self.assertEqual(response.status_code, 200 if found else 404)
+                self.assertEqual(response.json['ok'], bool(found))
+                if found:
+                    self.assertEqual(response.json['path'], found)
+                find.assert_called_once_with('旧路径')
+                save.assert_not_called()
+                start.assert_not_called()
+
+    def test_huiyun_can_be_selected_and_saved_without_starting_another_collector(self):
+        import local_reset
+        import panel
+        import pms_providers
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            config = Path(directory) / 'settings.json'
+            runner.save_json(config, local_reset.default_settings())
+            with patch.object(runner, 'CONFIG_PATH', config), \
+                 patch.object(panel.platform_login, 'read_status', return_value={}):
+                client = panel.app.test_client()
+                self.assertEqual(client.post('/config', data={
+                    'pms_provider': 'huiyun', 'huiyun.hotel_name': '测试慧云酒店',
+                    'task.pms_fetch': 'on',
+                }).status_code, 302)
+                loaded = runner.load_settings()
+                html = client.get('/config').get_data(as_text=True)
+        self.assertEqual(loaded['pms']['provider'], 'huiyun')
+        self.assertEqual(loaded['huiyun']['hotel_name'], '测试慧云酒店')
+        for key, spec in pms_providers.PMS_PROVIDERS.items():
+            self.assertEqual(loaded[spec['config_key']]['enabled'], key == 'huiyun')
+        self.assertIn('data-pms-card="huiyun"', html)
+        self.assertIn("value='huiyun' selected", html)
+        self.assertIn('pms_fetch', runner.enabled_tasks(loaded))
+        self.assertIn('打开采集客户端', html)
+        self.assertIn('data-find-huiyun-client', html)
+        self.assertIn('/static/huiyun_client_path.js', html)
+        loaded['mysql']['database'] = 'fake_huiyun'
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory, \
+             patch.object(runner, 'LOG_DIR', Path(directory)), patch.object(runner, 'save_json'), \
+             patch.object(runner, 'ensure_task_tables') as ensure, \
+             patch.object(runner, 'run_streamed', return_value=ProcessResult(0, 'collected')) as run:
+            result = runner.run_task('pms_fetch', loaded, {})
+        self.assertEqual(result['status'], 'success')
+        command = run.call_args_list[0].args[0]
+        self.assertTrue(command[1].replace('\\', '/').endswith('huiyun_pms/collector.py'))
+        self.assertNotIn('--dry-run', command)
+        self.assertTrue(run.call_args_list[1].args[0][1].replace('\\', '/').endswith('huiyun_pms/booking_report.py'))
+        self.assertTrue(run.call_args_list[2].args[0][1].replace('\\', '/').endswith('huiyun_pms/guest_report.py'))
+        self.assertTrue(run.call_args_list[3].args[0][1].replace('\\', '/').endswith('huiyun_pms/daily_report.py'))
+        self.assertTrue(run.call_args_list[4].args[0][1].replace('\\', '/').endswith('huiyun_pms/monthly_report.py'))
+        self.assertTrue(run.call_args_list[5].args[0][1].replace('\\', '/').endswith('huiyun_pms/revenue_report.py'))
+        self.assertTrue(run.call_args_list[6].args[0][1].replace('\\', '/').endswith('huiyun_pms/room_performance_report.py'))
+        self.assertTrue(run.call_args_list[7].args[0][1].replace('\\', '/').endswith('huiyun_pms/classification_report.py'))
+        ensure.assert_called_once()
+
+    def test_old_configuration_gains_disabled_huiyun_without_switching_platform(self):
+        import local_reset
+        settings = local_reset.default_settings()
+        settings.pop('huiyun')
+        settings['tasks']['pms_fetch'] = False
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            config = Path(directory) / 'settings.json'
+            runner.save_json(config, settings)
+            with patch.object(runner, 'CONFIG_PATH', config):
+                loaded = runner.load_settings()
+        self.assertEqual(loaded['pms']['provider'], 'byh')
+        self.assertFalse(loaded['huiyun']['enabled'])
+        self.assertFalse(loaded['tasks']['pms_fetch'])
+        self.assertTrue(loaded['huiyun']['client_path'].endswith('MainShellApp.exe'))
+
     def test_byh_default_and_old_local_paths_resolve_to_renamed_directory(self):
         expected = ROOT / "别样红PMS数据采集代码" / "PMS登录" / "fetch_main.py"
         for directory in (None, "正式数据抓取-PMS（别样红）/PMS登录",

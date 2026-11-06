@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from flask import redirect, url_for
+from flask import redirect, request, url_for
 
 import runner
+import program_update_routes
 from price_routes import PRICE_STOP_PATH, price_scheduler_status, start_price_scheduler
 from promotion_scheduler import STOP_PATH as PROMOTION_STOP_PATH, scheduler_status as promotion_scheduler_status, start_scheduler as start_promotion_scheduler
 from review_reply_routes import REPLY_STOP_PATH, reply_scheduler_status, start_reply_scheduler
@@ -21,6 +22,7 @@ from panel_common import (
 
 
 def register(app) -> None:
+    program_update_routes.register(app)
     @app.get("/")
     def index() -> str:
         status = runner.reconcile_stale_run()
@@ -64,7 +66,7 @@ def register(app) -> None:
                     + "</details>"
                 )
             cards.append(
-                "<article class='task-card'>"
+                f"<article class='task-card' data-task='{esc(name)}'>"
                 f"<div><div class='task-title'>{esc(task_label(name))}</div><div class='task-key'>{esc(name)}</div></div>"
                 f"<span class='pill {status_class(state)}'>{esc(status_label(state))}</span>"
                 f"<div class='meta'>配置：{config_state}<br>开始：{esc(item.get('started_at', '-'))}<br>"
@@ -171,7 +173,6 @@ def register(app) -> None:
             or promotion_scheduler_state in {"executing", "stopping"}
         )
         refresh_delay = 2000 if should_refresh else 15000 if scheduler.get("alive") and scheduler_state == "waiting" else 0
-        refresh_script = f"<script>setTimeout(() => location.reload(), {refresh_delay});</script>" if refresh_delay else ""
         scheduler_html = f"""
 <div class="grid scheduler-grid">
   <section class="panel" style="padding:16px 20px">
@@ -204,6 +205,7 @@ def register(app) -> None:
   </section>
 </div>"""
         body = f"""
+<div id="collection-status" data-refresh-ms="{refresh_delay}">
 {scheduler_html}
 {ota_scope_panel(settings, "/")}
 <section class="summary">
@@ -226,8 +228,11 @@ def register(app) -> None:
   </div>
   <div class="grid">{''.join(cards)}</div>
 </section>
-{refresh_script}"""
-        return page("酒店数据采集控制台", body, "status")
+</div>"""
+        if request.args.get('partial') == '1':
+            return body
+        return page("酒店数据采集控制台", program_update_routes.update_card() + body
+                    + "<script src='/static/status_refresh.js' defer></script>", "status")
 
     @app.post("/run/all")
     def run_all():

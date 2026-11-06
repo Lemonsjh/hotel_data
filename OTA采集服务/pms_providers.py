@@ -24,6 +24,10 @@ FOXHIS_DEFAULTS = {
     "reports": "room_status,room_revenue,jl01,jy01,jy03,jl11,jd01",
     "timeout_seconds": 600,
 }
+HUIYUN_DEFAULTS = {
+    "enabled": False, "hotel_name": "",
+    "client_path": "C:/CshisNetProgram/Main/MainShellApp.exe",
+}
 
 
 def project_path(value: Any, default: str | Path = ".") -> Path:
@@ -135,6 +139,17 @@ PMS_PROVIDERS: dict[str, dict[str, Any]] = {
                     ("meituan_pms", "room_performance_report.py", []), ("meituan_pms", "revenue_report.py", []),
                     ("meituan_pms", "guest_report.py", [])],
         "probe_action": "", "channel": "http",
+    },
+    "huiyun": {
+        "label": "慧云 PMS", "short_label": "慧云 PMS",
+        "platform": "huiyun", "config_key": "huiyun", "card_key": "huiyun", "badge": "HUIYUN PMS",
+        "default_code_dir": "huiyun_pms", "cwd_from_script": False,
+        "entry_script": "", "entry_args": [],
+        "scripts": [("huiyun", "collector.py", []), ("huiyun", "booking_report.py", []),
+                    ("huiyun", "guest_report.py", []), ("huiyun", "daily_report.py", []),
+                    ("huiyun", "monthly_report.py", []), ("huiyun", "revenue_report.py", []),
+                    ("huiyun", "room_performance_report.py", []), ("huiyun", "classification_report.py", [])],
+        "timeout_seconds": 300, "probe_action": "", "channel": "desktop",
     },
 }
 
