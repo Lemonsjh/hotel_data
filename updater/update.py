@@ -136,9 +136,14 @@ def apply_update(root: Path, package: Path, tag: str, work: Path) -> None:
         # Caller releases maintenance lock before restoring schedulers.
         raise
     pending.unlink(missing_ok=True)
-    print(f"Update installed: {manifest['version']}; backup: updater/backups/{stamp}")
+    installed_line = f"Update installed: {manifest['version']}; backup: updater/backups/{stamp}"
+    print(installed_line)
+    lines = [installed_line]
     if any(name.startswith("extensions/meituan-login-sync/") for name in content):
-        print("Browser extension files updated. Reload the extension in Edge/Chrome; first-time installation still requires Load unpacked.")
+        extension_line = "Browser extension files updated. Reload the extension in Edge/Chrome; first-time installation still requires Load unpacked."
+        print(extension_line)
+        lines.append(extension_line)
+    return "\n".join(lines)
 
 
 def recover(root: Path, work: Path) -> Path:
@@ -155,8 +160,19 @@ def recover(root: Path, work: Path) -> Path:
     restore(root, backup, plan)
     service(root, guard, snapshot, "Panel")
     pending.unlink()
-    print("Recovered program files. Database and local configuration were not changed.")
+    message = "Recovered program files. Database and local configuration were not changed."
+    print(message)
+    remember_panel_text(message)
     return snapshot
+
+
+def remember_panel_text(text: str) -> None:
+    path = ROOT / SERVICE / "state" / "update_result.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"text": text}, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        return
 
 
 def main() -> int:
@@ -170,7 +186,9 @@ def main() -> int:
         tag = release["tag_name"]
         print(f"Installed: {current}; latest official Release: {tag}")
         if version(tag) <= version(current):
-            print("Already up to date; no downgrade will be performed.")
+            message = "Already up to date; no downgrade will be performed."
+            print(message)
+            remember_panel_text(message)
             return 0
         if not args.apply:
             print("Check only; pass --apply to install.")
@@ -202,7 +220,7 @@ def main() -> int:
             package = work / ASSET_NAME
             package.write_bytes(data)
             try:
-                apply_update(ROOT, package, tag, work)
+                remember_panel_text(apply_update(ROOT, package, tag, work))
             finally:
                 # Only resume if rollback/install fully completed, never during pending recovery.
                 resume_path = read_json(work / "resume.json").get("snapshot")
@@ -219,5 +237,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print(f"Update failed ({type(exc).__name__}): {exc}", file=sys.stderr)
+        message = f"Update failed ({type(exc).__name__}): {exc}"
+        remember_panel_text(message)
+        print(message, file=sys.stderr)
         raise SystemExit(1)

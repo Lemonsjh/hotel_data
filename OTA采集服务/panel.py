@@ -40,7 +40,84 @@ def mask(value: Any) -> str:
     return f"{text[:8]}...{text[-6:]}"
 
 
-def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
+HOTEL_FIELDS = frozenset({
+    "hotel.hotel_id",
+    "service.interval_minutes",
+    "price_scheduler.interval_minutes",
+    "mysql.host",
+    "mysql.port",
+    "mysql.user",
+    "mysql.password",
+    "mysql.database",
+})
+
+ADVANCED_FIELDS = frozenset({
+    "python_path",
+    "paths.base_dir",
+    "paths.output_dir",
+    "paths.meituan_code_dir",
+    "paths.ctrip_code_dir",
+    "service.timeout_seconds",
+    "price_scheduler.startup_delay_seconds",
+    "price_scheduler.max_tasks_per_run",
+    "reply_scheduler.max_tasks_per_run",
+    "promotion_scheduler.max_tasks_per_run",
+    "data_retention.pms_hourly_days",
+    "data_retention.pms_daily_days",
+    "data_retention.jl02_daily_days",
+    "data_retention.pms_monthly_months",
+    "data_retention.price_task_days",
+    "meituan.poi_id",
+    "meituan.partner_id",
+    "meituan.biz_account_id",
+    "meituan.review_ranking_url",
+    "meituan.review_detail_url",
+    "meituan.dianping_review_detail_url",
+    "meituan.calc_price_url",
+    "meituan.price_status_url",
+    "meituan.price_status_payload_file",
+    "ctrip.rating_url",
+    "ctrip.comment_list_url",
+    "ctrip.promotion_url",
+    "ctrip.goods_query_url",
+    "pms.code_dir",
+    "pms.entry_script",
+    "pms.timeout_seconds",
+    "pms.report_base_url",
+    "pms.service_api_base_url",
+    "pms.forecast_api_base_url",
+    "pms.navigation_timeout_ms",
+    "pms.action_timeout_ms",
+    "pms.api_timeout_seconds",
+    "bypms.code_dir",
+    "bypms.state_url",
+    "bypms.room_master_url",
+    "bypms.channel_mapping_url",
+    "bypms.daily_report_url",
+    "bypms.monthly_report_url",
+    "bypms.contract_url",
+    "bypms.classification_url",
+    "bypms.payment_url",
+    "bypms.timeout_seconds",
+    "foxhis.code_dir",
+    "foxhis.timeout_seconds",
+    "foxhis.business_date_offset_days",
+})
+
+
+def all_config_fields() -> list[tuple]:
+    return [field for section in CONFIG_SECTIONS for field in section["fields"]]
+
+
+def platform_keys() -> set[str]:
+    return {
+        field[0]
+        for field in all_config_fields()
+        if field[0] not in HOTEL_FIELDS and field[0] not in ADVANCED_FIELDS
+    }
+
+
+def apply_form_to_settings(settings: dict[str, Any], scope: str | None = None) -> dict[str, Any]:
     for section in CONFIG_SECTIONS:
         for key, _label, secret, _is_advanced in section["fields"]:
             value = request.form.get(key)
@@ -63,9 +140,10 @@ def apply_form_to_settings(settings: dict[str, Any]) -> dict[str, Any]:
     provider = request.form.get("pms_provider")
     if provider:
         pms_providers.apply_provider_selection(settings, provider)
-    settings.setdefault("tasks", {})
-    for name in runner.TASKS:
-        settings["tasks"][name] = request.form.get(f"task.{name}") == "on"
+    if scope == "tasks" or request.form.get("save_scope") == "tasks":
+        settings.setdefault("tasks", {})
+        for name in runner.TASKS:
+            settings["tasks"][name] = request.form.get(f"task.{name}") == "on"
     return settings
 
 
@@ -128,10 +206,22 @@ def config_control(settings: dict[str, Any], key: str, label: str, secret: bool)
     )
 
 
-def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
+def card_note_html(section_key: str) -> str:
+    notes = {
+        "foxhis": "西软采集需要本机已有 isql。没有 isql 时无法读取西软数据。",
+        "meituan_pms": "美团 PMS 和美团 OTA 是两套登录，登录一边不会自动登录另一边。",
+        "meituan": "这里是美团 OTA 登录，和美团 PMS 不是同一套。",
+    }
+    note = notes.get(section_key, "")
+    return f"<p class='config-hint'>{esc(note)}</p>" if note else ""
+
+
+def config_section(settings: dict[str, Any], section: dict[str, Any], only_keys: set[str] | None = None) -> str:
     regular = []
     advanced = []
     for key, label, secret, is_advanced in section["fields"]:
+        if only_keys is not None and key not in only_keys:
+            continue
         (advanced if is_advanced else regular).append(config_control(settings, key, label, secret))
 
     section_key = section["key"]
@@ -143,7 +233,8 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
     advanced_html = ""
     if advanced:
         login_help = (
-            "<p>登录助手无法完成登录时，可在日常 Edge 登录后手动填写 Cookie；推广效果另需推广后台 Cookie。</p>"
+            "<p>登录助手失败时，可在日常 Edge 登录后手动填写 Cookie；推广效果另需推广后台 Cookie。"
+            "浏览器扩展需要在 Edge 扩展页手动加载，本程序不会自动安装。</p>"
             "<div class='advanced-login-actions'>"
             "<button type='submit' class='secondary compact' name='login_mode' value='manual' formaction='/platform-login/meituan'>日常Edge登录（手动填写Cookie）</button>"
             "<a class='button secondary compact' href='/browser-cookie-import' target='_blank' rel='noopener'>浏览器扩展导入</a>"
@@ -227,6 +318,7 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
         {heading_actions}
       </div>
       {f'<p class="config-hint">{esc(section["hint"])}</p>' if section.get('hint') else ''}
+      {card_note_html(section_key)}
       {platform_actions}
       {login_html}
       <div class="config-grid">{''.join(regular)}</div>
@@ -254,6 +346,125 @@ def pms_source_selector(settings: dict[str, Any]) -> str:
     )
 
 
+def redirect_back(notice: str = "", error: str = ""):
+    target = request.form.get("return_to") or ""
+    view = request.form.get("config_view") or ""
+    if target not in {"/", "/config"}:
+        target = "/config"
+    endpoint = "index" if target == "/" else "config_page"
+    params = {}
+    if notice:
+        params["notice"] = notice
+    if error:
+        params["error"] = error
+    if endpoint == "config_page" and view == "installer":
+        params["view"] = "installer"
+    return redirect(url_for(endpoint, **params))
+
+
+def _field_controls(settings: dict[str, Any], keys: frozenset[str] | set[str]) -> str:
+    controls = []
+    for key, label, secret, _is_advanced in all_config_fields():
+        if key in keys:
+            controls.append(config_control(settings, key, label, secret))
+    return "".join(controls)
+
+
+def hotel_database_form(settings: dict[str, Any], return_to: str) -> str:
+    steps = ""
+    if status_routes.needs_setup(settings):
+        steps = (
+            "<ol class='setup-steps'>"
+            "<li>先在 MySQL 里创建这家酒店自己的数据库，排序规则使用 utf8mb4_0900_ai_ci。本程序不会创建数据库。</li>"
+            "<li>填写酒店 ID 和数据库连接，然后保存。保存这里不会改动采集任务开关。采集写入时会补上缺少的表。</li>"
+            "</ol>"
+        )
+    return f"""
+<section class="panel config-card" id="install-setup">
+  <div class="config-heading"><div><div class="config-kicker">SETUP</div><h2>酒店与数据库</h2></div></div>
+  {steps}
+  <p class="config-hint">建库时请使用排序规则 utf8mb4_0900_ai_ci。本页面不会执行 CREATE DATABASE。</p>
+  <form method="post" action="/config/save/hotel">
+    <input type="hidden" name="return_to" value="{esc(return_to)}">
+    <input type="hidden" name="config_view" value="installer">
+    <div class="config-grid">{_field_controls(settings, HOTEL_FIELDS)}</div>
+    <div class="section-save">
+      <button type="submit">保存酒店和数据库</button>
+    </div>
+  </form>
+</section>"""
+
+
+def advanced_settings_form(settings: dict[str, Any]) -> str:
+    blocks = []
+    for section in CONFIG_SECTIONS:
+        fields = [field for field in section["fields"] if field[0] in ADVANCED_FIELDS]
+        if not fields:
+            continue
+        controls = "".join(
+            config_control(settings, key, label, secret) for key, label, secret, _is_advanced in fields
+        )
+        blocks.append(f"<h3>{esc(section['title'])}</h3><div class='config-grid'>{controls}</div>")
+    return f"""
+<section class="panel config-card" id="advanced-settings">
+  <div class="config-heading">
+    <div>
+      <div class="config-kicker">ADVANCED</div>
+      <h2>高级项</h2>
+      <p>路径、超时、保留天数和签名 URL。保存这里不会改动采集任务开关。</p>
+    </div>
+  </div>
+  <form method="post" action="/config/save/advanced">
+    <input type="hidden" name="return_to" value="/config">
+    <input type="hidden" name="config_view" value="installer">
+    {''.join(blocks)}
+    <div class="section-save"><button type="submit">保存高级项</button></div>
+  </form>
+  <form method="post" action="/config/reset">
+    <div class="section-save">
+      <div><strong>重置本地配置</strong><span>关闭调度，不删除数据库里的采集数据。</span></div>
+      <button type="submit" class="secondary reset-config"
+        onclick="return confirm('将清除本地配置、登录 Cookie 与专用浏览器 Profile；数据库中的已采集数据不会删除。确定继续吗？')">重置本地配置</button>
+    </div>
+  </form>
+</section>"""
+
+
+def staff_login_form(action: str, label: str) -> str:
+    return (
+        "<form method='post' action='" + esc(action) + "'>"
+        "<input type='hidden' name='return_to' value='/config'>"
+        f"<button type='submit'>{esc(label)}</button></form>"
+    )
+
+
+def staff_config_page(settings: dict[str, Any], message_html: str) -> str:
+    hotel = status_routes.hotel_sentence(settings)
+    provider = active_pms_provider(settings)
+    pms_button = ""
+    if provider == "meituan_pms" or (settings.get("meituan_pms") or {}).get("enabled"):
+        pms_button = staff_login_form("/platform-login/meituan_pms", "打开美团 PMS 登录")
+    body = f"""
+{message_html}
+<section class="panel">
+  <div class="config-heading">
+    <div>
+      <div class="config-kicker">LOGIN</div>
+      <h2>登录</h2>
+      <p>酒店：{esc(hotel)}</p>
+      <p class="config-hint">美团 PMS 和美团 OTA 是两套登录，登录一边不会自动登录另一边。</p>
+    </div>
+    <a class="button secondary" href="/config?view=installer">安装与高级</a>
+  </div>
+  <div class="actions">
+    {staff_login_form("/platform-login/meituan", "打开美团登录")}
+    {staff_login_form("/platform-login/ctrip", "打开携程登录")}
+    {pms_button}
+  </div>
+</section>"""
+    return page("登录", body, "config")
+
+
 @app.get("/config")
 def config_page() -> str:
     settings = runner.load_settings()
@@ -264,6 +475,8 @@ def config_page() -> str:
         message_html += f"<div class='success'>{esc(notice)}</div>"
     if error:
         message_html += f"<div class='warning'>{esc(error)}</div>"
+    if request.args.get("view") != "installer":
+        return staff_config_page(settings, message_html)
     task_checks = []
     for name in runner.TASKS:
         checked = "checked" if (settings.get("tasks") or {}).get(name, False) else ""
@@ -271,7 +484,12 @@ def config_page() -> str:
             f"<label class='switch-item'><input type='checkbox' name='task.{esc(name)}' {checked}>"
             f"<span><strong>{esc(task_label(name))}</strong><small>{esc(name)}</small></span></label>"
         )
-    sections = {section["key"]: config_section(settings, section) for section in CONFIG_SECTIONS}
+    platform = platform_keys()
+    sections = {
+        section["key"]: config_section(settings, section, only_keys=platform)
+        for section in CONFIG_SECTIONS
+        if section["key"] != "system"
+    }
     pms_cards = "".join(
         sections[spec["card_key"]] for spec in pms_providers.PMS_PROVIDERS.values()
     )
@@ -281,10 +499,8 @@ def config_page() -> str:
     )
     default_provider = pms_providers.DEFAULT_PROVIDER
     base_group = (
-        "<section class='config-group'><div class='config-group-heading'>基础配置</div>"
-        "<div class='config-layout'>"
-        f"{sections['system']}"
-        "<div class='pms-config-stack'>"
+        "<section class='config-group'><div class='config-group-heading'>当前 PMS</div>"
+        "<div class='config-layout'><div class='pms-config-stack'>"
         f"{pms_cards}"
         "</div></div></section>"
     )
@@ -297,28 +513,35 @@ def config_page() -> str:
     )
     grouped_sections = base_group + ota_group
     body = f"""
-<form method="post" action="/config" class="config-form">
-  {message_html}
+{message_html}
+<p><a class="button secondary" href="/config?view=staff">返回登录</a></p>
+{hotel_database_form(settings, "/config")}
+<form method="post" action="/config/save/platform" class="config-form">
+  <input type="hidden" name="return_to" value="/config">
+  <input type="hidden" name="config_view" value="installer">
   <div class="config-groups">{grouped_sections}</div>
+  <div class="section-save">
+    <div><strong>保存当前 PMS 和平台登录</strong><span>密码、Cookie 留空则保留原值。不会改动采集任务开关。</span></div>
+    <button type="submit">保存当前 PMS 和平台登录</button>
+  </div>
+</form>
+<form method="post" action="/config/save/tasks" class="config-form">
+  <input type="hidden" name="save_scope" value="tasks">
+  <input type="hidden" name="return_to" value="/config">
+  <input type="hidden" name="config_view" value="installer">
   <section class="panel config-card task-switches">
     <div class="config-heading">
       <div>
         <div class="config-kicker">JOBS</div>
         <h2>采集任务</h2>
-        <p>关闭暂时不需要运行的采集模块。</p>
+        <p>关闭暂时不需要运行的采集模块。保存这里只改任务开关。</p>
       </div>
     </div>
     <div class="switch-grid">{''.join(task_checks)}</div>
+    <div class="section-save"><button type="submit">保存采集任务开关</button></div>
   </section>
-  <div class="save-bar">
-    <div><strong>敏感信息不会回显</strong><span>密码、Cookie 和签名 URL 留空即保留原值</span></div>
-    <div class="save-actions">
-      <button type="submit" class="secondary reset-config" formmethod="post" formaction="/config/reset"
-        onclick="return confirm('将清除本地配置、登录 Cookie 与专用浏览器 Profile；数据库中的已采集数据不会删除。确定继续吗？')">重置本地配置</button>
-      <button type="submit">保存全部配置</button>
-    </div>
-  </div>
 </form>
+{advanced_settings_form(settings)}
 <script>
 async function refreshLoginStates() {{
   for (const box of document.querySelectorAll('[data-login-platform]')) {{
@@ -365,12 +588,22 @@ selectPmsProvider(document.querySelector('select[name="pms_provider"]')?.value |
     return page("\u914d\u7f6e\u4e2d\u5fc3", body, "config")
 
 
+def _save_posted(scope: str | None = None):
+    settings = apply_form_to_settings(runner.load_settings(), scope=scope)
+    runner.save_json(runner.CONFIG_PATH, settings)
+    return redirect_back(notice="已保存。")
+
+
 @app.post("/config")
 def save_config():
-    settings = runner.load_settings()
-    settings = apply_form_to_settings(settings)
-    runner.save_json(runner.CONFIG_PATH, settings)
-    return redirect(url_for("config_page"))
+    return _save_posted(None)
+
+
+@app.post("/config/save/<scope>")
+def save_scoped(scope: str):
+    if scope not in {"hotel", "platform", "tasks", "advanced"}:
+        return redirect_back(error="不支持的保存范围")
+    return _save_posted(scope)
 
 
 @app.post("/config/reset")

@@ -22,16 +22,16 @@ class SourceSyncDisplayTests(unittest.TestCase):
             self.assertEqual(runner.config_warnings(settings), [])
             settings["meituan"]["enabled"] = True
             warnings = runner.config_warnings(settings)
-        self.assertTrue(any("MEITUAN_ME_COOKIE" in warning for warning in warnings))
-        self.assertTrue(any("meituan code dir" in warning for warning in warnings))
-        self.assertFalse(any("ctrip" in warning.lower() for warning in warnings))
+        self.assertTrue(any("请重新登录美团" in warning for warning in warnings))
+        self.assertTrue(any("找不到美团采集程序" in warning for warning in warnings))
+        self.assertFalse(any("携程" in warning for warning in warnings))
 
     def test_foxhis_connection_warnings_are_not_removed(self):
         settings = {"pms": {"enabled": False}, "foxhis": {"enabled": True},
                     "meituan": {"enabled": False}, "ctrip": {"enabled": False}}
         warnings = runner.config_warnings(settings)
-        self.assertTrue(any("Foxhis server" in warning for warning in warnings))
-        self.assertTrue(any("Foxhis username" in warning for warning in warnings))
+        self.assertTrue(any("西软还没有填写服务名" in warning for warning in warnings))
+        self.assertTrue(any("西软还没有填写数据库账号" in warning for warning in warnings))
 
     def test_waiting_scheduler_refreshes_slowly_and_running_refreshes_quickly(self):
         app = Flask(__name__)

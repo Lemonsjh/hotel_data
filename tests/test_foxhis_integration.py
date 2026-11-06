@@ -88,7 +88,7 @@ class FoxhisIntegrationTests(unittest.TestCase):
                 data["pms_provider"] = "foxhis"
                 self.assertEqual(client.post("/config", data=data).status_code, 302)
                 loaded = runner.load_settings()
-                html = client.get("/config").get_data(as_text=True)
+                html = client.get("/config?view=installer").get_data(as_text=True)
         self.assertEqual(loaded["pms"]["provider"], "foxhis")
         self.assertTrue(loaded["foxhis"]["enabled"])
         self.assertFalse(loaded["pms"]["enabled"])

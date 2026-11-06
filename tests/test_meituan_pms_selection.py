@@ -41,7 +41,7 @@ class MeituanPmsSelectionTests(unittest.TestCase):
         settings = local_reset.default_settings()
         with patch.object(runner, "load_settings", return_value=settings), \
                 patch.object(panel.platform_login, "read_status", return_value={"completed_at": "old"}):
-            page = panel.app.test_client().get("/config").get_data(as_text=True)
+            page = panel.app.test_client().get("/config?view=installer").get_data(as_text=True)
         self.assertIn("data-login-completed-at='old'", page)
         function = "async function refreshLoginStates()" + page.split("async function refreshLoginStates()", 1)[1].split(
             "setInterval(refreshLoginStates", 1)[0]
@@ -83,7 +83,7 @@ const fetch = async()=>({json:async()=>data});
             with patch.object(runner, "CONFIG_PATH", config), \
                  patch.object(panel.platform_login, "read_status", return_value={}):
                 client = panel.app.test_client()
-                page = client.get("/config").get_data(as_text=True)
+                page = client.get("/config?view=installer").get_data(as_text=True)
                 self.assertIn("美团 PMS", page)
                 self.assertNotIn("经营报表仅采总营业指标", page)
                 self.assertIn("formaction='/platform-login/meituan_pms'", page)
@@ -95,7 +95,7 @@ const fetch = async()=>({json:async()=>data});
                 self.assertFalse(settings["pms"]["enabled"])
                 self.assertFalse(settings["bypms"]["enabled"])
                 self.assertFalse(settings["foxhis"]["enabled"])
-                self.assertIn("value='meituan_pms' selected", client.get("/config").get_data(as_text=True))
+                self.assertIn("value='meituan_pms' selected", client.get("/config?view=installer").get_data(as_text=True))
                 self.assertIn("pms_fetch", runner.enabled_tasks(settings))
                 self.assertEqual(runner.task_unavailable_reason("pms_fetch", "pms", settings), "")
                 self.assertEqual(pms_providers.task_specs("pms_fetch", settings),

@@ -84,7 +84,7 @@ class LocalResetTests(unittest.TestCase):
         settings = local_reset.default_settings()
         with patch.object(runner, "load_settings", return_value=settings), \
              patch.object(panel, "config_section", return_value=""):
-            response = panel.app.test_client().get("/config")
+            response = panel.app.test_client().get("/config?view=installer")
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
         for name in runner.TASKS:
