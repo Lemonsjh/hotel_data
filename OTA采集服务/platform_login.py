@@ -431,13 +431,12 @@ def keep_open(context: Any, platform: str) -> None:
     browser = context.browser
     while browser and browser.is_connected() and not stop_path(platform).exists():
         pages = context.pages
-        if pages:
-            try:
-                pages[-1].wait_for_timeout(500)
-            except PlaywrightError:
-                pass
-        else:
-            time.sleep(0.5)
+        if not pages:
+            break  # 最后一个窗口已关闭；连接标记可能尚未更新，不能继续空等。
+        try:
+            pages[-1].wait_for_timeout(500)
+        except PlaywrightError:
+            pass
 
 
 def run(platform: str, switch_account: bool = False) -> int:

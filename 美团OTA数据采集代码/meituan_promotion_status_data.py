@@ -16,7 +16,6 @@ import requests
 
 from meituan_config import MEITUAN_EB_COOKIE, MEITUAN_ME_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
 from meituan_goods_price_mapping import MeituanGoodsClient
-from meituan_page_capture import browser_profile_lock
 from meituan_promotion_status_checks import (
     AUTO_ORDER_NAME, BUSINESS_TRAVEL_NAME, HIGHLIGHTS_NAME, PUBLIC_WELFARE_NAME,
     SCHEDULED_INVOICE_NAME, fetch_auto_order_status, fetch_business_travel_status,
@@ -208,21 +207,21 @@ def main() -> int:
     results = []
     failures = []
     try:
-        with browser_profile_lock():
-            for code, name, check in checks:
-                started = time.monotonic()
-                print(f"{code} check started", flush=True)
-                try:
-                    status = check()
-                    save_status(hotel_id, code, name, status)
-                except Exception as exc:
-                    message = f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')[:300]}"
-                    failures.append((code, name, message))
-                    print(f"{code} check failed; previous database status retained: {message}")
-                    continue
-                finally:
-                    print(f"{code} check finished; duration={time.monotonic() - started:.2f}s", flush=True)
-                results.append((code, name, status))
+        # 各子项仅用接口或独立临时浏览器，不占用登录助手的持久化profile。
+        for code, name, check in checks:
+            started = time.monotonic()
+            print(f"{code} check started", flush=True)
+            try:
+                status = check()
+                save_status(hotel_id, code, name, status)
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')[:300]}"
+                failures.append((code, name, message))
+                print(f"{code} check failed; previous database status retained: {message}")
+                continue
+            finally:
+                print(f"{code} check finished; duration={time.monotonic() - started:.2f}s", flush=True)
+            results.append((code, name, status))
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         (OUTPUT_DIR / "meituan_ota_promotion_status.json").write_text(
             json.dumps(

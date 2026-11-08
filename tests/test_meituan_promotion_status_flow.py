@@ -4,7 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack, nullcontext, redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "美团OTA数据采集代码"))
 import meituan_promotion_status_data as task
 import meituan_status_session as session
+import meituan_page_capture as capture
 
 
 class PromotionStatusFlowTests(unittest.TestCase):
@@ -26,7 +27,6 @@ class PromotionStatusFlowTests(unittest.TestCase):
         self.stack.enter_context(patch.object(task, "OUTPUT_DIR", self.root))
         self.stack.enter_context(patch.dict(os.environ, {"HOTEL_ID": "test"}))
         self.stack.enter_context(patch.object(sys, "argv", ["promotion-status"]))
-        self.stack.enter_context(patch.object(task, "browser_profile_lock", return_value=nullcontext()))
         self.calls = []
         self.checks = {}
         for name in ("youmeihui", "business_travel", "public_welfare", "scheduled_invoice",
@@ -50,6 +50,16 @@ class PromotionStatusFlowTests(unittest.TestCase):
         self.assertIn("last_success_at", state)
         self.assertGreaterEqual(state["cooldown_hours"], 10)
         self.assertLessEqual(state["cooldown_hours"], 14)
+
+    def test_login_helper_profile_lock_does_not_block_isolated_checks(self):
+        lock = self.root / '.capture.lock'
+        lock.write_text(str(os.getpid()), encoding='ascii')
+        with patch.object(capture, 'profile_path', return_value=self.root), \
+             patch.object(capture, 'browser_profile_lock', side_effect=AssertionError('persistent profile must not be used')), \
+             patch.object(capture.time, 'sleep', side_effect=AssertionError('must not wait for profile lock')):
+            self.assertEqual(task.main(), 0)
+        self.assertEqual(self.save.call_count, 7)
+        self.assertEqual(lock.read_text(encoding='ascii'), str(os.getpid()))
 
     def test_unknown_welfare_is_failure_without_inserting_initial_closed(self):
         self.checks["public_welfare"].side_effect = RuntimeError("未返回明确的开通状态")
