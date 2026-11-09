@@ -7,6 +7,7 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -33,8 +34,7 @@ POINTS_ALLIANCE_MENU_TEXT = "积分联盟"
 PREFERRED_CLUB_MENU_POINT = (110, 458)
 PREFERRED_CLUB_MENU_TEXT = "优享会"
 TRAVEL_PHOTO_TAB_TEXT = "\u65c5\u62cd"
-EMPTY_DATA_TEXT = "\u6682\u65e0\u6570\u636e"
-MY_UPLOADS_TEXT = "\u6211\u7684\u4e0a\u4f20"
+TRAVEL_PHOTO_API_ROOT = "/ebkovsproduct/ebooking/api/"
 POINTS_PAGE_MARKERS = ("积分可抵", "积分膨胀", "十倍积分")
 PREFERRED_CLUB_PAGE_MARKERS = ("体验优享会计划说明", "优享会酒店附加协议")
 
@@ -268,24 +268,35 @@ def information_score_from_payload(payload: Any) -> float:
     return value
 
 
-def travel_photo_status(page: Any) -> int:
+def travel_photo_total(response: Any) -> int:
+    if response.status != 200:
+        raise RuntimeError(f"携程旅拍接口 HTTP {response.status}")
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) and payload.get("code") == 0 else None
+    total = data.get("total") if isinstance(data, dict) and data.get("code") == 0 else None
+    if type(total) is not int or total < 0:
+        raise RuntimeError("携程旅拍接口未返回有效总条数")
+    return total
+
+
+def travel_photo_status(page: Any) -> tuple[int, int]:
     page.goto(HOTEL_HIGHLIGHTS_URL, wait_until="domcontentloaded", timeout=60_000)
     page.wait_for_timeout(4_000)
     dismiss_overlays(page)
     travel_tab = page.get_by_text(TRAVEL_PHOTO_TAB_TEXT, exact=True)
     if not travel_tab.count():
         raise RuntimeError("Ctrip hotel-highlights page did not return a travel-photo tab")
-    travel_tab.last.click(timeout=10_000)
 
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        empty = page.get_by_text(EMPTY_DATA_TEXT, exact=True)
-        if any(item.is_visible() for item in empty.all()):
-            return 0
-        if MY_UPLOADS_TEXT in page.locator("body").inner_text(timeout=1_000):
-            return 1
-        page.wait_for_timeout(500)
-    raise RuntimeError("Ctrip travel-photo tab did not return a recognized status")
+    def matches(response: Any, endpoint: str) -> bool:
+        url = urlsplit(response.url)
+        return (url.scheme == "https" and url.hostname == "ebooking.ctrip.com"
+                and url.path == TRAVEL_PHOTO_API_ROOT + endpoint
+                and response.request.method == "POST")
+
+    with page.expect_response(lambda r: matches(r, "getArticleInfo"), timeout=20_000) as uploaded, \
+         page.expect_response(lambda r: matches(r, "getClaimArticleInfo"), timeout=20_000) as claimed:
+        travel_tab.last.click(timeout=10_000)
+    return travel_photo_total(uploaded.value), travel_photo_total(claimed.value)
 
 
 def quick_check_inn_status(page: Any) -> int:
@@ -350,6 +361,7 @@ def status_row(
     active_status: str, inactive_status: str, status_detail: str | None = None,
     room_type_count: int | None = None, orders_30d: int | None = None,
     metric_value: float | None = None, metric_unit: str | None = None,
+    travel_photo_counts: tuple[int | None, int | None] = (None, None),
 ) -> list[Any] | None:
     value, error = result
     if error:
@@ -358,7 +370,7 @@ def status_row(
     return [
         hotel_id, DEFAULT_HOTEL_NAME, "ctrip", code, name, int(bool(value)),
         active_status if value else inactive_status, status_detail, room_type_count, orders_30d,
-        captured_at, metric_value, metric_unit,
+        captured_at, metric_value, metric_unit, *travel_photo_counts,
     ]
 
 
@@ -376,6 +388,8 @@ def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[A
     business_value, business_error = results["business_travel"]
     business_data = business_value if isinstance(business_value, dict) else {"enabled": business_value}
     business_status = business_data.get("status") or ("JOINED" if business_data.get("enabled") else "NOT_JOINED")
+    photo_totals, photo_error = results["travel_photo"]
+    uploaded, claimed = photo_totals if not photo_error else (None, None)
     candidates = [
         status_row(hotel_id, captured_at, "points_alliance", "\u79ef\u5206\u8054\u76df", (points_enabled, points_error), "JOINED", "NOT_JOINED", orders_30d=points_orders),
         status_row(hotel_id, captured_at, "preferred_club", "\u4f18\u4eab\u4f1a", results["preferred_club"], "JOINED", "NOT_JOINED", "UNKNOWN" if results["preferred_club"][0] else None),
@@ -385,7 +399,9 @@ def status_rows(hotel_id: str, captured_at: datetime, results: dict[str, tuple[A
         status_row(hotel_id, captured_at, "hourly_room", "\u949f\u70b9\u623f", (hourly_enabled, hourly_error), "ENABLED", "DISABLED", room_type_count=hourly_room_count),
         status_row(hotel_id, captured_at, "listing_short_tags", "\u5217\u8868\u9875\u77ed\u6807\u7b7e", (short_tags, short_tags_error), "CONFIGURED", "NOT_CONFIGURED", status_detail=short_tags),
         status_row(hotel_id, captured_at, "listing_recommendation_words", "\u5217\u8868\u9875\u63a8\u8350\u8bcd", (recommendation_words, recommendation_words_error), "CONFIGURED", "NOT_CONFIGURED", status_detail=recommendation_words),
-        status_row(hotel_id, captured_at, "travel_photo", TRAVEL_PHOTO_TAB_TEXT, results["travel_photo"], "UPLOADED", "NOT_UPLOADED"),
+        status_row(hotel_id, captured_at, "travel_photo", TRAVEL_PHOTO_TAB_TEXT,
+                   (uploaded or claimed, photo_error), "UPLOADED", "NOT_UPLOADED",
+                   travel_photo_counts=(uploaded, claimed)),
         status_row(hotel_id, captured_at, "quick_check_inn", "\u95ea\u4f4f", results["quick_check_inn"], "joined", "not_joined"),
         status_row(hotel_id, captured_at, "information_completeness", "\u4fe1\u606f\u5b8c\u6574\u5ea6", (information_enabled, information_error), "COMPLETE", "INCOMPLETE", metric_value=information_score, metric_unit="%"),
     ]
@@ -406,6 +422,7 @@ def main() -> int:
     headers = [
         "hotel_id", "hotel_name", "platform_scope", "activity_code", "activity_name", "enabled",
         "status", "status_detail", "room_type_count", "orders_30d", "snapshot_time", "metric_value", "metric_unit",
+        "travel_photo_uploaded_count", "travel_photo_claimed_count",
     ]
     rows = status_rows(require_hotel_id(), captured_at, results)
     if not rows:

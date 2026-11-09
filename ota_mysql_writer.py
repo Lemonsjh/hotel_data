@@ -145,6 +145,17 @@ def sync_metric_history_table(
     try:
         with connection.cursor() as cursor:
             column_types = load_column_types(cursor, table_name)
+            if table_name == "ctrip_ota_promotion_status":
+                from pymysql.err import OperationalError
+
+                for column in ("travel_photo_uploaded_count", "travel_photo_claimed_count"):
+                    if column in headers and column not in column_types:
+                        try:
+                            cursor.execute(f"ALTER TABLE `ctrip_ota_promotion_status` ADD COLUMN `{column}` INT UNSIGNED DEFAULT NULL")
+                        except OperationalError as error:
+                            if error.args[0] != 1060:  # Another collector may have added it.
+                                raise
+                        column_types[column] = "int"
             missing = [header for header in headers if header not in column_types]
             if missing:
                 raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")

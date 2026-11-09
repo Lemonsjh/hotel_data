@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "携程OTA数据采集代码"))
 import ctrip_business_travel_status as business
 import ctrip_promotion_status_data as collector
+import ota_mysql_writer as mysql_writer
+from pymysql.err import OperationalError
 
 
 def payload(actions=None, statuses=None):
@@ -28,11 +30,32 @@ def results(business_result):
         "points_alliance", "preferred_club", "travel_photo", "listing_short_tags",
         "listing_recommendation_words", "quick_check_inn",
     )}
-    values.update(business_travel=business_result, hourly_room=((0, 0), None), information=(96, None))
+    values.update(business_travel=business_result, hourly_room=((0, 0), None),
+                  information=(96, None), travel_photo=((0, 0), None))
     return values
 
 
 class CtripBusinessTravelTests(unittest.TestCase):
+    def test_promotion_writer_adds_only_missing_travel_photo_columns(self):
+        columns = ("travel_photo_uploaded_count", "travel_photo_claimed_count")
+        headers = ("hotel_id", "activity_code", *columns)
+        for existing in ((), columns[:1], columns):
+            with self.subTest(existing=existing), patch.object(mysql_writer, "connect_mysql") as connect, \
+                 patch.object(mysql_writer, "load_column_types", return_value={
+                     "hotel_id": "varchar", "activity_code": "varchar", **dict.fromkeys(existing, "int"),
+                 }):
+                connection = connect.return_value
+                cursor = connection.cursor.return_value.__enter__.return_value
+                if len(existing) == 1:
+                    cursor.execute.side_effect = OperationalError(1060, "Duplicate column name")
+                mysql_writer.sync_metric_history_table(
+                    collector.TABLE_NAME, headers, [("hotel-1", "travel_photo", 0, 3)],
+                    {"hotel_id", "activity_code"}, retention_days=None,
+                )
+                self.assertEqual(cursor.execute.call_count, 2 - len(existing))
+                self.assertEqual(cursor.executemany.call_args.args[1], [("hotel-1", "travel_photo", 0, 3)])
+                connection.commit.assert_called_once()
+
     def test_only_exact_add_and_explicit_empty_status_list_mean_not_joined(self):
         self.assertEqual(business.business_travel_from_payload(payload()),
                          {"enabled": 0, "status": "NOT_JOINED", "status_detail": "ADD"})

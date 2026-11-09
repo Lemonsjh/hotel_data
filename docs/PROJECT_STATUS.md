@@ -1,5 +1,13 @@
 # 项目当前进度（PROJECT_STATUS）
 
+## 2026-11-09：携程旅拍改为读取列表接口
+
+同一条 travel_photo 记录分别用 travel_photo_uploaded_count 和 travel_photo_claimed_count 保存我的上传及认领条数。新建表包含这两列，现有表首次写入前自动补齐缺失列。列类型为可空无符号整数，其他活动及尚未更新的历史记录保持空值，接口确认列表为空时写 0。
+
+携程活动状态任务打开酒店亮点页并点击旅拍，读取页面触发的 getArticleInfo（我的上传）和 getClaimArticleInfo（认领旅拍）响应。校验 HTTP 状态、两层业务码和非负整数总条数。任一总条数大于零记为 UPLOADED，两者均为零记为 NOT_UPLOADED，任一响应失败或缺失则保留旧记录。沿用 travel_photo 活动代码和 ctrip_ota_promotion_status 表。
+
+14 项相关测试通过。用本机配置只读实测，两接口均返回总数 0，新采集逻辑判定为未上传。验证未写业务数据库。
+
 ## 2026-11-08：关闭登录窗口后退出助手并释放浏览器锁
 
 用户反馈窗口已关闭仍提示profile busy，本机确认原登录助手和Playwright驱动仍存活、Edge子进程已不存在，锁仍属于登录助手。platform_login.keep_open原先在context.pages为空时仅time.sleep，依赖可能尚未更新的browser.is_connected标记继续循环，导致窗口关闭后仍持锁。现最后一个页面关闭时直接退出循环，交回原context.close及profile锁finally清理；保留多窗口继续等待、停止请求及已保存Cookie状态，不改变登录成功后可保持窗口补充推广Cookie的流程。

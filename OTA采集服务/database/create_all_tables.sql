@@ -355,6 +355,8 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_promotion_status` (
   `status_detail` text COLLATE utf8mb4_unicode_ci,
   `room_type_count` int unsigned DEFAULT NULL,
   `orders_30d` int unsigned DEFAULT NULL,
+  `travel_photo_uploaded_count` int unsigned DEFAULT NULL,
+  `travel_photo_claimed_count` int unsigned DEFAULT NULL,
   `snapshot_time` datetime NOT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

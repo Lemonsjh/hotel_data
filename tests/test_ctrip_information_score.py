@@ -30,6 +30,26 @@ class CtripInformationScoreTests(unittest.TestCase):
     def setUpClass(cls):
         cls.module = load_module()
 
+    def test_travel_photo_uses_both_api_totals(self):
+        for uploaded, claimed in ((0, 0), (2, 0), (0, 3)):
+            with self.subTest(uploaded=uploaded, claimed=claimed):
+                page = MagicMock()
+                first, second = MagicMock(), MagicMock()
+                page.expect_response.side_effect = [first, second]
+                for response_context, total in ((first, uploaded), (second, claimed)):
+                    response = response_context.__enter__.return_value.value
+                    response.status = 200
+                    response.json.return_value = {"code": 0, "data": {"code": 0, "total": total}}
+                self.assertEqual(self.module.travel_photo_status(page), (uploaded, claimed))
+                self.assertEqual(page.expect_response.call_count, 2)
+
+    def test_travel_photo_rejects_failed_or_invalid_response(self):
+        for status, code, total in ((503, 0, 0), (200, 1, 0), (200, 0, None), (200, 0, True)):
+            response = MagicMock(status=status)
+            response.json.return_value = {"code": 0, "data": {"code": code, "total": total}}
+            with self.subTest(status=status, code=code, total=total), self.assertRaises(RuntimeError):
+                self.module.travel_photo_total(response)
+
     def test_reads_current_score_from_api_payload(self):
         self.assertEqual(self.module.information_score_from_payload({
             "success": True, "scoreInfo": {"currentScore": 96, "fullScore": 100, "scoreText": "96%"},
@@ -121,9 +141,16 @@ class CtripInformationScoreTests(unittest.TestCase):
         )}
         results["listing_short_tags"] = ("洗衣房，免费停车场", None)
         results["listing_recommendation_words"] = ("服务热情，设施齐全", None)
-        results.update(hourly_room=((0, 0), None), information=(96, None))
+        results.update(hourly_room=((0, 0), None), information=(96, None), travel_photo=((0, 3), None))
         rows = self.module.status_rows("hotel-1", datetime(2026, 9, 16), results)
         self.assertEqual(len(rows), 9)
+        by_code = {row[3]: row for row in rows}
+        self.assertEqual(by_code["travel_photo"][6], "UPLOADED")
+        self.assertEqual(by_code["travel_photo"][-2:], [0, 3])
+        self.assertEqual(by_code["listing_short_tags"][-2:], [None, None])
+        results["travel_photo"] = (None, "接口超时")
+        failed_rows = self.module.status_rows("hotel-1", datetime(2026, 9, 16), results)
+        self.assertFalse(any(row[3].startswith("travel_photo") for row in failed_rows))
         self.assertNotIn("listing_pass", [row[3] for row in rows])
         self.assertNotIn("homepage_video", [row[3] for row in rows])
         short_tags = next(row for row in rows if row[3] == "listing_short_tags")
@@ -139,7 +166,7 @@ class CtripInformationScoreTests(unittest.TestCase):
         )}
         results.update(
             points_alliance=({"enabled": 1, "orders_30d": 8}, None),
-            hourly_room=((0, 0), None), information=(96, None),
+            hourly_room=((0, 0), None), information=(96, None), travel_photo=((0, 0), None),
         )
         row = next(row for row in self.module.status_rows("hotel-1", datetime(2026, 9, 20), results) if row[3] == "points_alliance")
         self.assertEqual((row[5], row[6], row[9]), (1, "JOINED", 8))
