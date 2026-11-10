@@ -94,16 +94,31 @@ class MeituanDashboardClient:
             "csecplatform": "4",
             "csecversion": "4.2.4"
         }
+        return self._get_business_metrics(
+            self.base_url, params, self._parse_dashboard, METRIC_ORDER,
+            required={"PAY_ORDER_CNT": {"name": "支付订单", "unit": "单"}},
+        )
+
+    def _get_business_metrics(self, url, params, parse, metric_order, *, required=None):
+        metrics = dict(required or {})
         for attempt in range(3):
-            dashboard = self._parse_dashboard(self._get_api(self.base_url, params))
-            payment = dashboard["metrics"].get("PAY_ORDER_CNT")
-            if hourly_metric_value(payment) is not None:
-                return dashboard
+            report = parse(self._get_api(url, params))
+            for code, metric in report["metrics"].items():
+                if hourly_metric_value(metric) is not None or hourly_metric_value(metrics.get(code)) is None:
+                    metrics[code] = metric
+            missing = [code for code, _ in metric_order if code in metrics and hourly_metric_value(metrics[code]) is None]
+            if not missing:
+                break
             if attempt < 2:
                 delay = 5 * (attempt + 1)
-                print(f"美团经营 dateRange={date_range} 支付订单为空，{delay}秒后补采（{attempt + 1}/2）", flush=True)
+                print(f"美团经营 dateRange={params['dateRange']} {', '.join(missing)} 为空，{delay}秒后补采（{attempt + 1}/2）", flush=True)
                 time.sleep(delay)
-        raise RuntimeError(f"美团经营 dateRange={date_range} 支付订单为空，补采2次后仍无有效值，停止本轮入库")
+        if missing:
+            print(f"美团经营 dateRange={params['dateRange']} 补采后仍为空，按 0 保存：{', '.join(missing)}", flush=True)
+            for code in missing:
+                metrics[code]["value"] = 0
+        report["metrics"] = metrics
+        return report
     def get_report_data(self, poi_id=POI_ID, partner_id=PARTNER_ID, date_range=1):
         dashboard = self.get_dashboard(poi_id=poi_id, partner_id=partner_id, date_range=date_range)
         flow_conversion = self.get_flow_conversion(poi_id=poi_id, partner_id=partner_id, date_range=date_range)
@@ -128,7 +143,9 @@ class MeituanDashboardClient:
             "csecplatform": "4",
             "csecversion": "4.2.4"
         }
-        return self._parse_flow_conversion(self._get_api(self.flow_conversion_url, params))
+        return self._get_business_metrics(
+            self.flow_conversion_url, params, self._parse_flow_conversion, FLOW_METRIC_ORDER,
+        )
     def get_flow_trend(self, poi_id=POI_ID, partner_id=PARTNER_ID, date_range=1):
         params = {
             "poiId": poi_id, "partnerId": partner_id, "dateRange": date_range, "dataScope": "vpoi",
@@ -155,7 +172,7 @@ class MeituanDashboardClient:
         for card in cards:
             metric = {
                 "id": card.get("id", ""),
-                "name": card.get("title", ""),
+                "name": card.get("title") or dict(METRIC_ORDER).get(card.get("id"), ""),
                 "value": card.get("value", ""),
                 "unit": card.get("suffix") or card.get("unit") or ""
             }

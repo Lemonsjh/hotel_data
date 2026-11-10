@@ -82,15 +82,37 @@ class MeituanBusinessHourlyTests(unittest.TestCase):
                 self.assertEqual([c.args[0] for c in sleep.call_args_list], [5, 10][:len(empty_values)])
                 self.assertTrue(all(c.args[1]["dateRange"] == date_range for c in get_api.call_args_list))
 
-    def test_missing_or_empty_payment_stops_after_two_retries(self):
+    def test_missing_or_empty_payment_writes_zero_after_two_retries(self):
         responses = [{"status": 0, "data": {"cards": []}}, self.dashboard_response(None), self.dashboard_response("-")]
         client = self.module.MeituanDashboardClient("")
-        with patch.object(client, "_get_api", side_effect=responses) as get_api, patch.object(self.module.time, "sleep") as sleep, patch.object(client, "get_flow_conversion") as flow:
-            with self.assertRaisesRegex(RuntimeError, "补采2次"):
-                client.get_report_data(date_range=0)
+        with patch.object(client, "_get_api", side_effect=responses) as get_api, patch.object(self.module.time, "sleep") as sleep:
+            data = client.get_dashboard(date_range=0)
         self.assertEqual(get_api.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
-        flow.assert_not_called()
+        captured_at = datetime(2026, 11, 10, 15)
+        self.assertEqual(self.module.build_metric_rows(data, "today_realtime", 0, captured_at)[0][5], 0)
+        hourly = self.module.build_hourly_metric_rows(data, captured_at)
+        self.assertEqual(next(row[7] for row in hourly if row[5] == "PAY_ORDER_CNT"), 0)
+
+    def test_other_metrics_retry_without_losing_valid_values(self):
+        client = self.module.MeituanDashboardClient("")
+        for fetch, response, valid_code, empty_code in [
+            (client.get_dashboard,
+             lambda first, second: {"data": {"cards": [
+                 {"id": "PAY_ORDER_CNT", "value": first}, {"id": "PAY_AMT", "value": second}]}},
+             "PAY_ORDER_CNT", "PAY_AMT"),
+            (client.get_flow_conversion,
+             lambda first, second: {"data": {"myHotel": dict.fromkeys(self.module.FLOW_FIELD_MAP, 0)
+                                              | {"intentionUV": first, "exposureUV": second}}},
+             "FLOW_INTENTION_UV", "FLOW_EXPOSURE_UV"),
+        ]:
+            with self.subTest(metric=empty_code):
+                responses = [response(8, None), response(None, None), response(None, None)]
+                with patch.object(client, "_get_api", side_effect=responses) as get_api, patch.object(self.module.time, "sleep"):
+                    metrics = fetch(date_range=0)["metrics"]
+                self.assertEqual(get_api.call_count, 3)
+                self.assertEqual(self.module.hourly_metric_value(metrics[valid_code]), 8)
+                self.assertEqual(metrics[empty_code]["value"], 0)
 
     def test_zero_and_thousands_are_valid_without_retry(self):
         for value, expected in [("0", 0), (0, 0), ("1,234", 1234)]:
