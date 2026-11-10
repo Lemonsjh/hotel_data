@@ -209,6 +209,9 @@ def ensure_foxhis_hotel_name(settings: dict[str, Any]) -> None:
     code_dir = str(project_path(foxhis.get("code_dir"), pms_providers.FOXHIS_DEFAULTS["code_dir"]))
     if code_dir not in sys.path:
         sys.path.insert(0, code_dir)
+    from foxhis_accounts import complete_accounts
+    if len(complete_accounts(foxhis)) >= 2:
+        raise RuntimeError("汇总酒店名称为空，多个业务库本轮不采集。")
     from foxhis_common import Config, resolve_hotel_name
     name = resolve_hotel_name(Config.from_env(build_env(settings, "foxhis")))
     latest = load_settings()
@@ -362,6 +365,14 @@ def internal_hotel_id(settings: dict[str, Any], platform: str | None = None) -> 
     return str(hotel.get("hotel_id") or "").strip()
 
 
+def configured_foxhis_accounts(foxhis: dict[str, Any]) -> list[dict[str, Any]]:
+    code_dir = str(project_path(foxhis.get("code_dir"), pms_providers.FOXHIS_DEFAULTS["code_dir"]))
+    if code_dir not in sys.path:
+        sys.path.insert(0, code_dir)
+    from foxhis_accounts import complete_accounts
+    return complete_accounts(foxhis)
+
+
 def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -440,6 +451,14 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
         put_if(env, "FOXHIS_REPORTS", ",".join(str(item) for item in reports))
     else:
         put_if(env, "FOXHIS_REPORTS", reports)
+    env.pop("FOXHIS_ACCOUNTS", None)
+    foxhis_accounts = configured_foxhis_accounts(foxhis)
+    if isinstance(foxhis.get("accounts"), list) and foxhis_accounts:
+        put_if(env, "FOXHIS_DATABASE", foxhis_accounts[0]["database"])
+        put_if(env, "FOXHIS_USERNAME", foxhis_accounts[0]["username"])
+        put_if(env, "FOXHIS_PASSWORD", foxhis_accounts[0]["password"])
+    if len(foxhis_accounts) >= 2:
+        env["FOXHIS_ACCOUNTS"] = json.dumps(foxhis_accounts, ensure_ascii=False)
 
     put_if(env, "MEITUAN_HOTEL_NAME", meituan.get("hotel_name"))
     put_if(env, "MEITUAN_POI_ID", meituan.get("poi_id"))

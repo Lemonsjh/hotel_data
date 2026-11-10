@@ -126,10 +126,11 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
         for field in ("total_rooms", "maintain_rooms", "locked_rooms", "own_use_rooms",
                       "available_rooms", "free_rooms", "room_nights"):
             whole(metric[field])
-        if (total["total_rooms"] - total["maintain_rooms"] - total["locked_rooms"] - total["own_use_rooms"] != total["available_rooms"]
-                or total["available_rooms"] - total["sold_rooms"] != total["remaining_rooms"]
-                or total["sold_rooms"] - total["free_rooms"] != metric["room_nights"]):
-            raise FoxhisError(f"JY01 {day} 房量、免费房与计费出租间夜不一致。")
+        if total["total_rooms"] - total["maintain_rooms"] - total["locked_rooms"] - total["own_use_rooms"] != total["available_rooms"]:
+            raise FoxhisError(f"JY01 {day} 房量与可售房不一致。")
+        if total["sold_rooms"] - total["free_rooms"] != metric["room_nights"]:
+            raise FoxhisError(f"JY01 {day} 免费房与计费出租间夜不一致。")
+        # 空房按西软原值保存。可用房减已售可能与空房差一两间，不再因此拒绝整天。
         for field, numerator, denominator, factor in (
                 ("occupancy_rate", "room_nights", "available_rooms", 100),
                 ("adr", "room_revenue", "room_nights", 1),
@@ -148,7 +149,8 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
                      "remaining_rooms": whole(total["remaining_rooms"]), "orders_today": None,
                      "snapshot_time": snapshot.replace(microsecond=0)})
         audits[day.isoformat()] = {**metric, "net_room_income_total": revenue, "room_rebate": rebates[day]["018000"],
-                                  "sold_rooms": total["sold_rooms"], "remaining_rooms": total["remaining_rooms"]}
+                                  "sold_rooms": total["sold_rooms"], "remaining_rooms": total["remaining_rooms"],
+                                  "vacant_gap": total["available_rooms"] - total["sold_rooms"] - total["remaining_rooms"]}
     return rows, {"requested_dates": [d.isoformat() for d in days], "by_date": audits,
                   "manual_zero_rows": manual_zero_rows,
                   "manual_adjustments_included": manual_adjustments,
@@ -206,10 +208,10 @@ def sync_rows(rows: list[dict], config: Config) -> int:
     return len(rows)
 
 
-def collect(config: Config, business_date: date, snapshot_time: datetime) -> dict:
+def collect(config: Config, business_date: date, snapshot_time: datetime, *, write: bool = True) -> dict:
     rows, summary = fetch_rows(config, snapshot_time)
     dry_run = "--dry-run" in sys.argv
-    written = 0 if dry_run else sync_rows(rows, config)
+    written = 0 if dry_run or not write else sync_rows(rows, config)
     summary.update(report="jy01", source_platform=SOURCE_PLATFORM, hotel_id=config.hotel_id,
                    snapshot_time=snapshot_time.isoformat(), row_count=len(rows), written=written, dry_run=dry_run, rows=rows)
     save_output(SUMMARY_FILE, summary, config)
@@ -217,7 +219,7 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
 
 
 def main() -> int:
-    return report_main("jy01", collect)
+    return report_main("jy01", collect, sync=sync_rows)
 
 
 if __name__ == "__main__":

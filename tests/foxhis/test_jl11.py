@@ -55,6 +55,17 @@ class JL11Tests(unittest.TestCase):
         self.assertEqual(jl.report_window(date(2024,3,1)), (date(2024,1,31), date(2024,2,29)))
         self.assertEqual(jl.report_window(date(2026,1,1))[1], date(2025,12,31))
 
+    def test_room_type_without_room_numbers_is_left_out_of_the_summary(self):
+        rooms = list(self.rooms)
+        for n in range(jl.WINDOW_DAYS):
+            day = (self.start + timedelta(days=n)).strftime("%Y%m%d")
+            rooms.append({"business_date": day, "gkey": "t", "hall": "A", "room_type_code": "HT",
+                          "room_type_name": "云居城景投影房", **{field: "0" for field in jl.ROOM_FIELDS}})
+        rows, summary = jl.build_rows(self.records, rooms, self.config, self.stamp, {"AR"})
+        self.assertEqual({row["room_type_name"] for row in rows}, {"历史双床房"})
+        self.assertEqual(summary["excluded_unroomed_room_types"], ["云居城景投影房"])
+        self.assertEqual(summary["excluded_unroomed_room_revenue"], D(0))
+
     def test_business_columns_and_summary_conventions_match_bypms(self):
         path = Path(__file__).resolve().parents[2] / "宝寓PMS数据采集代码/bypms_jl11_data.py"
         spec = importlib.util.spec_from_file_location("bypms_jl11_contract", path)

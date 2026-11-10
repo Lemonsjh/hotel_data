@@ -57,12 +57,15 @@ def derived(metrics: dict) -> dict:
             "revpar": rounded(revenue / metrics["total_rooms"]) if metrics["total_rooms"] else None}
 
 
-def build_rows(records: list[dict], controls: list[dict], config: Config, days: list[date], snapshot: datetime) -> tuple[list[dict], dict]:
+def build_rows(records: list[dict], controls: list[dict], config: Config, days: list[date], snapshot: datetime,
+               roomed_codes: set[str] | None = None) -> tuple[list[dict], dict]:
     grouped: dict[tuple[date, str], dict] = {}
     totals: dict[date, dict] = {}
     seen: set[tuple] = set()
     manual_rows = 0
     manual_totals: dict[date, dict] = {}
+    unroomed: dict[tuple, dict] = {}
+    unroomed_names: set[str] = set()
     for record in records:
         day = report_date(record.get("business_date"))
         if day not in days or day >= snapshot.date() or record.get("gkey") != "t":
@@ -90,6 +93,12 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
         name = (record.get("room_type_name") or "").strip()
         if not name:
             raise FoxhisError("JL01 原生日结缺少历史房型名称。")
+        if roomed_codes is not None and code not in roomed_codes:
+            bucket = unroomed.setdefault((day, code), {"name": name, **{field: Decimal(0) for field in BASE_METRICS}})
+            for field in BASE_METRICS:
+                bucket[field] += values[field]
+            unroomed_names.add(name)
+            continue
         previous = grouped.get((day, code))
         if previous:
             if previous["name"] != name:
@@ -99,7 +108,7 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
         else:
             grouped[(day, code)] = {"name": name, **values}
 
-    available = sorted({day for day, _code in grouped})
+    available = sorted({day for day, _code in grouped} | {day for day, _code in unroomed})
     if days[0] not in available:
         raise FoxhisError("JL01 昨日日结数据缺失，保留目标表。")
     if set(totals) != set(available):
@@ -113,6 +122,7 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
     audits = {}
     for day in available:
         details = [value for (item_day, _), value in grouped.items() if item_day == day]
+        details += [value for (item_day, _), value in unroomed.items() if item_day == day]
         summed = {field: sum((value[field] for value in details), Decimal(0)) for field in BASE_METRICS}
         # 手工调整参与酒店总额核对，不生成房型，也不分摊到真实房型。
         summed = {field: value + manual_totals.get(day, {}).get(field, Decimal(0)) for field, value in summed.items()}
@@ -127,7 +137,7 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
             if (value is None and reference != 0) or (value is not None and rounded(value) != rounded(reference)):
                 raise FoxhisError(f"JL01 与酒店日结指标 {code} 不一致。")
         audits[day.isoformat()] = metrics
-    rows = []
+    rows, components = [], {}
     for (day, code), values in sorted(grouped.items()):
         metrics = derived(values)
         rows.append({"hotel_id": config.hotel_id, "hotel_name": config.hotel_name, "source_platform": SOURCE_PLATFORM,
@@ -135,13 +145,16 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
                      "pms_rate_room_type_id": code, "room_nights": metrics["room_nights"],
                      "occupancy_rate": metrics["occupancy_rate"], "room_revenue": rounded(metrics["room_revenue"]),
                      "adr": metrics["adr"], "revpar": metrics["revpar"], "snapshot_time": snapshot.replace(microsecond=0)})
+        components[f"{day.isoformat()}|{values['name']}"] = {
+            "available_rooms": values["available_rooms"], "total_rooms": values["total_rooms"]}
     if len({(row["business_date"], row["room_type_name"]) for row in rows}) != len(rows):
         raise FoxhisError("JL01 存在同日同名不同代码的房型，目标唯一键无法区分。")
     return rows, {"requested_dates": [day.isoformat() for day in days], "available_dates": [day.isoformat() for day in available],
                   "missing_dates": [day.isoformat() for day in days if day not in available],
                   "manual_zero_rows_skipped": manual_rows,
                   "excluded_manual_by_date": {day.isoformat(): values for day, values in manual_totals.items()},
-                  "by_date": audits}
+                  "excluded_unroomed_room_types": sorted(unroomed_names),
+                  "components": components, "by_date": audits}
 
 
 def fetch_rows(config: Config, snapshot: datetime) -> tuple[list[dict], dict]:
@@ -152,7 +165,10 @@ def fetch_rows(config: Config, snapshot: datetime) -> tuple[list[dict], dict]:
     params = {"yesterday": days[0].strftime("%Y%m%d"), "last_year": days[1].strftime("%Y%m%d")}
     records = query(JL01_REPORT_QUERY.format(**params), config, timeout=180)
     controls = query(JL01_CONTROL_QUERY.format(**params), config, timeout=180)
-    return build_rows(records, controls, config, days, snapshot)
+    coded = query("select type as code from rmsta where roomno<>'' and roomno<>' ' group by type",
+                  config, timeout=60, required_columns=("code",))
+    codes = {row["code"].strip() for row in coded if row.get("code", "").strip()}
+    return build_rows(records, controls, config, days, snapshot, codes)
 
 
 def sync_rows(rows: list[dict], config: Config) -> int:
@@ -188,12 +204,12 @@ def sync_rows(rows: list[dict], config: Config) -> int:
     return len(rows)
 
 
-def collect(config: Config, business_date: date, snapshot_time: datetime) -> dict:
+def collect(config: Config, business_date: date, snapshot_time: datetime, *, write: bool = True) -> dict:
     rows, summary = fetch_rows(config, snapshot_time)
     dry_run = "--dry-run" in sys.argv
     if summary["missing_dates"]:
         print("WARN JL01 无历史数据，未补零、未替换该日期：" + ",".join(summary["missing_dates"]))
-    written = 0 if dry_run else sync_rows(rows, config)
+    written = 0 if dry_run or not write else sync_rows(rows, config)
     summary.update(report="jl01", business_date=collection_dates(snapshot_time.date())[0].isoformat(),
                    source_platform=SOURCE_PLATFORM, hotel_id=config.hotel_id, snapshot_time=snapshot_time.isoformat(),
                    row_count=len(rows), written=written, dry_run=dry_run, rows=rows,
@@ -203,7 +219,7 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
 
 
 def main() -> int:
-    return report_main("jl01", collect)
+    return report_main("jl01", collect, sync=sync_rows)
 
 
 if __name__ == "__main__":

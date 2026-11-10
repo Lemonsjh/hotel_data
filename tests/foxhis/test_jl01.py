@@ -117,7 +117,8 @@ class JL01Tests(unittest.TestCase):
                         self.assertEqual(row["revpar"], metrics["revpar"])
 
     def test_fetch_requires_free_room_column(self):
-        with patch.object(jl, "require_columns") as require, patch.object(jl, "query", side_effect=[self.records, self.controls]):
+        codes = [{"code": code} for code in {row["room_type_code"] for row in self.records}]
+        with patch.object(jl, "require_columns") as require, patch.object(jl, "query", side_effect=[self.records, self.controls, codes]):
             jl.fetch_rows(self.config, self.stamp)
         self.assertIn("ent", require.call_args_list[0].args[2])
 

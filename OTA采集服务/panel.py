@@ -4,7 +4,13 @@ import json
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from typing import Any
+
+FOX_CODE = Path(__file__).resolve().parent / "foxhis_pms"
+if str(FOX_CODE) not in sys.path:
+    sys.path.insert(0, str(FOX_CODE))
+from foxhis_accounts import MAX_ACCOUNTS, OVERRIDE_FIELDS, apply_foxhis_accounts, display_slots
 
 from flask import Flask, jsonify, redirect, request, url_for
 
@@ -143,11 +149,93 @@ def config_control(settings: dict[str, Any], key: str, label: str, secret: bool)
     )
 
 
+_FOXHIS_SLOT_LABELS = {
+    "server": "服务名",
+    "charset": "字符集",
+    "isql_path": "isql 路径",
+    "interfaces_file": "接口文件",
+    "fetch_after": "采集时机",
+    "business_date_offset_days": "业务日偏移（天）",
+    "timeout_seconds": "超时（秒）",
+    "reports": "采集报表",
+}
+
+
+def foxhis_accounts_html(settings: dict[str, Any]) -> str:
+    foxhis = settings.get("foxhis") if isinstance(settings.get("foxhis"), dict) else {}
+    slots = display_slots(foxhis)
+    blocks = [
+        "<div class='foxhis-account-list' id='foxhis-accounts'>",
+        "<p class='config-hint'>每个业务库填写数据库名、账号和密码，也可以填酒店名称，只在这里对照显示。空格子会忽略，最多 8 个。</p>",
+    ]
+    for index in range(MAX_ACCOUNTS):
+        account = slots[index] if index < len(slots) else {}
+        hidden = "" if index < len(slots) else " hidden"
+        password_hint = "已配置，留空则保留" if account.get("password") else "未配置"
+        overrides = []
+        for key in OVERRIDE_FIELDS:
+            overrides.append(
+                "<div class='field'><label>"
+                f"{esc(_FOXHIS_SLOT_LABELS[key])}</label>"
+                f"<input name='foxhis_account_{index}_{key}' value='{esc(account.get(key, ''))}' "
+                "placeholder='留空沿用共用值'></div>"
+            )
+        blocks.append(
+            f"<div class='foxhis-account'{hidden}>"
+            "<div class='foxhis-account-bar' style='display:flex;justify-content:space-between;align-items:center;margin:0 0 8px'>"
+            "<strong>业务库</strong>"
+            "<button type='button' class='secondary compact' data-remove-foxhis-account>移除</button></div>"
+            "<div class='config-grid'>"
+            f"<div class='field'><label>酒店名称</label><input name='foxhis_account_{index}_hotel_name' "
+            f"value='{esc(account.get('hotel_name', ''))}' placeholder='仅在此对照显示' autocomplete='off'></div>"
+            f"<div class='field'><label>数据库名</label><input name='foxhis_account_{index}_database' "
+            f"value='{esc(account.get('database', ''))}' autocomplete='off'></div>"
+            f"<div class='field'><label>数据库账号</label><input name='foxhis_account_{index}_username' "
+            f"value='{esc(account.get('username', ''))}' autocomplete='username'></div>"
+            f"<div class='field'><label>数据库密码</label><input type='password' "
+            f"name='foxhis_account_{index}_password' value='' autocomplete='new-password' "
+            f"placeholder='{esc(password_hint)}'></div>"
+            "</div>"
+            "<details class='inner-details'><summary>单独修改连接</summary>"
+            f"<div class='config-grid'>{''.join(overrides)}</div></details></div>"
+        )
+    button_hidden = "" if len(slots) < MAX_ACCOUNTS else " hidden"
+    blocks.append("</div>")
+    blocks.append(
+        f"<button type='button' class='secondary compact' id='foxhis-add-account'{button_hidden}>添加业务库</button>"
+    )
+    blocks.append(
+        "<script>(function(){var root=document.getElementById('foxhis-accounts');"
+        "var button=document.getElementById('foxhis-add-account');if(!root||!button)return;"
+        "function refresh(){button.hidden=!root.querySelector('.foxhis-account[hidden]');}"
+        "button.addEventListener('click',function(){var slot=root.querySelector('.foxhis-account[hidden]');"
+        "if(!slot)return;slot.hidden=false;refresh();});"
+        "root.addEventListener('click',function(event){var remove=event.target.closest('[data-remove-foxhis-account]');"
+        "if(!remove)return;var slot=remove.closest('.foxhis-account');if(!slot)return;"
+        "slot.querySelectorAll('input').forEach(function(input){input.value='';});"
+        "var visible=Array.prototype.filter.call(root.querySelectorAll('.foxhis-account'),function(item){return !item.hidden;});"
+        "if(visible.length>1)slot.hidden=true;refresh();});"
+        "})();</script>"
+    )
+    return "".join(blocks)
+
+
 def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
     regular = []
     advanced = []
+    hotel_name_html = ""
+    accounts_html = ""
+    skip = {"foxhis.username", "foxhis.password", "foxhis.database"} if section["key"] == "foxhis" else set()
     for key, label, secret, is_advanced in section["fields"]:
-        (advanced if is_advanced else regular).append(config_control(settings, key, label, secret))
+        if key in skip:
+            continue
+        control = config_control(settings, key, label, secret)
+        if key == "foxhis.hotel_name":
+            hotel_name_html = f"<div class='config-grid'>{control}</div>"
+            continue
+        (advanced if is_advanced else regular).append(control)
+    if section["key"] == "foxhis":
+        accounts_html = foxhis_accounts_html(settings)
 
     section_key = section["key"]
     badge_map = {"system": "CORE", "meituan": "MEI", "ctrip": "CTRIP"}
@@ -249,6 +337,8 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
       {f'<p class="config-hint">{esc(section["hint"])}</p>' if section.get('hint') else ''}
       {platform_actions}
       {login_html}
+      {hotel_name_html}
+      {accounts_html}
       <div class="config-grid">{''.join(regular)}</div>
       {advanced_html}
     </section>
@@ -390,6 +480,9 @@ selectPmsProvider(document.querySelector('select[name="pms_provider"]')?.value |
 def save_config():
     settings = runner.load_settings()
     settings = apply_form_to_settings(settings)
+    error = apply_foxhis_accounts(settings, request.form)
+    if error:
+        return redirect(url_for("config_page", error=error))
     runner.save_json(runner.CONFIG_PATH, settings)
     return redirect(url_for("config_page"))
 
@@ -546,6 +639,9 @@ def detect_hotel(platform: str):
 def detect_foxhis():
     """从本机 Foxhis 客户端读取连接参数并回填到配置（只读探测）。"""
     settings = apply_form_to_settings(runner.load_settings())
+    error = apply_foxhis_accounts(settings, request.form)
+    if error:
+        return redirect(url_for("config_page", error=error))
     deep = request.form.get("deep") == "1"
     result = foxhis_probe.probe(deep=deep)
     if not result.get("ok"):
@@ -557,7 +653,6 @@ def detect_foxhis():
         "foxhis.isql_path": "isql_path",
         "foxhis.interfaces_file": "interfaces_file",
         "foxhis.server": "server",
-        "foxhis.database": "database",
         "foxhis.charset": "charset",
     }
     filled: list[str] = []
@@ -576,7 +671,7 @@ def detect_foxhis():
         notice += f"；{deep_check['verdict']}"
     if result.get("warnings"):
         notice += "；提示：" + "；".join(result["warnings"])
-    notice += "；数据库账号与密码需手工填写"
+    notice += "；数据库名不从客户端回填，账号和密码在各业务库中填写"
     return redirect(url_for("config_page", notice=notice))
 
 

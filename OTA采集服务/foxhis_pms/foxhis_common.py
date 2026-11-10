@@ -203,6 +203,15 @@ def query(sql: str, config: Config, timeout: int = 300, *, required_columns: tup
     return parse_isql_table(run_isql(sql, config, timeout), required_columns=required_columns)
 
 
+def roomed_type_codes(config: Config) -> set[str]:
+    """当前有房号的房型代码。没有房号的房型不写入房型汇总。"""
+    rows = query(
+        "select type as code from rmsta where roomno<>'' and roomno<>' ' group by type",
+        config, timeout=60, required_columns=("code",),
+    )
+    return {row["code"].strip() for row in rows if row.get("code", "").strip()}
+
+
 def resolve_hotel_name(config: Config) -> str:
     if not config.hotel_name.strip():
         rows = query("select value as hotel_name from sysoption where catalog='hotel' and item='name'",
@@ -277,12 +286,26 @@ def mysql_connection(config: Config):
 # ---------------------------------------------------------------------------
 
 
-def report_main(report_key: str, collect: Callable[[Config, date, datetime], dict[str, Any]], *, realtime: bool = False) -> int:
+def report_main(report_key: str, collect: Callable[[Config, date, datetime], dict[str, Any]], *,
+                realtime: bool = False, sync: Callable[..., int] | None = None) -> int:
     """
     报表脚本的统一外壳：闸门 → 配置校验 → 日结去重 → 连通性自检 → 采集 → 输出。
 
     退出码：0 成功；0 但打印 SKIP 表示闸门跳过（不算失败）；其他为失败。
+    未设置多个业务库时，下面的单库路径保持不变。
     """
+    accounts_raw = os.environ.get("FOXHIS_ACCOUNTS", "").strip()
+    if accounts_raw:
+        try:
+            accounts = json.loads(accounts_raw)
+        except ValueError as exc:
+            raise FoxhisError("FOXHIS_ACCOUNTS 不是有效的业务库列表。") from exc
+        if isinstance(accounts, list) and len(accounts) >= 2:
+            if sync is None:
+                raise FoxhisError(f"{report_key} 还不能汇总多个业务库。")
+            from foxhis_multi import run_multi
+            return run_multi(report_key, collect, accounts, sync=sync, realtime=realtime)
+
     config = Config.from_env()
 
     allowed, message = (True, "") if realtime else after_gate(config)

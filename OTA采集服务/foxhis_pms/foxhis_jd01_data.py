@@ -154,10 +154,12 @@ def sync_rows(rows: list[dict], config: Config) -> int:
     return len(rows)
 
 
-def collect(config: Config, business_date: date, snapshot_time: datetime) -> dict:
+def collect(config: Config, business_date: date, snapshot_time: datetime, *, write: bool = True) -> dict:
     rows, summary = fetch_rows(config, snapshot_time)
     dry_run = "--dry-run" in sys.argv
-    summary.update(report="jd01", row_count=len(rows), written=0 if dry_run or not rows else sync_rows(rows, config), dry_run=dry_run)
+    summary.update(report="jd01", row_count=len(rows), written=0 if dry_run or not write or not rows else sync_rows(rows, config), dry_run=dry_run)
+    if not write:
+        summary["rows"] = rows
     if not rows:
         summary["message"] = "查询成功，0 条符合条件的订单；保留已有数据。"
         print("INFO [jd01] " + summary["message"])
@@ -168,7 +170,7 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
 
 
 def main() -> int:
-    return report_main("jd01", collect)
+    return report_main("jd01", collect, sync=sync_rows)
 
 
 if __name__ == "__main__":

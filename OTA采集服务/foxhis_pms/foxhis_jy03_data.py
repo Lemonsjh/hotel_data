@@ -134,7 +134,13 @@ def fetch_rows(config: Config, snapshot: datetime, initial: bool) -> tuple[list[
             if month == month_start(snapshot.date()):
                 raise FoxhisError("JY03 本月日结数据缺失。")
             missing.append(month.strftime("%Y-%m")); continue
-        month_rows, audit = build_month(records, config, month, end, snapshot)
+        try:
+            month_rows, audit = build_month(records, config, month, end, snapshot)
+        except FoxhisError as exc:
+            if month != month_start(snapshot.date()) and "缺日或缺指标" in str(exc):
+                missing.append(month.strftime("%Y-%m"))
+                continue
+            raise
         rows.extend(month_rows); by_month[month.strftime("%Y-%m")] = audit
     return rows, {"initial": initial, "requested_months": [m.strftime("%Y-%m") for m in months], "by_month": by_month,
                   "missing_months": missing, "skipped_empty_windows": skipped,
@@ -173,11 +179,11 @@ def sync_rows(rows: list[dict], config: Config) -> int:
     return len(rows)
 
 
-def collect(config: Config, business_date: date, snapshot_time: datetime) -> dict:
+def collect(config: Config, business_date: date, snapshot_time: datetime, *, write: bool = True) -> dict:
     initial = "--initial" in sys.argv or not has_monthly_data(config)
     rows, summary = fetch_rows(config, snapshot_time, initial)
     dry_run = "--dry-run" in sys.argv
-    written = 0 if dry_run or not rows else sync_rows(rows, config)
+    written = 0 if dry_run or not write or not rows else sync_rows(rows, config)
     summary.update(report="jy03", source_platform=SOURCE_PLATFORM, hotel_id=config.hotel_id,
                    snapshot_time=snapshot_time.isoformat(), row_count=len(rows), written=written, dry_run=dry_run, rows=rows)
     save_output(SUMMARY_FILE, summary, config)
@@ -185,7 +191,7 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
 
 
 def main() -> int:
-    return report_main("jy03", collect)
+    return report_main("jy03", collect, sync=sync_rows)
 
 
 if __name__ == "__main__":

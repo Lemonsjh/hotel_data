@@ -265,7 +265,20 @@ def task_timeout(settings: dict[str, Any], platform: str) -> int | None:
         if spec["platform"] != platform:
             continue
         section = settings.get(spec["config_key"]) or {}
-        return int(section.get("timeout_seconds") or spec["timeout_seconds"])
+        timeout = int(section.get("timeout_seconds") or spec["timeout_seconds"])
+        accounts = section.get("accounts")
+        if spec["config_key"] == "foxhis" and isinstance(accounts, list):
+            for account in accounts:
+                if not isinstance(account, dict):
+                    continue
+                raw = account.get("timeout_seconds")
+                if raw in (None, ""):
+                    continue
+                try:
+                    timeout = max(timeout, int(raw))
+                except (TypeError, ValueError):
+                    continue
+        return timeout
     return None
 
 

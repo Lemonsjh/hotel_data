@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -65,6 +66,17 @@ def get_path(data: dict[str, Any], dotted: str) -> Any:
             return None
         current = current[part]
     return current
+
+
+def foxhis_account_errors(settings: dict[str, Any]) -> list[str]:
+    foxhis = settings.get("foxhis")
+    if not isinstance(foxhis, dict) or "accounts" not in foxhis:
+        return []
+    code_dir = Path(__file__).resolve().parent / "foxhis_pms"
+    if str(code_dir) not in sys.path:
+        sys.path.insert(0, str(code_dir))
+    from foxhis_accounts import validate_accounts
+    return validate_accounts(foxhis.get("accounts"))
 
 
 def validate_settings(settings: Any) -> list[str]:
@@ -135,6 +147,8 @@ def validate_settings(settings: Any) -> list[str]:
             not isinstance(item, str) or item.strip() not in allowed for item in selected
         ):
             errors.append("foxhis.reports 包含无效报表（不支持 KF11）")
+    if isinstance(settings.get("foxhis"), dict):
+        errors.extend(foxhis_account_errors(settings))
 
     provider = get_path(settings, "pms.provider")
     if provider not in (None, "", *pms_providers.PMS_PROVIDERS):

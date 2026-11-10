@@ -267,7 +267,7 @@ def sync_inventory(rows: list[dict], config: Config) -> int:
     return len(rows)
 
 
-def collect(config: Config, business_date: date, snapshot_time: datetime) -> dict:
+def collect(config: Config, business_date: date, snapshot_time: datetime, *, write: bool = True) -> dict:
     business_date = snapshot_time.date()
     require_columns(config, *ROOM_STATUS_REQUIRED)
     names = room_type_name_map(config)
@@ -281,7 +281,7 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
     hourly_rows = build_hourly_rows(forecast_rows)
 
     dry_run = "--dry-run" in sys.argv
-    forecast_written = 0 if dry_run else sync_inventory(forecast_rows, config)
+    forecast_written = 0 if dry_run or not write else sync_inventory(forecast_rows, config)
 
     state_counts: dict[str, int] = {}
     for row in rows:
@@ -312,7 +312,8 @@ def collect(config: Config, business_date: date, snapshot_time: datetime) -> dic
         config,
     )
     return {"business_date": business_date.isoformat(), "source_room_count": len(rows),
-            "row_count": len(forecast_rows), "written": forecast_written}
+            "row_count": len(forecast_rows), "written": forecast_written, "rows": forecast_rows,
+            "dry_run": dry_run}
 
 
 def introspect() -> int:
@@ -330,7 +331,7 @@ def introspect() -> int:
 def main() -> int:
     if "--introspect" in sys.argv:
         return introspect()
-    return report_main("room_status", collect, realtime=True)
+    return report_main("room_status", collect, realtime=True, sync=sync_inventory)
 
 
 if __name__ == "__main__":

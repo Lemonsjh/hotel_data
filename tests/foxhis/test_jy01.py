@@ -82,6 +82,19 @@ class JY01Tests(unittest.TestCase):
         self.assertEqual((rows[0]["room_nights"], rows[0]["sold_rooms"], rows[0]["remaining_rooms"]), (36, 37, 20))
         self.assertEqual(rows[0]["adr"], Decimal("204.55"))
 
+    def test_source_vacant_count_is_kept_when_it_differs_from_available_minus_sold(self):
+        changed = dict(total_rooms=62, maintain_rooms=5, available_rooms=57, room_nights=36,
+                       room_revenue="7363.63", room_income_total="7363.63", free_rooms=1,
+                       occupancy_rate="63.16", adr="204.55", revpar="118.77")
+        day = self.days[0].strftime("%Y%m%d")
+        metrics = [{**r, "metric_value": str(changed[jy.CONTROL_FIELDS[r["metric_code"]]])}
+                   if r["business_date"] == day and jy.CONTROL_FIELDS[r["metric_code"]] in changed else r for r in self.metrics]
+        room_values = {k: str(v) for k, v in changed.items() if k in jy.ROOM_FIELDS}
+        rooms = [{**r, **room_values, "sold_rooms": "37", "remaining_rooms": "19"} if r["business_date"] == day else r for r in self.rooms]
+        rows, summary = self.build(metrics, rooms)
+        self.assertEqual(rows[0]["remaining_rooms"], 19)
+        self.assertEqual(summary["by_date"][self.days[0].isoformat()]["vacant_gap"], Decimal(1))
+
     def test_manual_adjustment_is_included_in_hotel_total(self):
         day = self.days[0].strftime("%Y%m%d")
         rooms = [{**r, "room_revenue": "4503.62"} if r["business_date"] == day and r["room_type_code"] == "AR" else r for r in self.rooms]

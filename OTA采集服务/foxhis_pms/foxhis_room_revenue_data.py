@@ -203,15 +203,17 @@ def sync_rows(rows: list[dict], config: Config, start: date, end: date) -> int:
     return len(rows)
 
 
-def collect(config: Config, business_date: date, snapshot_time: datetime) -> dict:
+def collect(config: Config, business_date: date, snapshot_time: datetime, *, write: bool = True) -> dict:
     rows, summary = fetch_rows(config, snapshot_time)
     start, end = month_window(snapshot_time.date())
     dry_run = "--dry-run" in sys.argv
-    written = 0 if dry_run else sync_rows(rows, config, start, end)
+    written = 0 if dry_run or not write else sync_rows(rows, config, start, end)
     summary.update(report="room_revenue", source_platform=SOURCE_PLATFORM, hotel_id=config.hotel_id,
                    business_date=snapshot_time.date().isoformat(), snapshot_time=snapshot_time.isoformat(),
                    row_count=len(rows), written=written, dry_run=dry_run,
                    basis="当月已退房订单的房费科目净过账流水；按退房日期筛选，保留跨月营业日期，不混入押金与代收款")
+    if not write:
+        summary["rows"] = rows
     save_output(SUMMARY_FILE, summary, config)
     return summary
 
@@ -223,7 +225,7 @@ def main() -> int:
         for table in ("account", "haccount", "master", "hmaster", "pccode"):
             print(table, table_columns(config, table))
         return 0
-    return report_main("room_revenue", collect)
+    return report_main("room_revenue", collect, sync=sync_rows)
 
 
 if __name__ == "__main__":

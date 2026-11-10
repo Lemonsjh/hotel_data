@@ -8,7 +8,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from foxhis_common import Config, FoxhisError, SOURCE_PLATFORM, mysql_connection, query, report_main, save_output
+from foxhis_common import (Config, FoxhisError, SOURCE_PLATFORM, mysql_connection, query, report_main,
+                           roomed_type_codes, save_output)
 from foxhis_jy01_data import number, rounded, report_date
 from foxhis_sql import JL11_TABLE, JL11_ROOM_QUERY, JL11_CONTROL_QUERY
 
@@ -26,7 +27,8 @@ def report_window(today: date) -> tuple[date, date]:
     return today - timedelta(days=WINDOW_DAYS), today - timedelta(days=1)
 
 
-def build_rows(records: list[dict], rooms: list[dict], config: Config, snapshot: datetime) -> tuple[list[dict], dict]:
+def build_rows(records: list[dict], rooms: list[dict], config: Config, snapshot: datetime,
+               roomed_codes: set[str] | None = None) -> tuple[list[dict], dict]:
     start, end = report_window(snapshot.date())
     controls = {start + timedelta(days=n): {} for n in range(WINDOW_DAYS)}
     for r in records:
@@ -41,6 +43,8 @@ def build_rows(records: list[dict], rooms: list[dict], config: Config, snapshot:
     details = defaultdict(lambda: {field: Decimal(0) for field in ROOM_FIELDS})
     grouped = defaultdict(lambda: {field: Decimal(0) for field in ROOM_FIELDS})
     manual_revenue = Decimal(0)
+    unroomed_revenue = Decimal(0)
+    unroomed_names: set[str] = set()
     for r in rooms:
         day, code = report_date(r.get("business_date")), r.get("room_type_code")
         key = (day, code, r.get("hall"))
@@ -60,8 +64,11 @@ def build_rows(records: list[dict], rooms: list[dict], config: Config, snapshot:
             raise FoxhisError("JL11 缺少历史房型名称。")
         for field in ROOM_FIELDS:
             details[day][field] += values[field]
-            if code != "ZZZ":
+            if code != "ZZZ" and (roomed_codes is None or code in roomed_codes):
                 grouped[name][field] += values[field]
+            elif code != "ZZZ":
+                unroomed_names.add(name)
+                unroomed_revenue += values["room_revenue"]
         if code == "ZZZ":
             manual_revenue += values["room_revenue"]
     for day, expected in controls.items():
@@ -71,7 +78,7 @@ def build_rows(records: list[dict], rooms: list[dict], config: Config, snapshot:
     base = dict(hotel_id=config.hotel_id, hotel_name=config.hotel_name, source_platform=SOURCE_PLATFORM,
                 snapshot_date=snapshot.date(), period_start=start, period_end=end, section="summary",
                 room_type_id=None, dimension_code="", dimension_name="", snapshot_time=snapshot.replace(microsecond=0))
-    rows = []
+    rows, components = [], {}
     for name, v in sorted(grouped.items()):
         count, available, nights, revenue = (v[field] for field in ROOM_FIELDS)
         occupancy = (nights * 100 / available).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if available else None
@@ -80,12 +87,16 @@ def build_rows(records: list[dict], rooms: list[dict], config: Config, snapshot:
                      "average_room_price": rounded(revenue / nights) if nights else None,
                      "revpar": rounded(revenue / count) if count else None,
                      "overnight_room_count": nights, "overnight_occupancy_rate": occupancy})
+        components[name] = {"available_rooms": available}
     if not rows:
         raise FoxhisError("JL11 无有效房型汇总。")
     return rows, {"period_start": str(start), "period_end": str(end), "completed_days": WINDOW_DAYS,
                   "room_revenue_total": sum((r["room_revenue"] for r in rows), Decimal(0)),
                   "room_nights_total": sum((r["room_nights"] for r in rows), Decimal(0)),
                   "excluded_manual_room_revenue": manual_revenue,
+                  "excluded_unroomed_room_revenue": unroomed_revenue,
+                  "excluded_unroomed_room_types": sorted(unroomed_names),
+                  "components": components,
                   "basis": "宝寓summary字段；西软历史房型累计房日、计费间夜和净房费；ZZZ手工调整仅参与对账，不写入房型表"}
 
 
@@ -97,7 +108,7 @@ def fetch_rows(config: Config, snapshot: datetime) -> tuple[list[dict], dict]:
     params = {"start_date": start.strftime("%Y%m%d"), "end_date": snapshot.strftime("%Y%m%d")}
     records = query(JL11_CONTROL_QUERY.format(**params), config, timeout=120)
     rooms = query(JL11_ROOM_QUERY.format(**params), config, timeout=120)
-    return build_rows(records, rooms, config, snapshot)
+    return build_rows(records, rooms, config, snapshot, roomed_type_codes(config))
 
 
 def sync_rows(rows: list[dict], config: Config) -> int:
@@ -130,17 +141,17 @@ def sync_rows(rows: list[dict], config: Config) -> int:
     return len(rows)
 
 
-def collect(config: Config, business_date: date, snapshot_time: datetime) -> dict:
+def collect(config: Config, business_date: date, snapshot_time: datetime, *, write: bool = True) -> dict:
     rows, summary = fetch_rows(config, snapshot_time)
     dry_run = "--dry-run" in sys.argv
     summary.update(report="jl11", hotel_id=config.hotel_id, business_date=summary["period_end"], rows=rows,
-                   row_count=len(rows), written=0 if dry_run else sync_rows(rows, config), dry_run=dry_run)
+                   row_count=len(rows), written=0 if dry_run or not write else sync_rows(rows, config), dry_run=dry_run)
     save_output(SUMMARY_FILE, summary, config)
     return summary
 
 
 def main() -> int:
-    return report_main("jl11", collect)
+    return report_main("jl11", collect, sync=sync_rows)
 
 
 if __name__ == "__main__":
