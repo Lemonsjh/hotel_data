@@ -690,6 +690,35 @@ class CacheAndSchedulerTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         run.assert_called()
 
+    def test_multiple_databases_launch_report_scripts_instead_of_a_custom_entry(self):
+        settings = json.loads((ROOT / "OTA采集服务/config/settings.example.json").read_text(encoding="utf-8-sig"))
+        settings["pms"]["provider"] = "foxhis"
+        settings["hotel"]["hotel_id"] = "bailing"
+        settings["foxhis"].update(enabled=True, hotel_name="贵阳百灵", reports="jl01",
+                                  code_dir="OTA采集服务/foxhis_pms",
+                                  accounts=[account("foxhis"), account("foxhis1")])
+        directory = tempfile.TemporaryDirectory(prefix="foxhis_entry_", dir=ROOT)
+        self.addCleanup(directory.cleanup)
+        old_entry = Path(directory.name) / "foxhis_legacy.py"
+        old_entry.write_text("raise SystemExit(0)\n", encoding="utf-8")
+        settings["foxhis"]["entry_script"] = str(old_entry)
+        launched = runner.script_path(settings, "foxhis", "foxhis_jl01_data.py")
+        self.assertEqual(launched.name, "foxhis_jl01_data.py")
+        self.assertIn("foxhis_pms", str(launched))
+        with patch.object(runner, "CONFIG_PATH", Path(directory.name) / "settings.json"), \
+             patch.object(runner, "STATUS_PATH", Path(directory.name) / "status.json"), \
+             patch.object(runner, "LOG_DIR", Path(directory.name) / "logs"), \
+             patch.object(runner, "ensure_task_tables"), \
+             patch.object(runner, "enrich_room_type_ids"), \
+             patch.object(runner, "run_streamed", return_value=ProcessResult(0, "ok")) as run:
+            result = runner.run_task("pms_fetch", settings, {})
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(Path(run.call_args.args[0][1]), launched)
+
+        settings["foxhis"]["accounts"] = [account("foxhis")]
+        single = runner.script_path(settings, "foxhis", "foxhis_jl01_data.py")
+        self.assertEqual(single, old_entry)
+
 
 if __name__ == "__main__":
     unittest.main()

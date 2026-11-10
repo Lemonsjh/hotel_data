@@ -275,8 +275,17 @@ def script_path(settings: dict[str, Any], platform: str, filename: str) -> Path 
         code_dir = (byh_path(section.get("code_dir")) if platform == "pms"
                     else project_path(section.get("code_dir"), spec["default_code_dir"]))
         entry = section.get("entry_script") or spec["entry_script"] or filename
+        if spec["config_key"] == "foxhis" and _foxhis_multi_report_scripts(section):
+            entry = filename
         return code_dir / entry
     return None
+
+
+def _foxhis_multi_report_scripts(foxhis: dict[str, Any]) -> bool:
+    """多个业务库不使用自定义入口，避免旧脚本只采集第一个库。"""
+    if not isinstance(foxhis.get("accounts"), list):
+        return False
+    return len(load_foxhis_accounts().complete_accounts(foxhis)) >= 2
 
 
 def task_timeout(settings: dict[str, Any], platform: str) -> int | None:
