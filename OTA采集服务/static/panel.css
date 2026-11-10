@@ -257,6 +257,27 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
   gap: 12px 14px;
 }
 .config-grid .field { margin: 0; }
+.foxhis-account-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  margin: 8px 0 2px;
+  border-left: 4px solid var(--brand);
+  border-radius: 8px;
+  background: #eaf1ee;
+}
+.foxhis-account-heading { display: flex; flex: 1; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.foxhis-account-heading strong { font-size: 16px; }
+.foxhis-account-heading span { color: var(--brand-strong); font-variant-numeric: tabular-nums; }
+.foxhis-account-heading small { color: var(--muted); }
+.foxhis-account { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.foxhis-account-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.foxhis-account-advanced.inner-details { border: 0; margin-top: 0; }
+.foxhis-account-advanced summary { padding-top: 8px; color: var(--muted); }
+.foxhis-add-account:disabled { opacity: .55; cursor: default; }
 .secret-field { grid-column: 1 / -1; }
 .mysql-pair-field {
   grid-column: auto;

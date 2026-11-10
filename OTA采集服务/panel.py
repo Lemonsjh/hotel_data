@@ -166,7 +166,13 @@ def foxhis_accounts_html(settings: dict[str, Any]) -> str:
     slots = display_slots(foxhis)
     blocks = [
         "<div class='foxhis-account-list' id='foxhis-accounts'>",
-        "<p class='config-hint'>每个业务库填写数据库名、账号和密码，也可以填酒店名称，只在这里对照显示。空格子会忽略，最多 8 个。</p>",
+        "<p class='config-hint'>填写数据库名、账号和密码。酒店名称可选，仅用于对照。</p>",
+        "<div class='foxhis-account-toolbar'>",
+        "<div class='foxhis-account-heading'><strong>业务库</strong> ",
+        f"<span id='foxhis-account-count' aria-live='polite'>{len(slots)}/{MAX_ACCOUNTS}</span>",
+        "<small>默认沿用共用设置</small></div>",
+        f"<button type='button' class='compact foxhis-add-account' id='foxhis-add-account'"
+        f"{' disabled' if len(slots) >= MAX_ACCOUNTS else ''}>＋ 添加数据库</button></div>",
     ]
     for index in range(MAX_ACCOUNTS):
         account = slots[index] if index < len(slots) else {}
@@ -182,8 +188,8 @@ def foxhis_accounts_html(settings: dict[str, Any]) -> str:
             )
         blocks.append(
             f"<div class='foxhis-account'{hidden}>"
-            "<div class='foxhis-account-bar' style='display:flex;justify-content:space-between;align-items:center;margin:0 0 8px'>"
-            "<strong>业务库</strong>"
+            "<div class='foxhis-account-bar'>"
+            f"<strong data-foxhis-title>业务库 {index + 1:02d}</strong>"
             "<button type='button' class='secondary compact' data-remove-foxhis-account>移除</button></div>"
             "<div class='config-grid'>"
             f"<div class='field'><label>酒店名称</label><input name='foxhis_account_{index}_hotel_name' "
@@ -196,23 +202,25 @@ def foxhis_accounts_html(settings: dict[str, Any]) -> str:
             f"name='foxhis_account_{index}_password' value='' autocomplete='new-password' "
             f"placeholder='{esc(password_hint)}'></div>"
             "</div>"
-            "<details class='inner-details'><summary>单独修改连接</summary>"
+            "<details class='inner-details foxhis-account-advanced'><summary>高级设置（可选）</summary>"
             f"<div class='config-grid'>{''.join(overrides)}</div></details></div>"
         )
-    button_hidden = "" if len(slots) < MAX_ACCOUNTS else " hidden"
     blocks.append("</div>")
-    blocks.append(
-        f"<button type='button' class='secondary compact' id='foxhis-add-account'{button_hidden}>添加业务库</button>"
-    )
     blocks.append(
         "<script>(function(){var root=document.getElementById('foxhis-accounts');"
         "var button=document.getElementById('foxhis-add-account');if(!root||!button)return;"
-        "function refresh(){button.hidden=!root.querySelector('.foxhis-account[hidden]');}"
+        "var count=document.getElementById('foxhis-account-count');"
+        "var slots=root.querySelectorAll('.foxhis-account');"
+        "function refresh(){var visible=root.querySelectorAll('.foxhis-account:not([hidden])');"
+        "count.textContent=visible.length+'/'+slots.length;button.disabled=visible.length===slots.length;"
+        "visible.forEach(function(slot,index){slot.querySelector('[data-foxhis-title]').textContent="
+        "'业务库 '+String(index+1).padStart(2,'0');});}"
         "button.addEventListener('click',function(){var slot=root.querySelector('.foxhis-account[hidden]');"
-        "if(!slot)return;slot.hidden=false;refresh();});"
+        "if(!slot)return;slot.hidden=false;refresh();slot.querySelector('input[autocomplete=off]').focus();});"
         "root.addEventListener('click',function(event){var remove=event.target.closest('[data-remove-foxhis-account]');"
         "if(!remove)return;var slot=remove.closest('.foxhis-account');if(!slot)return;"
         "slot.querySelectorAll('input').forEach(function(input){input.value='';});"
+        "slot.querySelector('details').open=false;"
         "var visible=Array.prototype.filter.call(root.querySelectorAll('.foxhis-account'),function(item){return !item.hidden;});"
         "if(visible.length>1)slot.hidden=true;refresh();});"
         "})();</script>"
