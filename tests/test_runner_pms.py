@@ -40,6 +40,37 @@ class PMSRunnerTests(unittest.TestCase):
     def run_task(self):
         return runner.run_task("pms_fetch", self.settings, {"tasks": {}})
 
+    def test_status_write_retries_windows_sharing_errors(self):
+        path = self.root / "status.json"
+        error = PermissionError("temporarily locked")
+        error.winerror = 5
+        replace = os.replace
+        failures = iter([error, error])
+
+        def replace_after_unlock(source, target):
+            failure = next(failures, None)
+            if failure:
+                raise failure
+            replace(source, target)
+
+        with patch.object(runner.os, "replace", side_effect=replace_after_unlock) as mocked, \
+             patch.object(runner.time, "sleep") as sleep:
+            runner.save_json(path, {"status": "running"})
+        self.assertEqual(runner.load_json(path, {}), {"status": "running"})
+        self.assertEqual(mocked.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.05, 0.1])
+
+    def test_status_write_stops_after_retries_and_keeps_previous_file(self):
+        path = self.root / "status.json"
+        runner.save_json(path, {"status": "previous"})
+        error = PermissionError("still locked")
+        error.winerror = 32
+        with patch.object(runner.os, "replace", side_effect=error) as replace, \
+             patch.object(runner.time, "sleep"), self.assertRaises(PermissionError):
+            runner.save_json(path, {"status": "running"})
+        self.assertEqual(replace.call_count, 4)
+        self.assertEqual(runner.load_json(path, {}), {"status": "previous"})
+
     def test_failure_at_any_position_preserves_remaining_work_and_nonzero_code(self):
         for position in range(3):
             with self.subTest(position=position):

@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -110,7 +111,14 @@ def _save_json(path: Path, data: Any) -> None:
         file.write(content)
         temporary = Path(file.name)
     try:
-        os.replace(temporary, path)
+        for attempt in range(4):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError as error:
+                if getattr(error, "winerror", None) not in {5, 32, 33} or attempt == 3:
+                    raise
+                time.sleep(0.05 * 2 ** attempt)
     finally:
         temporary.unlink(missing_ok=True)
 
