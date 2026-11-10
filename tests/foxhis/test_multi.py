@@ -20,6 +20,7 @@ import foxhis_multi as multi
 import panel
 import runner
 import settings_validation
+from process_runner import ProcessResult
 from config_schema import CONFIG_SECTIONS
 from foxhis_config import Config
 
@@ -643,6 +644,51 @@ class CacheAndSchedulerTests(unittest.TestCase):
         self.assertIn("汇总酒店名称", result["error_summary"])
         query.assert_not_called()
         run.assert_not_called()
+
+    def test_multiple_databases_refuse_an_old_code_directory_before_any_script_starts(self):
+        settings = json.loads((ROOT / "OTA采集服务/config/settings.example.json").read_text(encoding="utf-8-sig"))
+        settings["pms"]["provider"] = "foxhis"
+        settings["hotel"]["hotel_id"] = "bailing"
+        settings["foxhis"].update(enabled=True, hotel_name="贵阳百灵", reports="jl01",
+                                  accounts=[account("foxhis"), account("foxhis1")])
+        directory = tempfile.TemporaryDirectory(prefix="foxhis_old_", dir=ROOT)
+        self.addCleanup(directory.cleanup)
+        old = Path(directory.name)
+        (old / "foxhis_common.py").write_text("def report_main(*args, **kwargs):\n    return 0\n", encoding="utf-8")
+        (old / "foxhis_jl01_data.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+        settings["foxhis"]["code_dir"] = str(old)
+        with patch.object(runner, "CONFIG_PATH", old / "settings.json"), \
+             patch.object(runner, "STATUS_PATH", old / "status.json"), \
+             patch.object(runner, "LOG_DIR", old / "logs"), \
+             patch.object(runner, "ensure_task_tables"), \
+             patch.object(runner, "run_streamed") as run:
+            result = runner.run_task("pms_fetch", settings, {})
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("不支持多个业务库", result["error_summary"])
+        run.assert_not_called()
+
+        settings["foxhis"]["accounts"] = [account("foxhis")]
+        with patch.object(runner, "CONFIG_PATH", old / "settings.json"), \
+             patch.object(runner, "STATUS_PATH", old / "status.json"), \
+             patch.object(runner, "LOG_DIR", old / "logs"), \
+             patch.object(runner, "ensure_task_tables"), \
+             patch.object(runner, "enrich_room_type_ids"), \
+             patch.object(runner, "run_streamed", return_value=ProcessResult(0, "ok")) as run:
+            result = runner.run_task("pms_fetch", settings, {})
+        self.assertEqual(result["status"], "success")
+        self.assertIn("foxhis_jl01_data.py", run.call_args.args[0][1])
+
+        settings["foxhis"]["accounts"] = [account("foxhis"), account("foxhis1")]
+        settings["foxhis"]["code_dir"] = "OTA采集服务/foxhis_pms"
+        with patch.object(runner, "CONFIG_PATH", old / "settings.json"), \
+             patch.object(runner, "STATUS_PATH", old / "status.json"), \
+             patch.object(runner, "LOG_DIR", old / "logs"), \
+             patch.object(runner, "ensure_task_tables"), \
+             patch.object(runner, "enrich_room_type_ids"), \
+             patch.object(runner, "run_streamed", return_value=ProcessResult(0, "ok")) as run:
+            result = runner.run_task("pms_fetch", settings, {})
+        self.assertEqual(result["status"], "success")
+        run.assert_called()
 
 
 if __name__ == "__main__":

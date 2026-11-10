@@ -387,6 +387,22 @@ def _apply_single_foxhis_account(env: dict[str, str], account: dict[str, Any]) -
             env[name] = str(value).strip()
 
 
+def reject_unsupported_foxhis_multi_scripts(settings: dict[str, Any]) -> None:
+    """多个业务库必须由会汇总的脚本采集。旧脚本会只写第一个库，并且返回成功。"""
+    foxhis = settings.get("foxhis") or {}
+    if len(configured_foxhis_accounts(foxhis)) < 2:
+        return
+    code_dir = project_path(foxhis.get("code_dir"), pms_providers.FOXHIS_DEFAULTS["code_dir"])
+    common_path = code_dir / "foxhis_common.py"
+    try:
+        source = common_path.read_text(encoding="utf-8")
+    except OSError:
+        source = ""
+    if (code_dir / "foxhis_multi.py").is_file() and "FOXHIS_ACCOUNTS" in source and "run_multi" in source:
+        return
+    raise RuntimeError("西软代码目录不支持多个业务库汇总，已停止采集，避免只写入其中一个库。")
+
+
 def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -599,6 +615,7 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
         if name == "pms_fetch":
             if active_pms_provider(settings) == "foxhis":
                 ensure_foxhis_hotel_name(settings)
+                reject_unsupported_foxhis_multi_scripts(settings)
             from pms_subtasks import run_pms_subtasks
             run_pms_subtasks(resolved_specs, settings, status, result, py, base_dir, log_path, sys.modules[__name__])
         else:
