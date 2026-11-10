@@ -163,7 +163,9 @@ class CtripOrderDetailTests(unittest.TestCase):
             self.assertEqual(saved["rows"][0]["origin_total_cost"], "1600.00")
 
     def test_amount_request_failure_stops_database_and_file_write(self):
-        with patch.object(self.module, "FlowBrowserClient") as browser, \
+        with patch.dict("os.environ", {"HOTEL_ID": "test"}), \
+                patch.object(self.module, "has_order_history", return_value=False), \
+                patch.object(self.module, "FlowBrowserClient") as browser, \
                 patch.object(self.module, "ensure_logged_in"), \
                 patch.object(self.module, "fetch_orders", return_value=[{"hotel": 9, "formId": 1, "orderId": "1"}]), \
                 patch.object(self.module, "sync_order_detail_history") as sync, \
@@ -173,6 +175,31 @@ class CtripOrderDetailTests(unittest.TestCase):
                 self.module.main()
             sync.assert_not_called()
             output.assert_not_called()
+
+    def test_query_window_shrinks_without_shortening_retention(self):
+        captured_at = datetime(2026, 11, 10, 15)
+        retention_start = date(2026, 10, 11)
+        for has_history, start in ((False, retention_start), (True, date(2026, 11, 9))):
+            with self.subTest(has_history=has_history), \
+                    patch.dict("os.environ", {"HOTEL_ID": "test"}), \
+                    patch.object(self.module, "datetime", wraps=datetime) as clock, \
+                    patch.object(self.module, "FlowBrowserClient") as browser, \
+                    patch.object(self.module, "ensure_logged_in"), \
+                    patch.object(self.module, "has_order_history", return_value=has_history) as history, \
+                    patch.object(self.module, "fetch_orders") as fetch, \
+                    patch.object(self.module, "fetch_order_amounts"), \
+                    patch.object(self.module, "build_rows", return_value=[["row"]]) as build, \
+                    patch.object(self.module, "sync_order_detail_history") as sync, \
+                    patch.object(self.module, "write_output"):
+                clock.now.return_value = captured_at
+                self.assertEqual(self.module.main(), 0)
+                history.assert_called_once_with("test")
+                fetch.assert_called_once_with(
+                    browser.return_value.__enter__.return_value, start, captured_at.date(), captured_at,
+                )
+                sync.assert_called_once_with(
+                    self.module.TABLE_NAME, self.module.HEADERS, build.return_value, "test", retention_start,
+                )
 
 
 if __name__ == "__main__":

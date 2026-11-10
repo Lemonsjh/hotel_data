@@ -14,7 +14,7 @@ from ctrip_flow_conversion_data import FlowBrowserClient, number
 from ctrip_promotion_status_data import ensure_logged_in
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ota_mysql_writer import OUTPUT_DIR, sync_order_detail_history
+from ota_mysql_writer import OUTPUT_DIR, connect_mysql, sync_order_detail_history
 
 
 API_URL = "https://ebooking.ctrip.com/restapi/soa2/27204/queryOrderList"
@@ -230,16 +230,31 @@ def write_output(rows: list[list[Any]], start: date, end: date, captured_at: dat
     (OUTPUT_DIR / f"{TABLE_NAME}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 
+def has_order_history(hotel_id: str) -> bool:
+    connection = connect_mysql(autocommit=True)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM `ctrip_ota_order_detail` WHERE hotel_id = %s LIMIT 1",
+                (hotel_id,),
+            )
+            return cursor.fetchone() is not None
+    finally:
+        connection.close()
+
+
 def main() -> int:
     captured_at = datetime.now()
     end = captured_at.date()
-    start = end - timedelta(days=30)
+    retention_start = end - timedelta(days=30)
     with FlowBrowserClient() as client:
         ensure_logged_in(client.page)
+        hotel_id = require_hotel_id()
+        start = end - timedelta(days=1) if has_order_history(hotel_id) else retention_start
         items = fetch_orders(client, start, end, captured_at)
         fetch_order_amounts(client, items)
         rows = build_rows(items, captured_at)
-    sync_order_detail_history(TABLE_NAME, HEADERS, rows, require_hotel_id(), start)
+    sync_order_detail_history(TABLE_NAME, HEADERS, rows, hotel_id, retention_start)
     write_output(rows, start, end, captured_at)
     print(f"Ctrip order detail sync completed: rows={len(rows)} period={start}..{end}")
     return 0
