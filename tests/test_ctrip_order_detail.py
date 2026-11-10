@@ -64,6 +64,26 @@ class CtripOrderDetailTests(unittest.TestCase):
         self.module.fetch_orders(client, date(2026, 9, 1), date(2026, 9, 10), datetime(2026, 9, 10))
         self.assertEqual(client.page_indexes, [0])
 
+    def test_empty_success_skips_details_and_writes(self):
+        with patch.dict("os.environ", {"HOTEL_ID": "test"}), \
+                patch.object(self.module, "FlowBrowserClient") as browser, \
+                patch.object(self.module, "ensure_logged_in"), \
+                patch.object(self.module, "has_order_history", return_value=True), \
+                patch.object(self.module, "sync_order_detail_history") as sync, \
+                patch.object(self.module, "write_output") as output:
+            client = browser.return_value.__enter__.return_value
+            client.post_json.return_value = {"resStatus": {"rcode": 200}, "total": 0}
+            self.assertEqual(self.module.main(), 0)
+            self.assertEqual(client.post_json.call_count, 1)
+            sync.assert_not_called()
+            output.assert_not_called()
+
+    def test_missing_list_with_positive_total_is_invalid(self):
+        client = MagicMock()
+        client.post_json.return_value = {"resStatus": {"rcode": 200}, "total": 3}
+        with patch.object(self.module.time, "sleep"), self.assertRaisesRegex(RuntimeError, "total=3"):
+            self.module.fetch_orders(client, date(2026, 11, 9), date(2026, 11, 10), datetime(2026, 11, 10))
+
     def test_total_stops_full_final_page_without_out_of_range_request(self):
         class Client:
             def __init__(self):

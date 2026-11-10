@@ -129,6 +129,9 @@ def fetch_orders(client: FlowBrowserClient, start: date, end: date, captured_at:
             if isinstance(status, dict) and status.get("rcode") not in (None, 0, "0", 200, "200"):
                 raise RuntimeError(f"Ctrip order-list request failed: {status.get('rmsg') or 'unknown error'}")
             candidate = payload.get("orderList")
+            if (page_index == 0 and isinstance(status, dict) and status.get("rcode") in (0, "0", 200, "200")
+                    and str(payload.get("total")) == "0" and (candidate is None or candidate == [])):
+                return []
             if isinstance(candidate, list):
                 items = candidate
                 break
@@ -138,7 +141,8 @@ def fetch_orders(client: FlowBrowserClient, start: date, end: date, captured_at:
             keys = ",".join(sorted(str(key) for key in payload))
             code = status.get("rcode") if isinstance(status, dict) else "unknown"
             raise RuntimeError(
-                f"Ctrip order-list response is invalid on page {page_index}: rcode={code}, keys={keys}"
+                f"Ctrip order-list response is invalid on page {page_index}: "
+                f"rcode={code}, total={int_value(payload.get('total'))}, keys={keys}"
             )
         if items is None:
             raise RuntimeError(f"Ctrip order-list response is invalid on page {page_index}")
@@ -252,6 +256,9 @@ def main() -> int:
         hotel_id = require_hotel_id()
         start = end - timedelta(days=1) if has_order_history(hotel_id) else retention_start
         items = fetch_orders(client, start, end, captured_at)
+        if not items:
+            print(f"Ctrip order detail: no orders, period={start}..{end}", flush=True)
+            return 0
         fetch_order_amounts(client, items)
         rows = build_rows(items, captured_at)
     sync_order_detail_history(TABLE_NAME, HEADERS, rows, hotel_id, retention_start)
