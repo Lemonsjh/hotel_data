@@ -261,6 +261,25 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(different[0]["pms_rate_room_type_id"], "")
         self.assertEqual(different[0]["room_nights"], Decimal(2))
 
+    def test_jl01_keeps_only_days_present_in_every_database(self):
+        shared_day = date(2026, 11, 9)
+        only_a = date(2026, 11, 8)
+
+        def row(name, day):
+            return {"business_date": day, "room_type_name": name, "pms_rate_room_type_id": "HT",
+                    "room_nights": Decimal(1), "room_revenue": Decimal(10),
+                    "available_rooms": Decimal(2), "total_rooms": Decimal(2),
+                    "source_platform": "PMS（Foxhis）"}
+
+        merged = multi.sum_jl01([
+            [row("大床", shared_day), row("仅A", only_a)],
+            [row("套房", shared_day)],
+        ], self.config, self.stamp)
+        self.assertEqual({item["business_date"] for item in merged}, {shared_day})
+        self.assertEqual({item["room_type_name"] for item in merged}, {"大床", "套房"})
+        with self.assertRaisesRegex(common.FoxhisError, "共同营业日"):
+            multi.sum_jl01([[row("大床", only_a)], [row("套房", shared_day)]], self.config, self.stamp)
+
         day = date(2026, 11, 9)
         merged_from_components = multi._merge("jl01", [
             {"rows": [{"business_date": day, "room_type_name": "云居城景投影房", "pms_rate_room_type_id": "HT",
@@ -458,6 +477,37 @@ class MultiRunTests(unittest.TestCase):
                 multi.run_multi("jy03", mismatched, [account("foxhis"), account("foxhis1")], sync=sync)
         sync.assert_not_called()
 
+    def test_jl01_writer_does_not_receive_a_day_missing_from_one_database(self):
+        shared_day = date(2026, 11, 9)
+        only_a = date(2026, 11, 8)
+
+        def collect(config, _day, _stamp, *, write=True):
+            self.assertFalse(write)
+            name = "大床" if config.database == "foxhis" else "套房"
+            rows = [{"business_date": shared_day, "room_type_name": name, "pms_rate_room_type_id": "HT",
+                     "room_nights": Decimal(1), "room_revenue": Decimal(10),
+                     "available_rooms": Decimal(2), "total_rooms": Decimal(2)}]
+            components = {f"{shared_day.isoformat()}|{name}": {"available_rooms": Decimal(2), "total_rooms": Decimal(2)}}
+            if config.database == "foxhis":
+                rows.append({**rows[0], "business_date": only_a, "room_type_name": "仅A"})
+                components[f"{only_a.isoformat()}|仅A"] = {"available_rooms": Decimal(2), "total_rooms": Decimal(2)}
+            return {"rows": rows, "components": components}
+
+        sync = Mock(return_value=2)
+        self.run_report("jl01", collect, [account("foxhis"), account("foxhis1")], sync)
+        self.assertEqual({row["business_date"] for row in sync.call_args.args[0]}, {shared_day})
+
+        def split(config, _day, _stamp, *, write=True):
+            day = only_a if config.database == "foxhis" else shared_day
+            return {"rows": [{"business_date": day, "room_type_name": config.database,
+                              "available_rooms": Decimal(1), "total_rooms": Decimal(1)}]}
+
+        sync = Mock(return_value=1)
+        with patch.object(sys, "argv", ["collector", "--force"]):
+            with self.assertRaisesRegex(common.FoxhisError, "共同营业日"):
+                self.run_report("jl01", split, [account("foxhis"), account("foxhis1")], sync)
+        sync.assert_not_called()
+
 
 class CacheAndSchedulerTests(unittest.TestCase):
     def test_successful_database_is_not_queried_again_and_a_removed_database_leaves_the_next_write(self):
@@ -555,6 +605,29 @@ class CacheAndSchedulerTests(unittest.TestCase):
             single_env = runner.build_env(single, "foxhis")
         self.assertNotIn("FOXHIS_ACCOUNTS", single_env)
         self.assertEqual(single_env["FOXHIS_DATABASE"], "foxhis1")
+
+        one = json.loads((ROOT / "OTA采集服务/config/settings.example.json").read_text(encoding="utf-8-sig"))
+        one["pms"]["provider"] = "foxhis"
+        one["foxhis"].update(server="GlobalFront", reports="jy01", accounts=[
+            account("foxhis1", server="RoomFront", reports="jl01"),
+        ])
+        one_env = runner.build_env(one, "foxhis")
+        self.assertEqual(one_env["FOXHIS_SERVER"], "RoomFront")
+        self.assertEqual(one_env["FOXHIS_REPORTS"], "jl01")
+        self.assertEqual(one_env["FOXHIS_DATABASE"], "foxhis1")
+        self.assertNotIn("FOXHIS_ACCOUNTS", one_env)
+        self.assertEqual([item[1] for item in runner.task_specs("pms_fetch", one)], ["foxhis_jl01_data.py"])
+        self.assertEqual(runner.build_env(one, "ctrip")["FOXHIS_SERVER"], "GlobalFront")
+        self.assertNotIn("FOXHIS_ACCOUNTS", runner.build_env(one, "ctrip"))
+
+        with tempfile.TemporaryDirectory() as old_dir:
+            settings["foxhis"]["code_dir"] = old_dir
+            ctrip_env = runner.build_env(settings, "ctrip")
+            foxhis_env = runner.build_env(settings, "foxhis")
+        self.assertNotIn("FOXHIS_ACCOUNTS", ctrip_env)
+        self.assertEqual([item["database"] for item in json.loads(foxhis_env["FOXHIS_ACCOUNTS"])], ["foxhis", "foxhis1"])
+        self.assertEqual(foxhis_env["FOXHIS_SERVER"], "FoxFront")
+
         self.assertEqual(runner.task_timeout({"foxhis": {"timeout_seconds": 600, "accounts": [
             {"timeout_seconds": 900}, {"timeout_seconds": "nope"}]}}, "foxhis"), 900)
 

@@ -206,12 +206,11 @@ def ensure_foxhis_hotel_name(settings: dict[str, Any]) -> None:
     foxhis = settings.setdefault("foxhis", {})
     if str(foxhis.get("hotel_name") or "").strip():
         return
+    if len(configured_foxhis_accounts(foxhis)) >= 2:
+        raise RuntimeError("汇总酒店名称为空，多个业务库本轮不采集。")
     code_dir = str(project_path(foxhis.get("code_dir"), pms_providers.FOXHIS_DEFAULTS["code_dir"]))
     if code_dir not in sys.path:
         sys.path.insert(0, code_dir)
-    from foxhis_accounts import complete_accounts
-    if len(complete_accounts(foxhis)) >= 2:
-        raise RuntimeError("汇总酒店名称为空，多个业务库本轮不采集。")
     from foxhis_common import Config, resolve_hotel_name
     name = resolve_hotel_name(Config.from_env(build_env(settings, "foxhis")))
     latest = load_settings()
@@ -366,11 +365,26 @@ def internal_hotel_id(settings: dict[str, Any], platform: str | None = None) -> 
 
 
 def configured_foxhis_accounts(foxhis: dict[str, Any]) -> list[dict[str, Any]]:
-    code_dir = str(project_path(foxhis.get("code_dir"), pms_providers.FOXHIS_DEFAULTS["code_dir"]))
-    if code_dir not in sys.path:
-        sys.path.insert(0, code_dir)
-    from foxhis_accounts import complete_accounts
-    return complete_accounts(foxhis)
+    return pms_providers.load_foxhis_accounts().complete_accounts(foxhis)
+
+
+_FOXHIS_ACCOUNT_ENV = (
+    ("server", "FOXHIS_SERVER"),
+    ("charset", "FOXHIS_CHARSET"),
+    ("isql_path", "FOXHIS_ISQL_PATH"),
+    ("interfaces_file", "FOXHIS_INTERFACES_FILE"),
+    ("fetch_after", "FOXHIS_FETCH_AFTER"),
+    ("business_date_offset_days", "FOXHIS_BUSINESS_DATE_OFFSET_DAYS"),
+    ("timeout_seconds", "FOXHIS_TIMEOUT_SECONDS"),
+    ("reports", "FOXHIS_REPORTS"),
+)
+
+
+def _apply_single_foxhis_account(env: dict[str, str], account: dict[str, Any]) -> None:
+    for key, name in _FOXHIS_ACCOUNT_ENV:
+        value = account.get(key)
+        if value is not None and str(value).strip():
+            env[name] = str(value).strip()
 
 
 def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str, str]:
@@ -452,13 +466,16 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     else:
         put_if(env, "FOXHIS_REPORTS", reports)
     env.pop("FOXHIS_ACCOUNTS", None)
-    foxhis_accounts = configured_foxhis_accounts(foxhis)
-    if isinstance(foxhis.get("accounts"), list) and foxhis_accounts:
-        put_if(env, "FOXHIS_DATABASE", foxhis_accounts[0]["database"])
-        put_if(env, "FOXHIS_USERNAME", foxhis_accounts[0]["username"])
-        put_if(env, "FOXHIS_PASSWORD", foxhis_accounts[0]["password"])
-    if len(foxhis_accounts) >= 2:
-        env["FOXHIS_ACCOUNTS"] = json.dumps(foxhis_accounts, ensure_ascii=False)
+    if platform == "foxhis":
+        foxhis_accounts = configured_foxhis_accounts(foxhis)
+        if isinstance(foxhis.get("accounts"), list) and foxhis_accounts:
+            put_if(env, "FOXHIS_DATABASE", foxhis_accounts[0]["database"])
+            put_if(env, "FOXHIS_USERNAME", foxhis_accounts[0]["username"])
+            put_if(env, "FOXHIS_PASSWORD", foxhis_accounts[0]["password"])
+            if len(foxhis_accounts) == 1:
+                _apply_single_foxhis_account(env, foxhis_accounts[0])
+        if len(foxhis_accounts) >= 2:
+            env["FOXHIS_ACCOUNTS"] = json.dumps(foxhis_accounts, ensure_ascii=False)
 
     put_if(env, "MEITUAN_HOTEL_NAME", meituan.get("hotel_name"))
     put_if(env, "MEITUAN_POI_ID", meituan.get("poi_id"))

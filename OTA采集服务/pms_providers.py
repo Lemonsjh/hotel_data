@@ -9,6 +9,8 @@ PMS provider 注册表
 """
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -198,6 +200,22 @@ def enforce_exclusive_enable(settings: dict[str, Any], selected: str) -> bool:
     return changed
 
 
+def load_foxhis_accounts():
+    """账号配置读取仓库里的模块，不使用西软采集目录里的旧副本。"""
+    name = "hotel_foxhis_accounts"
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
+    path = ROOT / "foxhis_pms" / "foxhis_accounts.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"缺少西软业务库模块：{path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def provider_spec(provider: str) -> dict[str, Any]:
     return PMS_PROVIDERS.get(provider) or PMS_PROVIDERS[DEFAULT_PROVIDER]
 
@@ -236,7 +254,8 @@ def task_specs(name: str, settings: dict[str, Any]) -> list[tuple[str, str, list
     if spec["scripts"]:
         scripts = spec["scripts"]
         if active_pms_provider(settings) == "foxhis":
-            reports = (settings.get("foxhis") or {}).get("reports")
+            foxhis = settings.get("foxhis") or {}
+            reports = load_foxhis_accounts().effective_reports(foxhis)
             if reports:
                 selected = reports.split(",") if isinstance(reports, str) else reports
                 names = {f"foxhis_{item.strip()}_data.py" for item in selected}

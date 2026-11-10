@@ -358,13 +358,33 @@ def sum_jl11(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
     return result
 
 
+def _day_text(value: Any) -> str:
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value or "")
+
+
 def sum_jl01(batches: list[list[dict[str, Any]]], config: Config, stamp: datetime) -> list[dict[str, Any]]:
     from foxhis_jl01_data import derived, rounded
 
+    date_sets = [
+        {row.get("business_date") for row in rows if isinstance(row, dict)}
+        for rows in batches
+    ]
+    shared = set.intersection(*date_sets) if date_sets else set()
+    if not shared:
+        raise foxhis_common.FoxhisError("各业务库没有可汇总的共同营业日，拒绝写入。")
+    omitted = sorted(set.union(*date_sets) - shared, key=_day_text)
+    if omitted:
+        print("INFO [jl01] 以下营业日不是每个业务库都完整，本轮不写入：" + "、".join(_day_text(item) for item in omitted))
     grouped: dict[tuple, dict[str, Any]] = {}
     for rows in batches:
         seen: set[tuple] = set()
         for row in rows:
+            if not isinstance(row, dict):
+                raise foxhis_common.FoxhisError("JL01 房型名称重复或为空，拒绝汇总。")
+            if row.get("business_date") not in shared:
+                continue
             name = str(row.get("room_type_name") or "").strip()
             key = (row.get("business_date"), name)
             if not name or key in seen:

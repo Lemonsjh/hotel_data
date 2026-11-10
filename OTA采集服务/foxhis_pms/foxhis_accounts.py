@@ -67,6 +67,17 @@ def complete_accounts(foxhis: Mapping[str, Any] | None) -> list[dict[str, str]]:
     ]
 
 
+def effective_reports(foxhis: Mapping[str, Any] | None) -> Any:
+    """报表范围。只有一个完整业务库且该库自己填了报表时，用这一格的范围。"""
+    foxhis = foxhis or {}
+    reports = foxhis.get("reports")
+    if isinstance(foxhis.get("accounts"), list):
+        complete = complete_accounts(foxhis)
+        if len(complete) == 1 and complete[0].get("reports"):
+            return complete[0]["reports"]
+    return reports
+
+
 def display_slots(foxhis: Mapping[str, Any] | None) -> list[dict[str, str]]:
     foxhis = foxhis or {}
     accounts = foxhis.get("accounts")
