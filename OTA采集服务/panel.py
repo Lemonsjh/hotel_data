@@ -136,9 +136,15 @@ def config_control(settings: dict[str, Any], key: str, label: str, secret: bool)
                 f"<textarea name='{esc(key)}' rows='2' "
                 "placeholder='粘贴新值；留空则保留原值'></textarea>"
             )
+        current_text = "" if current is None else str(current).strip()
+        if key == "rezen.session_token" and not current_text:
+            secret_state = "<div class='secret-current pending'>留空，从已打开的 Rezen One 读取</div>"
+        else:
+            text = "未配置" if not current_text else f"已配置 · {esc(mask(current))}"
+            secret_state = f"<div class='secret-current'>{text}</div>"
         return (
             f"<div class='field secret-field{pair_class}'><label>{esc(label)}</label>"
-            f"<div class='secret-current'>已配置 · {esc(mask(current))}</div>{control}</div>"
+            f"{secret_state}{control}</div>"
         )
 
     input_type = "number" if key in NUMBER_FIELDS else "text"
@@ -303,6 +309,13 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<button type='submit' class='secondary compact' name='deep' value='1' formaction='/detect-foxhis'>校验数据库连通性</button>"
             "</div>"
         )
+    elif section_key == "rezen":
+        actions = (
+            "<div class='config-actions'>"
+            "<button type='submit' class='compact' formaction='/rezen-connection'>检查连接</button>"
+            "</div>"
+        )
+        login_html = rezen_connection_html()
     elif section_key == "huiyun":
         actions = ("<div class='config-actions'><button type='submit' class='compact' "
                    "formaction='/huiyun-login'>打开采集客户端</button></div>")
@@ -353,6 +366,22 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
     """
 
 
+def rezen_connection_html() -> str:
+    from rezen_pms.connection import read_status
+    status = read_status()
+    state = str(status.get("status") or "never")
+    state_class = {"success": "good", "failed": "danger"}.get(state, "idle")
+    checked = str(status.get("checked_at") or "")
+    hint = f"最近检查 {checked}。" if checked else "尚未检查。"
+    hint += "只读查询已打开的 Rezen One，不写入数据库。"
+    return (
+        "<div class='login-assistant' data-rezen-connection='1'>"
+        f"<div><strong>数据源连接</strong><small>{esc(hint)}</small></div>"
+        f"<span class='pill {state_class} login-state'>{esc(status.get('message') or '尚未检查')}</span>"
+        "</div>"
+    )
+
+
 def active_pms_provider(settings: dict[str, Any]) -> str:
     return runner.active_pms_provider(settings)
 
@@ -397,6 +426,7 @@ def config_page() -> str:
         {key: spec["card_key"] for key, spec in pms_providers.PMS_PROVIDERS.items()},
         ensure_ascii=False,
     )
+    partners_js = json.dumps(pms_providers.DUAL_PARTNERS, ensure_ascii=False)
     default_provider = pms_providers.DEFAULT_PROVIDER
     base_group = (
         "<section class='config-group'><div class='config-group-heading'>基础配置</div>"
@@ -465,14 +495,26 @@ async function refreshLoginStates() {{
 setInterval(refreshLoginStates, 2000);
 
 const PMS_CARDS = {card_map_js};
+const PMS_PARTNERS = {partners_js};
 const PMS_DEFAULT_PROVIDER = '{default_provider}';
 
 function selectPmsProvider(provider) {{
   for (const select of document.querySelectorAll('select[name="pms_provider"]')) select.value = provider;
   const target = PMS_CARDS[provider] || PMS_CARDS[PMS_DEFAULT_PROVIDER];
+  const visible = new Set([target]);
+  for (const key of (PMS_PARTNERS[provider] || [])) {{
+    if (PMS_CARDS[key]) visible.add(PMS_CARDS[key]);
+  }}
+  let selectorShown = false;
   for (const card of document.querySelectorAll('[data-pms-card]')) {{
     if (!Object.values(PMS_CARDS).includes(card.dataset.pmsCard)) continue;
-    card.hidden = card.dataset.pmsCard !== target;
+    const show = visible.has(card.dataset.pmsCard);
+    card.hidden = !show;
+    const selector = card.querySelector('.pms-provider-select');
+    if (!selector) continue;
+    const keep = show && !selectorShown;
+    selector.hidden = !keep;
+    if (keep) selectorShown = true;
   }}
 }}
 for (const select of document.querySelectorAll('select[name="pms_provider"]')) {{
@@ -555,7 +597,7 @@ def platform_login_status(platform: str):
     identity = {}
     if platform == "meituan_pms" and data.get("status") == "success" and data.get("identity_updated"):
         settings = runner.load_settings()
-        if (runner.active_pms_provider(settings) == platform
+        if (pms_providers.uses_meituan_pms_login(runner.active_pms_provider(settings))
                 and runner.internal_hotel_id(settings) == data.get("hotel_id")):
             section = settings.get(platform) or {}
             identity = {key: str(section.get(key) or "") for key in ("hotel_name", "org_id")}
@@ -641,6 +683,21 @@ def detect_hotel(platform: str):
     set_path(settings, target_key, hotel_name)
     runner.save_json(runner.CONFIG_PATH, settings)
     return redirect(url_for("config_page", notice=f"{label}\u8bc6\u522b\u6210\u529f\uff1a{hotel_name}"))
+
+
+@app.post("/rezen-connection")
+def rezen_connection():
+    settings = apply_form_to_settings(runner.load_settings())
+    error = apply_foxhis_accounts(settings, request.form)
+    if error:
+        return redirect(url_for("config_page", error=error))
+    runner.save_json(runner.CONFIG_PATH, settings)
+    from rezen_pms.connection import run_check
+    result = run_check(settings)
+    message = str(result.get("message") or "Rezen 连接检查没有返回结果")
+    if result.get("status") == "success":
+        return redirect(url_for("config_page", notice=message))
+    return redirect(url_for("config_page", error=message))
 
 
 @app.post("/detect-foxhis")

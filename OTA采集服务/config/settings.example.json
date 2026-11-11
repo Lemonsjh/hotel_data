@@ -93,6 +93,18 @@
     "org_id": "",
     "cookie": ""
   },
+  "rezen": {
+    "enabled": false,
+    "hotel_name": "",
+    "base_url": "https://one.rezen.tech",
+    "session_token": "",
+    "profile_dir": "",
+    "view_days": 15,
+    "include_tax": "1"
+  },
+  "meituan_rezen": {
+    "enabled": false
+  },
   "huiyun": {
     "enabled": false,
     "hotel_name": "",

@@ -164,7 +164,13 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
-.pms-config-stack { min-width: 0; }
+.pms-config-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.pms-provider-select[hidden] { display: none !important; }
 .pms-provider-select {
   display: flex;
   align-items: center;
@@ -173,7 +179,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
   font-size: 12px;
   font-weight: 700;
 }
-.pms-provider-select select { width: 158px; padding: 7px 30px 7px 10px; background: #f7faf8; }
+.pms-provider-select select { width: 196px; padding: 7px 30px 7px 10px; background: #f7faf8; }
 .pms-provider-select small { display: none; }
 .pms-platform-actions {
   display: flex;
@@ -183,7 +189,10 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
 .ota-platform-actions { margin: -6px 0 18px; }
 .ota-platform-actions .config-actions { flex-wrap: wrap; justify-content: flex-start; }
 @media (min-width: 981px) {
-  .pms-config-stack > .config-card { height: 100%; box-sizing: border-box; }
+  .pms-config-stack:not(:has(> .config-card:not([hidden]) ~ .config-card:not([hidden]))) > .config-card:not([hidden]) {
+    height: 100%;
+    box-sizing: border-box;
+  }
 }
 .config-card {
   position: relative;
@@ -291,6 +300,10 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--b
   font-size: 11px;
   font-weight: 800;
   margin: -2px 0 6px;
+}
+.secret-current.pending {
+  color: var(--muted);
+  font-weight: 600;
 }
 .compact { padding: 8px 10px; font-size: 12px; white-space: nowrap; }
 .inner-details {

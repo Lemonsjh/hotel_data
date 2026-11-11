@@ -4,7 +4,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +66,23 @@ class RoomMappingAliasTests(unittest.TestCase):
             self.store.pms_room_type_names({"pms_room_type_name": "豪华双床房"}),
             ["豪华双床房"],
         )
+
+    def test_combined_provider_reads_room_types_from_the_merged_forecast(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [{"name": "溪眠舒适双床房"}]
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value.__enter__.return_value = cursor
+        settings = {"pms": {"provider": "meituan_rezen"}, "hotel": {"hotel_id": "h1"}, "ctrip": {}}
+        with patch.object(self.store.price_tasks, "connection", return_value=connection), \
+             patch.object(self.store.runner, "internal_hotel_id", return_value="h1"):
+            _hotels, rooms, _meituan, _ctrip = self.store.room_options(settings)
+        self.assertEqual(rooms, ["溪眠舒适双床房"])
+        _sql, params = cursor.execute.call_args_list[1].args
+        self.assertEqual(params, ("PMS（美团+Rezen）", "h1"))
+        self.assertEqual(self.store.active_pms_platform(settings), self.store.PMS_MEITUAN_PLATFORM)
+        single = {"pms": {"provider": "meituan_pms"}}
+        self.assertEqual(self.store.forecast_source_label(single), "PMS（美团）")
 
     def test_active_pms_alias_namespace_follows_selected_provider(self):
         self.assertEqual(
