@@ -39,13 +39,26 @@ class DatabaseAdapter:
                      else value.isoformat() if isinstance(value, date)
                      else str(value) if isinstance(value, Decimal) else value for value in args)
 
-    def execute(self, sql, args):
+    def execute(self, sql, args=()):
+        compact = " ".join(sql.split())
+        if compact.upper().startswith("SHOW COLUMNS"):
+            self._mode = "columns"
+            name = args[0] if args else ""
+            self.current = self.db.execute(
+                "SELECT name FROM pragma_table_info('rs01_room_revenue_daily') WHERE name=?", (name,))
+            return
+        self._mode = "time"
         self.current = self.db.execute(sql.replace(" FOR UPDATE", "").replace("%s", "?"), self.values(args))
 
     def executemany(self, sql, args):
         self.db.executemany(sql.replace("%s", "?"), [self.values(row) for row in args])
 
+    def fetchone(self):
+        return self.current.fetchone()
+
     def fetchall(self):
+        if getattr(self, "_mode", "time") == "columns":
+            return list(self.current.fetchall())
         return [(datetime.fromisoformat(row[0]),) for row in self.current.fetchall()]
 
     def commit(self):

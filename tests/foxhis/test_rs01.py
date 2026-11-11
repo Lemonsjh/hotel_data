@@ -24,7 +24,7 @@ class RS01Tests(unittest.TestCase):
         self.orders = rs.order_map([self.raw_order], self.start, self.end, self.stamp)
         self.db = DatabaseAdapter()
         columns = ",".join(f"`{name}` TEXT" for name in rs.INSERT_COLUMNS)
-        self.db.db.execute(f"CREATE TABLE rs01_room_revenue_daily ({columns}, UNIQUE(hotel_id,order_id,business_date,room_no,charge_subject))")
+        self.db.db.execute(f"CREATE TABLE rs01_room_revenue_daily ({columns}, UNIQUE(hotel_id,order_id,business_date,room_no,charge_subject,source_payment_id))")
         self.db.db.commit()
         self.connection_patch = patch.object(rs, "mysql_connection", return_value=self.db)
         self.connection_patch.start()
@@ -67,7 +67,8 @@ class RS01Tests(unittest.TestCase):
 
     def test_multiple_postings_under_one_order_have_distinct_stable_keys(self):
         rows, _ = self.build([self.record(), self.record(line_no="2", amount="80")])
-        self.assertEqual({r["order_id"] for r in rows}, {"foxhis:F1:1", "foxhis:F1:2"})
+        self.assertEqual({r["order_id"] for r in rows}, {"F1"})
+        self.assertEqual({r["source_payment_id"] for r in rows}, {"1", "2"})
         rs.sync_rows(rows, self.config, self.start, self.end)
         self.assertEqual(len(self.contents()), 2)
 

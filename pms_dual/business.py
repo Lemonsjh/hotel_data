@@ -37,7 +37,7 @@ JL11_COLUMNS = (
     "overnight_room_count", "overnight_occupancy_rate", "snapshot_time",
 )
 RS01_COLUMNS = (
-    "hotel_id", "hotel_name", "source_platform", "business_date", "order_id", "room_no",
+    "hotel_id", "hotel_name", "source_platform", "business_date", "order_id", "source_payment_id", "room_no",
     "room_type_name", "room_type_id", "guest_name", "customer_source", "checkin_time", "checkout_time",
     "rack_rate", "price_type", "room_daily_price", "stay_type", "charge_subject", "room_nights",
     "room_fee", "operator_name", "channel_unit_id", "snapshot_time",
@@ -342,28 +342,28 @@ def _text(value, limit: int, label: str):
     return text
 
 
-def _prefixed(order_id: str, prefix: str) -> str:
-    raw = str(order_id or "").strip()
+def _order_id(value) -> str:
+    raw = str(value or "").strip()
     if not raw:
         raise ValueError("单号为空，拒绝写入")
-    marker = prefix + ":"
-    value = raw if raw.startswith(marker) else marker + raw
-    if len(value) > 100:
+    if len(raw) > 100:
         raise ValueError("单号超过字段长度，拒绝写入")
-    return value
+    return raw
 
 
-def prefix_orders(rows: list[dict], prefix: str, hotel_id: str, hotel_name: str, snapshot: datetime,
-                  columns: tuple[str, ...], mapping_platform: str, *, unique_order: bool = True) -> list[dict]:
+def stamp_orders(rows: list[dict], hotel_id: str, hotel_name: str, snapshot: datetime,
+                 columns: tuple[str, ...], mapping_platform: str) -> list[dict]:
     seen = set()
     output = []
     for row in rows:
         item = {key: row.get(key) for key in columns if key != "room_type_id"}
-        item["order_id"] = _prefixed(row.get("order_id"), prefix)
-        identity = item["order_id"] if unique_order else tuple(
-            item.get(key) for key in columns if key not in {"snapshot_time", "room_type_id"})
+        item["order_id"] = _order_id(row.get("order_id"))
+        if "source_payment_id" in columns:
+            item["source_payment_id"] = str(item.get("source_payment_id") or "")
+        # 单号相同可以是不同房间、不同客人或两侧各自的订单，只拒绝整行完全一样的记录。
+        identity = tuple(item.get(key) for key in columns if key not in {"snapshot_time", "room_type_id"})
         if identity in seen:
-            raise ValueError("单号重复，拒绝写入" if unique_order else "客人记录重复，拒绝写入")
+            raise ValueError("记录重复，拒绝写入")
         seen.add(identity)
         item["hotel_id"] = hotel_id
         item["hotel_name"] = hotel_name
@@ -373,6 +373,27 @@ def prefix_orders(rows: list[dict], prefix: str, hotel_id: str, hotel_name: str,
         item["mapping_platform"] = mapping_platform
         output.append(item)
     return output
+
+
+def separate_matching_fees(rows: list[dict]) -> list[dict]:
+    """两侧单号、营业日、房号、科目和流水号都相同才用来源区分，单号保持原值。"""
+    grouped: dict[tuple, list[dict]] = {}
+    for row in rows:
+        row["source_payment_id"] = str(row.get("source_payment_id") or "")
+        key = (row.get("order_id"), row.get("business_date"), row.get("room_no"), row.get("charge_subject"),
+               row["source_payment_id"])
+        grouped.setdefault(key, []).append(row)
+    for bucket in grouped.values():
+        if len(bucket) == 1:
+            continue
+        seen_sides = set()
+        for row in bucket:
+            side = str(row.get("mapping_platform") or "")
+            if not side or side in seen_sides:
+                raise ValueError("房费明细重复，拒绝写入")
+            seen_sides.add(side)
+            row["source_payment_id"] = side
+    return rows
 
 
 def rezen_booking_row(account: dict, hotel_id: str, hotel_name: str, snapshot: datetime,

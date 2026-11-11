@@ -16,8 +16,8 @@ from meituan_pms.monthly_report import collect as collect_monthly
 from meituan_pms.performance_report import collect as collect_performance, collection_dates as performance_dates
 from pms_dual.business import (
     JD01_COLUMNS, JD02_COLUMNS, RS01_COLUMNS, daily_row, departure_day, hotel_context, merge_jl02, merge_jy01,
-    merge_jy03, month_row, performance_from_daily, performance_history_start, prefix_orders,
-    rezen_booking_row, rezen_guest_row,
+    merge_jy03, month_row, performance_from_daily, performance_history_start, separate_matching_fees,
+    stamp_orders, rezen_booking_row, rezen_guest_row,
 )
 from pms_dual.classification import collect_meituan as collect_classification
 from pms_dual.classification import collect_rezen as collect_rezen_classification
@@ -42,11 +42,8 @@ def _ids(hotel_id: str, hotel_name: str) -> tuple[str, str, str]:
     return os.environ.get("MEITUAN_PMS_COOKIE", ""), hotel_id, os.environ.get("MEITUAN_PMS_ORG_ID", "").strip()
 
 
-def _combine(left: list[dict], right: list[dict], *, unique_order: bool = True) -> list[dict]:
-    rows = [*left, *right]
-    if unique_order and len({row["order_id"] for row in rows}) != len(rows):
-        raise ValueError("两侧单号冲突，拒绝写入")
-    return rows
+def _combine(left: list[dict], right: list[dict]) -> list[dict]:
+    return [*left, *right]
 
 
 def run_daily(clock=now_shanghai) -> list[dict]:
@@ -140,10 +137,9 @@ def run_revenue(clock=now_shanghai, initial: bool | None = None) -> tuple[list[d
     remember("meituan", "rs01")
     rezen = collect_rezen_revenue(snapshot, initial=initial)
     remember("rezen", "rs01")
-    rows = _combine(
-        prefix_orders(meituan, "mt", hotel_id, name, snapshot, RS01_COLUMNS, "pms_meituan", unique_order=False),
-        prefix_orders(rezen, "rz", hotel_id, name, snapshot, RS01_COLUMNS, "pms_rezen", unique_order=False),
-        unique_order=False)
+    rows = separate_matching_fees(_combine(
+        stamp_orders(meituan, hotel_id, name, snapshot, RS01_COLUMNS, "pms_meituan"),
+        stamp_orders(rezen, hotel_id, name, snapshot, RS01_COLUMNS, "pms_rezen")))
     return rows, snapshot, initial
 
 
@@ -157,8 +153,8 @@ def run_bookings(clock=now_shanghai) -> tuple[list[dict], object]:
     rezen = [rezen_booking_row(account, hotel_id, name, snapshot, start, end) for account in fetch_reservations(start, end)]
     remember("rezen", "jd01")
     rows = _combine(
-        prefix_orders(meituan, "mt", hotel_id, name, snapshot, JD01_COLUMNS, "pms_meituan"),
-        prefix_orders(rezen, "rz", hotel_id, name, snapshot, JD01_COLUMNS, "pms_rezen"))
+        stamp_orders(meituan, hotel_id, name, snapshot, JD01_COLUMNS, "pms_meituan"),
+        stamp_orders(rezen, hotel_id, name, snapshot, JD01_COLUMNS, "pms_rezen"))
     return rows, snapshot
 
 
@@ -172,9 +168,8 @@ def run_guests(clock=now_shanghai) -> tuple[list[dict], object]:
     rezen = [rezen_guest_row(account, hotel_id, name, day, snapshot) for account in fetch_departures(day)]
     remember("rezen", "jd02")
     rows = _combine(
-        prefix_orders(meituan, "mt", hotel_id, name, snapshot, JD02_COLUMNS, "pms_meituan", unique_order=False),
-        prefix_orders(rezen, "rz", hotel_id, name, snapshot, JD02_COLUMNS, "pms_rezen", unique_order=False),
-        unique_order=False)
+        stamp_orders(meituan, hotel_id, name, snapshot, JD02_COLUMNS, "pms_meituan"),
+        stamp_orders(rezen, hotel_id, name, snapshot, JD02_COLUMNS, "pms_rezen"))
     return rows, snapshot
 
 

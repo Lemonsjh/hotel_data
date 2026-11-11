@@ -90,8 +90,9 @@ class PMSHistoryRetentionTests(unittest.TestCase):
             rows = [{**row, "source_platform": source, "room_type_id": None} for row in getattr(fixture, method)()]
             if index == 4:
                 rows = rows[:1]
-            if provider == "bypms" and index == 5:
-                rows = [{**row, "source_payment_id": row["order_id"]} for row in rows]
+            if index == 5:
+                rows = [{**item, "source_payment_id": item.get("source_payment_id") or (item["order_id"] if provider == "bypms" else "")}
+                        for item in rows]
             module = by_modules[index] if provider == "bypms" else fx_modules[index]
             stamp = rows[0]["snapshot_time"]
             config = foxhis_common.Config(hotel_id="hotel", hotel_name=rows[0]["hotel_name"])

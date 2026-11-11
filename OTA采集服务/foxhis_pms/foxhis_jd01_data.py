@@ -129,9 +129,8 @@ def sync_rows(rows: list[dict], config: Config) -> int:
         raise FoxhisError("JD01 数据或酒店ID为空。")
     stamp = rows[0]["snapshot_time"]
     cutoff = checkout_cutoff(stamp.date())
-    if (len({r["order_id"] for r in rows}) != len(rows)
-            or any(r["hotel_id"] != config.hotel_id or r["source_platform"] != SOURCE_PLATFORM or r["snapshot_time"] != stamp
-                   or r["departure_time"].date() < cutoff for r in rows)):
+    if any(r["hotel_id"] != config.hotel_id or r["source_platform"] != SOURCE_PLATFORM or r["snapshot_time"] != stamp
+           or r["departure_time"].date() < cutoff for r in rows):
         raise FoxhisError("JD01 输出账号、酒店、来源或日期范围不一致。")
     connection = mysql_connection(config)
     try:

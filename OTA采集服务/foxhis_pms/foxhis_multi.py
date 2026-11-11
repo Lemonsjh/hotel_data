@@ -434,9 +434,8 @@ def sum_jl01(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
     return result
 
 
-def _prefix_orders(payloads: list[dict[str, Any]], config: Config, stamp: datetime) -> list[dict[str, Any]]:
+def _keep_orders(payloads: list[dict[str, Any]], config: Config, stamp: datetime) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
     for payload in payloads:
         database = str(payload.get("database") or "").strip()
         if not database:
@@ -444,29 +443,74 @@ def _prefix_orders(payloads: list[dict[str, Any]], config: Config, stamp: dateti
         raw_rows = payload.get("rows") or []
         if not isinstance(raw_rows, list):
             raise foxhis_common.FoxhisError("汇总明细无效。")
+        seen: set[tuple] = set()
         for row in raw_rows:
             if not isinstance(row, dict):
                 raise foxhis_common.FoxhisError("汇总明细无效。")
             item = dict(row)
             raw = str(item.get("order_id") or "").strip()
-            if not raw:
-                raise foxhis_common.FoxhisError("JD01 订单号为空，拒绝汇总。")
-            prefix = database + ":"
-            item["order_id"] = raw if raw.startswith(prefix) else prefix + raw
+            if not raw or len(raw) > 100:
+                raise foxhis_common.FoxhisError("JD01 订单号为空或超过字段长度，拒绝汇总。")
+            item["order_id"] = raw
             item["hotel_id"] = config.hotel_id
             item["hotel_name"] = config.hotel_name
             if "snapshot_time" in item:
                 item["snapshot_time"] = stamp
-            if item["order_id"] in seen:
-                raise foxhis_common.FoxhisError("jd01 多个业务库出现相同的单号，拒绝写入。")
-            seen.add(item["order_id"])
+            # 单号相同可以是不同业务库里的不同订单。只拒绝同一个库里整行完全一样的记录。
+            identity = tuple((key, item.get(key)) for key in sorted(item) if key != "snapshot_time")
+            if identity in seen:
+                raise foxhis_common.FoxhisError("JD01 记录重复，拒绝写入。")
+            seen.add(identity)
+            rows.append(item)
+    return rows
+
+
+def _fee_key(row: dict[str, Any]) -> tuple:
+    return (row.get("order_id"), row.get("business_date"), row.get("room_no"), row.get("charge_subject"),
+            str(row.get("source_payment_id") or ""))
+
+
+def _merge_revenue(payloads: list[dict[str, Any]], config: Config, stamp: datetime) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    owners: dict[tuple, str] = {}
+    for payload in payloads:
+        database = str(payload.get("database") or "").strip()
+        if not database:
+            raise foxhis_common.FoxhisError("RS01 缺少业务库名，拒绝汇总。")
+        raw_rows = payload.get("rows") or []
+        if not isinstance(raw_rows, list):
+            raise foxhis_common.FoxhisError("汇总明细无效。")
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                raise foxhis_common.FoxhisError("汇总明细无效。")
+            item = dict(row)
+            if "hotel_id" in item:
+                item["hotel_id"] = config.hotel_id
+            if "hotel_name" in item:
+                item["hotel_name"] = config.hotel_name
+            if "snapshot_time" in item:
+                item["snapshot_time"] = stamp
+            payment = str(item.get("source_payment_id") or "")
+            item["source_payment_id"] = payment
+            key = _fee_key(item)
+            owner = owners.get(key)
+            if owner == database:
+                raise foxhis_common.FoxhisError("RS01 同一流水重复，拒绝写入。")
+            if owner is not None:
+                payment = f"{database}:{payment}"
+                if len(payment) > 100:
+                    raise foxhis_common.FoxhisError("RS01 流水号超过字段长度，拒绝写入。")
+                item["source_payment_id"] = payment
+                key = _fee_key(item)
+                if key in owners:
+                    raise foxhis_common.FoxhisError("RS01 同一流水重复，拒绝写入。")
+            owners[key] = database
             rows.append(item)
     return rows
 
 
 _OVERLAP = {
     "room_status": ("pms_room_type_id",),
-    "room_revenue": ("order_id", "business_date", "room_no", "charge_subject"),
 }
 
 
@@ -480,7 +524,9 @@ def _merge(report_key: str, payloads: list[dict[str, Any]], config: Config, stam
     if report_key == "jl01":
         return sum_jl01([_rows_with_components(report_key, payload) for payload in payloads], config, stamp)
     if report_key == "jd01":
-        return _prefix_orders(payloads, config, stamp)
+        return _keep_orders(payloads, config, stamp)
+    if report_key == "room_revenue":
+        return _merge_revenue(payloads, config, stamp)
     rows: list[dict[str, Any]] = []
     for payload in payloads:
         rows.extend(payload.get("rows") or [])
@@ -498,7 +544,7 @@ def _merge(report_key: str, payloads: list[dict[str, Any]], config: Config, stam
         if fields:
             key = tuple(row.get(field) for field in fields)
             if key in seen:
-                raise foxhis_common.FoxhisError(f"{report_key} 多个业务库出现相同的房型或单号，拒绝写入。")
+                raise foxhis_common.FoxhisError(f"{report_key} 多个业务库出现相同的房型代码，拒绝写入。")
             seen.add(key)
     return rows
 

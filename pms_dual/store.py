@@ -317,6 +317,19 @@ def needs_revenue_backfill(hotel_id: str, connection=None) -> bool:
             connection.close()
 
 
+def ensure_source_payment_id(cursor) -> None:
+    cursor.execute("SHOW COLUMNS FROM `rs01_room_revenue_daily` WHERE `Field`=%s", ("source_payment_id",))
+    if cursor.fetchone():
+        return
+    cursor.execute("""
+        ALTER TABLE `rs01_room_revenue_daily`
+        ADD COLUMN source_payment_id VARCHAR(100) NOT NULL DEFAULT '' COMMENT '来源流水 ID',
+        DROP INDEX uk_room_fee_daily,
+        ADD UNIQUE KEY uk_room_fee_daily
+            (hotel_id, order_id, business_date, room_no, charge_subject, source_payment_id)
+    """)
+
+
 def write_rs01(rows: list[dict], snapshot: datetime, *, initial: bool, connection=None) -> None:
     from meituan_pms.revenue_report import collection_windows
 
@@ -324,7 +337,8 @@ def write_rs01(rows: list[dict], snapshot: datetime, *, initial: bool, connectio
     if not rows:
         return
     first = rows[0]
-    keys = {(row.get("order_id"), row.get("business_date"), row.get("room_no"), row.get("charge_subject")) for row in rows}
+    keys = {(row.get("order_id"), row.get("business_date"), row.get("room_no"), row.get("charge_subject"),
+             str(row.get("source_payment_id") or "")) for row in rows}
     if (len(keys) != len(rows) or any(
             row.get("hotel_id") != first["hotel_id"] or row.get("hotel_name") != first["hotel_name"]
             or row.get("source_platform") != SOURCE or row.get("snapshot_time") != snapshot
@@ -336,6 +350,7 @@ def write_rs01(rows: list[dict], snapshot: datetime, *, initial: bool, connectio
     try:
         ensure_table(connection, "rs01_room_revenue_daily")
         with connection.cursor() as cur:
+            ensure_source_payment_id(cur)
             cur.execute("SELECT source_platform, snapshot_time FROM `rs01_room_revenue_daily` WHERE hotel_id=%s "
                         "AND business_date BETWEEN %s AND %s FOR UPDATE",
                         (first["hotel_id"], windows[0][0], windows[-1][1]))
@@ -344,8 +359,13 @@ def write_rs01(rows: list[dict], snapshot: datetime, *, initial: bool, connectio
                 if source != SOURCE or stamp > snapshot:
                     raise ValueError("房费查询范围已有其他 PMS 或更新批次，拒绝覆盖")
             _attach_room_types(cur, rows)
+            # 以前为了躲开唯一键写成 mt:/rz: 的单号，下次写入时从本次查询窗口里清掉，避免和新的原单号叠成两份房费。
+            cur.execute(
+                "DELETE FROM `rs01_room_revenue_daily` WHERE hotel_id=%s AND source_platform=%s "
+                "AND business_date BETWEEN %s AND %s AND (order_id LIKE 'mt:%%' OR order_id LIKE 'rz:%%')",
+                (first["hotel_id"], SOURCE, windows[0][0], windows[-1][1]))
             _upsert(cur, "rs01_room_revenue_daily", rows, RS01_COLUMNS,
-                    {"hotel_id", "order_id", "business_date", "room_no", "charge_subject"})
+                    {"hotel_id", "order_id", "business_date", "room_no", "charge_subject", "source_payment_id"})
             _cleanup(cur, "rs01_room_revenue_daily", first["hotel_id"], snapshot)
         connection.commit()
     except Exception:

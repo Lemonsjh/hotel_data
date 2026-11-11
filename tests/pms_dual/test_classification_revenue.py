@@ -135,4 +135,5 @@ class ClassificationTests(unittest.TestCase):
             self.assertIn(marker, statement)
             self.assertNotIn("ALTER TABLE", statement)
         self.assertIn("charge_subject", RS01_COLUMNS)
+        self.assertIn("source_payment_id", RS01_COLUMNS)
         self.assertNotIn("trn_id", RS01_COLUMNS)

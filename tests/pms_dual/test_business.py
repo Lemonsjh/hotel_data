@@ -6,9 +6,9 @@ import unittest
 from meituan_pms.daily_report import collection_dates
 from meituan_pms.performance_report import collection_dates as performance_dates
 from pms_dual.business import (
-    JD01_COLUMNS, JD02_COLUMNS, JL02_COLUMNS, JY01_COLUMNS, JY03_COLUMNS, daily_row, merge_jl02,
-    merge_jy01, merge_jy03, month_row, performance_from_daily, performance_history_start, prefix_orders,
-    rezen_booking_row,
+    JD01_COLUMNS, JD02_COLUMNS, JL02_COLUMNS, JY01_COLUMNS, JY03_COLUMNS, RS01_COLUMNS, daily_row,
+    merge_jl02, merge_jy01, merge_jy03, month_row, performance_from_daily, performance_history_start,
+    rezen_booking_row, separate_matching_fees, stamp_orders,
 )
 from pms_dual.store import TABLES, create_statement
 
@@ -132,7 +132,7 @@ class BusinessMergeTest(unittest.TestCase):
         self.assertEqual(earlier["间夜数"]["value_day"], Decimal("0.0000"))
         self.assertEqual(earlier["间夜数"]["value_year"], Decimal("0.0000"))
 
-    def test_order_numbers_are_prefixed_and_columns_match_the_existing_tables(self):
+    def test_order_numbers_stay_original_and_columns_match_the_existing_tables(self):
         booking = {
             "hotel_name": "测试酒店", "hotel_id": "h1", "source_platform": "单侧", "order_id": "100",
             "booking_time": STAMP, "contact": "甲", "guest_source": "上门", "member_level": None,
@@ -145,21 +145,31 @@ class BusinessMergeTest(unittest.TestCase):
         guest.update(order_id="100", hotel_id="h1", hotel_name="测试酒店", business_date=date(2026, 11, 10),
                      arrival_time=STAMP, departure_time=STAMP, snapshot_time=STAMP, main_checkin_person=1,
                      room_price=Decimal("100.00"))
-        left = prefix_orders([booking], "mt", "h1", "测试酒店", STAMP, JD01_COLUMNS, "pms_meituan")
-        right = prefix_orders([guest], "rz", "h1", "测试酒店", STAMP, JD02_COLUMNS, "pms_rezen")
-        self.assertEqual(left[0]["order_id"], "mt:100")
-        self.assertEqual(right[0]["order_id"], "rz:100")
+        left = stamp_orders([booking, {**booking, "room_type_name": "山语"}], "h1", "测试酒店", STAMP, JD01_COLUMNS, "pms_meituan")
+        right = stamp_orders([guest], "h1", "测试酒店", STAMP, JD02_COLUMNS, "pms_rezen")
+        self.assertEqual([row["order_id"] for row in left], ["100", "100"])
+        self.assertEqual(right[0]["order_id"], "100")
         self.assertEqual(set(left[0]) - {"mapping_platform"}, set(JD01_COLUMNS))
         self.assertEqual(set(right[0]) - {"mapping_platform"}, set(JD02_COLUMNS))
-        with self.assertRaisesRegex(ValueError, "单号重复"):
-            prefix_orders([booking, {**booking}], "mt", "h1", "测试酒店", STAMP, JD01_COLUMNS, "pms_meituan")
-        companions = prefix_orders(
+        with self.assertRaisesRegex(ValueError, "记录重复"):
+            stamp_orders([booking, {**booking}], "h1", "测试酒店", STAMP, JD01_COLUMNS, "pms_meituan")
+        companions = stamp_orders(
             [guest, {**guest, "customer_id": "2", "main_checkin_person": 0}],
-            "rz", "h1", "测试酒店", STAMP, JD02_COLUMNS, "pms_rezen", unique_order=False)
-        self.assertEqual([row["order_id"] for row in companions], ["rz:100", "rz:100"])
-        with self.assertRaisesRegex(ValueError, "客人记录重复"):
-            prefix_orders([guest, {**guest}], "rz", "h1", "测试酒店", STAMP, JD02_COLUMNS, "pms_rezen",
-                          unique_order=False)
+            "h1", "测试酒店", STAMP, JD02_COLUMNS, "pms_rezen")
+        self.assertEqual([row["order_id"] for row in companions], ["100", "100"])
+        with self.assertRaisesRegex(ValueError, "记录重复"):
+            stamp_orders([guest, {**guest}], "h1", "测试酒店", STAMP, JD02_COLUMNS, "pms_rezen")
+        fee = {key: None for key in RS01_COLUMNS}
+        fee.update(order_id="100", business_date=date(2026, 11, 10), room_no="101", charge_subject="房费",
+                   room_fee=Decimal("10.00"), hotel_id="h1", hotel_name="测试酒店", snapshot_time=STAMP)
+        meituan = stamp_orders([fee], "h1", "测试酒店", STAMP, RS01_COLUMNS, "pms_meituan")
+        rezen = stamp_orders([{**fee, "room_fee": Decimal("20.00")}], "h1", "测试酒店", STAMP, RS01_COLUMNS, "pms_rezen")
+        separated = separate_matching_fees([*meituan, *rezen])
+        self.assertEqual([row["order_id"] for row in separated], ["100", "100"])
+        self.assertEqual([row["source_payment_id"] for row in separated], ["pms_meituan", "pms_rezen"])
+        with self.assertRaisesRegex(ValueError, "房费明细重复"):
+            separate_matching_fees(stamp_orders(
+                [fee, {**fee, "room_fee": Decimal("2.00")}], "h1", "测试酒店", STAMP, RS01_COLUMNS, "pms_meituan"))
 
     def test_rezen_booking_rejects_an_overlong_field_without_echoing_it(self):
         account = {"acctStus": "R", "acctNum": "9", "rmNums": 1, "arrDt": "2026-11-11", "gstarrTm": "12:00",

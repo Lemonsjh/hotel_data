@@ -1,4 +1,4 @@
-"""美团 PMS 与 Rezen 的 RS01。同一科目的多行先加总，不改唯一键。"""
+"""美团 PMS 与 Rezen 的 RS01。同一侧同一科目的多行先加总，单号保持原值。"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
