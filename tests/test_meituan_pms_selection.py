@@ -33,6 +33,9 @@ class MeituanPmsSelectionTests(unittest.TestCase):
             for changed in ({"identity_updated": False}, {"hotel_id": "another-hotel"}, {"status": "waiting"}):
                 with patch.object(panel.platform_login, "read_status", return_value={**status, **changed}):
                     self.assertEqual(client.get("/api/platform-login/meituan_pms").get_json()["hotel_identity"], {})
+            settings["pms"]["provider"] = "meituan_rezen"
+            self.assertEqual(client.get("/api/platform-login/meituan_pms").get_json()["hotel_identity"],
+                             {"hotel_name": "新酒店", "org_id": "987654"})
             settings["pms"]["provider"] = "byh"
             self.assertEqual(client.get("/api/platform-login/meituan_pms").get_json()["hotel_identity"], {})
 

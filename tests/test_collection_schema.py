@@ -110,6 +110,10 @@ class CollectionSchemaTests(unittest.TestCase):
             ('meituan_pms', 'guest_report.py', {'jd02_guest_stay_detail'}),
             ('meituan_pms', 'classification_report.py', {'jl11_room_type_classification'}),
             ('meituan_pms', 'room_performance_report.py', {'jl01_room_type_performance_daily'}),
+            ('meituan_rezen', 'room_performance_report.py', {'jl01_room_type_performance_daily'}),
+            ('meituan_rezen', 'classification_report.py', {'jl11_room_type_classification'}),
+            ('meituan_rezen', 'revenue_report.py', {'rs01_room_revenue_daily'}),
+            ('meituan_rezen', 'daily_report.py', {'jy01_hotel_statistics_daily'}),
             ('meituan_pms', 'revenue_report.py', {'rs01_room_revenue_daily'}),
         ):
             with self.subTest(platform=platform):

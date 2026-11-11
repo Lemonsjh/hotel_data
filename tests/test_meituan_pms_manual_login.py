@@ -113,10 +113,13 @@ class MeituanPmsManualLoginTests(unittest.TestCase):
                     manual_login.save_verified_cookie(api, "bad-cookie", "hotel", identity)
             runner.save_json.assert_called_once()
             self.assertEqual(settings["meituan_pms"]["cookie"], "updated-cookie")
+            runner.active_pms_provider = lambda _: "meituan_rezen"
+            manual_login.save_verified_cookie(api, "dual-cookie", "hotel", None)
+            self.assertEqual(settings["meituan_pms"]["cookie"], "dual-cookie")
             runner.active_pms_provider = lambda _: "byh"
             with self.assertRaises(RuntimeError):
                 manual_login.save_verified_cookie(api, "bad-cookie", "hotel")
-            runner.save_json.assert_called_once()
+            self.assertEqual(runner.save_json.call_count, 2)
 
     def test_manual_flow_uses_passive_observation_and_visible_separate_profile(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:

@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 
 from .room_status import parse_room_types
 import config_transaction
+import pms_providers
 
 PLATFORM = "meituan_pms"
 ROOM_TYPES_PATH = "/hotelpms/api/v1/inventory/rooms/getRealTimeRoomCount"
@@ -55,7 +56,7 @@ def save_verified_cookie(api, cookie, hotel_id, identity=None):
             raise ValueError("当前酒店信息无效，未保存登录结果")
     with config_transaction.transaction(api.runner.CONFIG_PATH):
         settings = api.runner.load_settings()
-        if (api.runner.active_pms_provider(settings) != PLATFORM
+        if (not pms_providers.uses_meituan_pms_login(api.runner.active_pms_provider(settings))
                 or api.runner.internal_hotel_id(settings) != hotel_id):
             raise RuntimeError("当前酒店或 PMS 已切换，本次登录状态未保存，请重新打开助手")
         section = settings.setdefault(PLATFORM, {})

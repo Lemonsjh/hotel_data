@@ -408,7 +408,7 @@ class MultiRunTests(unittest.TestCase):
         one = Mock(return_value={"rows": [{"order_id": "A100"}]})
         limited = [account("foxhis"), account("foxhis1", reports="jl01")]
         self.assertEqual(self.run_report("jd01", one, limited, sync), 0)
-        self.assertEqual([row["order_id"] for row in sync.call_args.args[0]], ["foxhis:A100"])
+        self.assertEqual([row["order_id"] for row in sync.call_args.args[0]], ["A100"])
 
         def both(config, _day, _stamp, *, write=True):
             return {"rows": [{"order_id": "F26J090001", "hotel_name": "旧名称"}]}
@@ -417,7 +417,7 @@ class MultiRunTests(unittest.TestCase):
         self.run_report("jd01", both, [account("foxhis"), account("foxhis1")], sync)
         self.assertEqual(
             [row["order_id"] for row in sync.call_args.args[0]],
-            ["foxhis:F26J090001", "foxhis1:F26J090001"],
+            ["F26J090001", "F26J090001"],
         )
         self.assertTrue(all(row["hotel_name"] == "贵阳百灵" for row in sync.call_args.args[0]))
         one.reset_mock()
@@ -438,6 +438,30 @@ class MultiRunTests(unittest.TestCase):
         _rows, _config, start, end = sync.call_args.args
         self.assertEqual((start, end), (date(2026, 11, 1), date(2026, 12, 1)))
         self.assertTrue(all(row["hotel_name"] == "贵阳百灵" and row["snapshot_time"] == datetime(2026, 11, 9, 12, 0) for row in _rows))
+
+    def test_same_account_keeps_both_postings_until_the_full_key_matches(self):
+        day = date(2026, 11, 2)
+
+        def different_lines(config, _day, stamp, *, write=True):
+            payment = "1" if config.database == "foxhis" else "2"
+            return {"rows": [{"order_id": "F1", "business_date": day, "room_no": "101", "charge_subject": "房费",
+                              "source_payment_id": payment, "snapshot_time": stamp, "hotel_id": "old", "hotel_name": "旧名称"}]}
+
+        sync = Mock(return_value=2)
+        self.run_report("room_revenue", different_lines, [account("foxhis"), account("foxhis1")], sync)
+        rows = sync.call_args.args[0]
+        self.assertEqual([row["order_id"] for row in rows], ["F1", "F1"])
+        self.assertEqual([row["source_payment_id"] for row in rows], ["1", "2"])
+
+        def same_line(config, _day, stamp, *, write=True):
+            return {"rows": [{"order_id": "F1", "business_date": day, "room_no": "101", "charge_subject": "房费",
+                              "source_payment_id": "1", "snapshot_time": stamp, "hotel_id": "old", "hotel_name": "旧名称"}]}
+
+        sync = Mock(return_value=2)
+        self.run_report("room_revenue", same_line, [account("foxhis"), account("foxhis1")], sync)
+        rows = sync.call_args.args[0]
+        self.assertEqual([row["order_id"] for row in rows], ["F1", "F1"])
+        self.assertEqual([row["source_payment_id"] for row in rows], ["1", "foxhis1:1"])
 
     def test_jy01_and_jy03_write_the_recalculated_total_once(self):
         day = date(2026, 11, 8)

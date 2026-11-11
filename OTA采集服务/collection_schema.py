@@ -91,6 +91,16 @@ def required_tables(task, specs):
                        'performance_report.py': ['jl02'], 'booking_report.py': ['jd01'],
                        'classification_report.py': ['jl11'], 'room_performance_report.py': ['jl01'],
                        'revenue_report.py': ['rs01'], 'guest_report.py': ['jd02']}[script.name]
+        elif platform == 'rezen':
+            reports = ['forecast', 'room_status']
+        elif platform == 'meituan_rezen':
+            reports = {
+                'room_status.py': ['forecast', 'room_status'],
+                'daily_report.py': ['jy01'], 'monthly_report.py': ['jy03'],
+                'performance_report.py': ['jl02'], 'room_performance_report.py': ['jl01'],
+                'classification_report.py': ['jl11'], 'revenue_report.py': ['rs01'],
+                'booking_report.py': ['jd01'], 'guest_report.py': ['jd02'],
+            }[script.name]
         else:
             reports = [script.stem.removeprefix(platform + '_').removesuffix('_data')]
         for report in reports:

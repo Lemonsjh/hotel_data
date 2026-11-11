@@ -303,6 +303,20 @@ class UpdaterTests(unittest.TestCase):
         self.assertFalse(fmt.BROWSER_EXTENSION_FILES & content.keys())
         self.assertEqual(manifest["removed"], [])
 
+    def test_dual_and_rezen_sources_ship_with_the_session_library(self):
+        tracked = subprocess.check_output(
+            ["git", "ls-files", "-z", "--", "pms_dual", "rezen_pms"], cwd=ROOT).decode("utf-8").split("\0")
+        tracked = [name for name in tracked if name]
+        self.assertIn("pms_dual/room_status.py", tracked)
+        self.assertIn("rezen_pms/collector.py", tracked)
+        self.assertIn("rezen_pms/lib/Microsoft.Diagnostics.Runtime.dll", tracked)
+        self.assertIn("rezen_pms/lib/License-Stable.rtf", tracked)
+        for name in tracked:
+            self.assertEqual(fmt.allowed_path(name), name)
+        for name in ("rezen_pms/RezenProcessSession.exe", "huiyun_pms/ClientHost.exe", "pms_dual/config/settings.json"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                fmt.allowed_path(name)
+
     def test_publisher_includes_only_tracked_program_files(self):
         required = ["mysql_connection.py", "ota_mysql_writer.py", "OTA采集服务/runner.py", "OTA采集服务/panel.py",
                     "meituan_pms/collector.py"]

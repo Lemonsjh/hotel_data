@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """RS01：当月已退房订单的房费科目流水；保留现有字段和跨月账务日期。
 
-order_id=foxhis:账号:流水号，避免多笔过账覆盖。--dry-run 不写 MySQL。
+order_id 是主单账号，流水号写入 source_payment_id。--dry-run 不写 MySQL。
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ INSERT_COLUMNS = [
     "room_type_name", "room_type_id", "guest_name", "customer_source", "checkin_time",
     "checkout_time", "rack_rate", "price_type", "room_daily_price", "stay_type",
     "charge_subject", "room_nights", "room_fee", "operator_name", "order_id",
-    "channel_unit_id", "snapshot_time",
+    "source_payment_id", "channel_unit_id", "snapshot_time",
 ]
 
 
@@ -124,9 +124,8 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
             raise FoxhisError(f"RS01 有效房费流水缺少可核验的房号或房型（账号：{folio}，流水：{line}）。")
         is_room_night = (record.get("charge_tail") or "").strip() == "01"
         nights = quantity if is_room_night else Decimal("0")
-        order_id = f"foxhis:{folio}:{line}"
-        if len(order_id) > 100:
-            raise FoxhisError("RS01 流水稳定键超过现有 order_id 长度。")
+        if len(folio) > 100 or len(line) > 100:
+            raise FoxhisError("RS01 账号或流水号超过字段长度。")
         rows.append({
             "hotel_name": config.hotel_name, "hotel_id": config.hotel_id, "source_platform": SOURCE_PLATFORM,
             "business_date": business_date, "room_no": room, "room_type_name": type_names.get(type_code),
@@ -138,7 +137,8 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
             "stay_type": "钟点房" if code == "1080" else None,
             "charge_subject": subject, "room_nights": rounded(nights), "room_fee": rounded(amount),
             "operator_name": (record.get("operator_name") or record.get("operator_code") or "").strip() or None,
-            "order_id": order_id, "channel_unit_id": None, "snapshot_time": snapshot_time.replace(microsecond=0),
+            "order_id": folio, "source_payment_id": line, "channel_unit_id": None,
+            "snapshot_time": snapshot_time.replace(microsecond=0),
         })
     return rows, {"source_rows": len(records), "unique_transactions": len(seen), "deduplicated_rows": duplicate_count,
                   "zero_placeholders_skipped": zero_count, "checkout_orders": len(orders),
@@ -166,15 +166,32 @@ def fetch_rows(config: Config, snapshot_time: datetime) -> tuple[list[dict], dic
     summary.update(checkout_start=start.isoformat(), checkout_end_exclusive=end.isoformat(),
                    room_fee_total=str(sum((row["room_fee"] for row in rows), Decimal("0"))),
                    room_nights_total=str(sum((row["room_nights"] for row in rows), Decimal("0"))),
-                   orders_with_room_charges=len({row["order_id"].rsplit(":", 1)[0] for row in rows}))
+                   orders_with_room_charges=len({row["order_id"] for row in rows}))
     return rows, summary
+
+
+def ensure_source_payment_id(cursor) -> None:
+    cursor.execute(f"SHOW COLUMNS FROM `{ROOM_REVENUE_TABLE}` WHERE `Field`=%s", ("source_payment_id",))
+    if cursor.fetchone():
+        return
+    cursor.execute(f"""
+        ALTER TABLE `{ROOM_REVENUE_TABLE}`
+        ADD COLUMN source_payment_id VARCHAR(100) NOT NULL DEFAULT '' COMMENT '来源流水 ID',
+        DROP INDEX uk_room_fee_daily,
+        ADD UNIQUE KEY uk_room_fee_daily
+            (hotel_id, order_id, business_date, room_no, charge_subject, source_payment_id)
+    """)
 
 
 def sync_rows(rows: list[dict], config: Config, start: date, end: date) -> int:
     if not rows or not config.hotel_id.strip():
         raise FoxhisError("RS01 无有效流水或酒店 ID 为空，保留已有数据。")
+    for row in rows:
+        row["source_payment_id"] = str(row.get("source_payment_id") or "")
     stamp = rows[0]["snapshot_time"]
-    if len({(row["hotel_id"], row["order_id"], row["business_date"], row["room_no"], row["charge_subject"]) for row in rows}) != len(rows):
+    stable = {(row["hotel_id"], row["order_id"], row["business_date"], row["room_no"], row["charge_subject"],
+               row["source_payment_id"]) for row in rows}
+    if len(stable) != len(rows):
         raise FoxhisError("RS01 输出稳定键重复。")
     if any(row["hotel_id"] != config.hotel_id or row["source_platform"] != SOURCE_PLATFORM or
            row["snapshot_time"] != stamp or not start <= row["checkout_time"].date() < end for row in rows):
@@ -182,6 +199,7 @@ def sync_rows(rows: list[dict], config: Config, start: date, end: date) -> int:
     connection = mysql_connection(config)
     try:
         with connection.cursor() as cursor:
+            ensure_source_payment_id(cursor)
             scope = (config.hotel_id, SOURCE_PLATFORM, start, end)
             condition = "hotel_id=%s AND source_platform=%s AND checkout_time >= %s AND checkout_time < %s"
             cursor.execute(f"SELECT snapshot_time FROM `{ROOM_REVENUE_TABLE}` WHERE {condition} FOR UPDATE", scope)

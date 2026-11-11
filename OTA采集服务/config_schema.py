@@ -108,6 +108,7 @@ SECRET_GROUPS = [
             ("ctrip.cookie", "携程 Cookie"),
             ("bypms.cookie", "宝寓 PMS Cookie"),
             ("meituan_pms.cookie", "美团 PMS Cookie"),
+            ("rezen.session_token", "Rezen 会话"),
         ],
     ),
     (
@@ -269,6 +270,25 @@ CONFIG_SECTIONS = [
         ],
     },
     {
+        "key": "rezen",
+        "title": "PMS（Rezen One）",
+        "hint": "读取本机已经登录的 Rezen One，不另开客户端。会话留空时从当前登录会话读取。只写入当天房态，房费取综合预测当天。",
+        "fields": [
+            ("rezen.hotel_name", "酒店名称", False, False),
+            ("rezen.session_token", "会话（留空则读取已登录客户端的酒店会话）", True, True),
+            ("rezen.base_url", "接口地址", False, True),
+            ("rezen.profile_dir", "客户端会话目录（留空自动查找）", False, True),
+            ("rezen.view_days", "综合预测查询天数（只入库当天）", False, True),
+            ("rezen.include_tax", "综合预测含税（1 含税，0 不含税）", False, True),
+        ],
+    },
+    {
+        "key": "meituan_rezen",
+        "title": "PMS（美团 + Rezen）",
+        "hint": "同一家酒店的两套 PMS 各管一部分客房。同名房型相加后写入一次，来源为 PMS（美团+Rezen）。一侧失败则本轮不写入。Rezen 是否连上，看 Rezen 卡片上的检查结果。",
+        "fields": [],
+    },
+    {
         "key": "foxhis",
         "title": "PMS（西软 Foxhis）",
         "hint": "数据库只读直连（Sybase）。多个业务库在内存里汇总后写入这一个酒店。房态随每轮刷新，日结经营报表夜审后每个业务库每天成功采集一次，失败会重试；与别样红 / 宝寓互斥启用。",
@@ -320,6 +340,7 @@ NUMBER_FIELDS = {
     "bypms.timeout_seconds",
     "foxhis.timeout_seconds",
     "foxhis.business_date_offset_days",
+    "rezen.view_days",
 }
 
 SHORT_SECRET_FIELDS = {"mysql.password", "pms.password", "foxhis.password"}

@@ -30,6 +30,12 @@ HUIYUN_DEFAULTS = {
     "enabled": False, "hotel_name": "",
     "client_path": "C:/CshisNetProgram/Main/MainShellApp.exe",
 }
+REZEN_DEFAULTS = {
+    "enabled": False, "hotel_name": "", "base_url": "https://one.rezen.tech",
+    "session_token": "", "profile_dir": "", "view_days": 15, "include_tax": "1",
+}
+DUAL_DEFAULTS = {"enabled": False}
+DUAL_PARTNERS = {"meituan_rezen": ("meituan_pms", "rezen")}
 
 
 def project_path(value: Any, default: str | Path = ".") -> Path:
@@ -153,6 +159,31 @@ PMS_PROVIDERS: dict[str, dict[str, Any]] = {
                     ("huiyun", "room_performance_report.py", []), ("huiyun", "classification_report.py", [])],
         "timeout_seconds": 300, "probe_action": "", "channel": "desktop",
     },
+    "rezen": {
+        "label": "Rezen One", "short_label": "Rezen",
+        "platform": "rezen", "config_key": "rezen", "card_key": "rezen", "badge": "REZEN",
+        "default_code_dir": "rezen_pms", "cwd_from_script": False,
+        "entry_script": "", "entry_args": [], "timeout_seconds": 180,
+        "scripts": [("rezen", "collector.py", [])],
+        "probe_action": "", "channel": "http",
+    },
+    "meituan_rezen": {
+        "label": "美团 PMS + Rezen", "short_label": "美团+Rezen",
+        "platform": "meituan_rezen", "config_key": "meituan_rezen",
+        "card_key": "meituan_rezen", "badge": "MEITUAN+REZEN",
+        "default_code_dir": "pms_dual", "cwd_from_script": False,
+        "entry_script": "", "entry_args": [], "timeout_seconds": 300,
+        "scripts": [("meituan_rezen", "room_status.py", []),
+                    ("meituan_rezen", "daily_report.py", []),
+                    ("meituan_rezen", "monthly_report.py", []),
+                    ("meituan_rezen", "performance_report.py", []),
+                    ("meituan_rezen", "room_performance_report.py", []),
+                    ("meituan_rezen", "classification_report.py", []),
+                    ("meituan_rezen", "revenue_report.py", []),
+                    ("meituan_rezen", "booking_report.py", []),
+                    ("meituan_rezen", "guest_report.py", [])],
+        "probe_action": "", "channel": "http",
+    },
 }
 
 
@@ -187,15 +218,27 @@ def normalize_provider(settings: dict[str, Any]) -> tuple[str, bool]:
     return DEFAULT_PROVIDER, True
 
 
+def enabled_provider_keys(selected: str) -> set[str]:
+    """美团 + Rezen 是同一家酒店的两侧，其余平台仍然只启用一个。"""
+    return {selected, *DUAL_PARTNERS.get(selected, ())}
+
+
+def uses_meituan_pms_login(provider: str) -> bool:
+    """美团 PMS 的 Edge 登录同时服务于单独的美团 PMS，以及美团 + Rezen。"""
+    return "meituan_pms" in enabled_provider_keys(provider)
+
+
 def enforce_exclusive_enable(settings: dict[str, Any], selected: str) -> bool:
-    """同一时刻只允许一个 PMS 平台启用（沿用改造前的互斥语义）。返回是否有变更。"""
+    """同一时刻只允许一个 PMS 平台启用；美团 + Rezen 同时保留两侧登录配置。返回是否有变更。"""
     changed = False
+    kept = enabled_provider_keys(selected)
     for key, spec in PMS_PROVIDERS.items():
         if key == selected:
             continue
         section = settings.setdefault(spec["config_key"], {})
-        if section.get("enabled"):
-            section["enabled"] = False
+        should = key in kept
+        if bool(section.get("enabled")) != should:
+            section["enabled"] = should
             changed = True
     return changed
 
@@ -340,6 +383,7 @@ def apply_provider_selection(settings: dict[str, Any], provider: str) -> bool:
     if provider not in PMS_PROVIDERS:
         return False
     settings.setdefault("pms", {})["provider"] = provider
+    kept = enabled_provider_keys(provider)
     for key, spec in PMS_PROVIDERS.items():
-        settings.setdefault(spec["config_key"], {})["enabled"] = key == provider
+        settings.setdefault(spec["config_key"], {})["enabled"] = key in kept
     return True

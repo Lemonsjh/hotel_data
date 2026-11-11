@@ -146,7 +146,9 @@ def load_settings() -> dict[str, Any]:
             bypms[name] = value
             changed = True
     for key, defaults in (("foxhis", pms_providers.FOXHIS_DEFAULTS),
-                          ("huiyun", pms_providers.HUIYUN_DEFAULTS)):
+                          ("huiyun", pms_providers.HUIYUN_DEFAULTS),
+                          ("rezen", pms_providers.REZEN_DEFAULTS),
+                          ("meituan_rezen", pms_providers.DUAL_DEFAULTS)):
         section = settings.setdefault(key, {})
         for name, value in defaults.items():
             if name not in section:
@@ -465,12 +467,21 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
     put_if(env, "BYPMS_PAYMENT_URL", bypms.get("payment_url"))
     put_if(env, "BYPMS_TIMEOUT_SECONDS", bypms.get("timeout_seconds"))
 
-    if platform == "meituan_pms":
+    if platform in {"meituan_pms", "meituan_rezen"}:
         config = settings.get("meituan_pms") or {}
         env["HOTEL_ID"] = internal_hotel_id(settings)
         env["MEITUAN_PMS_HOTEL_NAME"] = str(config.get("hotel_name") or "").strip()
         env["MEITUAN_PMS_ORG_ID"] = str(config.get("org_id") or "").strip()
         env["MEITUAN_PMS_COOKIE"] = str(config.get("cookie") or "").strip()
+    if platform in {"rezen", "meituan_rezen"}:
+        config = settings.get("rezen") or {}
+        env["HOTEL_ID"] = internal_hotel_id(settings)
+        env["REZEN_HOTEL_NAME"] = str(config.get("hotel_name") or "").strip()
+        env["REZEN_BASE_URL"] = str(config.get("base_url") or "https://one.rezen.tech").strip()
+        env["REZEN_SESSION"] = str(config.get("session_token") or "").strip()
+        env["REZEN_PROFILE_DIR"] = str(config.get("profile_dir") or "").strip()
+        env["REZEN_VIEW_DAYS"] = str(config.get("view_days") or 15)
+        env["REZEN_INCLUDE_TAX"] = str(config.get("include_tax") or "1").strip()
 
     # Foxhis X5：Sybase 直连（子进程调 isql），口令与 MySQL 一样纳入日志脱敏
     env["FOXHIS_HOTEL_NAME"] = str(foxhis.get("hotel_name") or "").strip()
@@ -687,7 +698,7 @@ def first_error_line(output: str) -> str:
 
 
 def enrich_room_type_ids(name: str, settings: dict[str, Any], log_path: Path) -> None:
-    if name == "pms_fetch" and active_pms_provider(settings) in {"meituan_pms", "huiyun"}:
+    if name == "pms_fetch" and active_pms_provider(settings) in {"meituan_pms", "huiyun", "rezen", "meituan_rezen"}:
         return  # 美团与慧云在各自写入器中精确映射，不触碰其他报表。
     try:
         product_message = ""
@@ -818,6 +829,8 @@ def config_warnings(settings: dict[str, Any]) -> list[str]:
         for key in ("cookie", "hotel_name", "org_id"):
             if not (settings.get("meituan_pms") or {}).get(key):
                 warnings.append(f"Meituan PMS {key} is empty; collection cannot run.")
+    if (settings.get("rezen") or {}).get("enabled", False) and not (settings.get("rezen") or {}).get("hotel_name"):
+        warnings.append("Rezen hotel_name is empty; collection cannot run.")
     if (settings.get("meituan") or {}).get("enabled", True) and not (settings.get("meituan") or {}).get("me_cookie"):
         warnings.append("MEITUAN_ME_COOKIE is empty; Meituan collection cannot run.")
     if (settings.get("ctrip") or {}).get("enabled", True) and not (settings.get("ctrip") or {}).get("cookie"):

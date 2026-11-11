@@ -169,6 +169,12 @@ class JD01Tests(unittest.TestCase):
             with self.assertRaises(FoxhisError):jd.collect(self.config,self.stamp.date(),self.stamp)
             sync.assert_not_called()
 
+    def test_same_order_id_is_written_as_separate_rows(self):
+        rows, _ = self.build(records=[self.order("A100", "R")], ledger=[], rates=[self.rate("A100")])
+        second = {**rows[0], "room_type_name": "另一房型"}
+        self.assertEqual(jd.sync_rows([rows[0], second], self.config), 2)
+        self.assertEqual(len(self.contents()), 2)
+
     def test_order_id_preserves_original_folio_without_prefix(self):
         folios = ("F26100012", "000123")
         rows, _ = self.build(records=[self.order(key, "R") for key in folios], ledger=[], rates=[])
