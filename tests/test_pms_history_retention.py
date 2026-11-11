@@ -34,15 +34,29 @@ class Database(fixtures.Database):
             "jd01_booking_detail": "hotel_id,order_id,room_type_name,booking_time"}
 
     def __init__(self, table, row):
+        if "source_payment_id" in row:
+            self.KEYS = {**self.KEYS, table: self.KEYS[table] + ",source_payment_id"}
         super().__init__(table, {**row, "created_at": None})
 
     def executemany(self, sql, rows):
+        if sql.lstrip().startswith("UPDATE"):
+            sql = re.sub(r"%\((\w+)\)s", r":\1", sql)
+            self.db.executemany(sql, [{key: self.value(value) for key, value in row.items()} for row in rows])
+            return
         if rows and not isinstance(rows[0], dict):
             columns = [name.strip(' `') for name in re.search(r"\(([^)]+)\)\s+VALUES", sql)[1].split(',')]
             keys = iter(columns)
             sql = re.sub(r"%s", lambda _: f"%({next(keys)})s", sql)
             rows = [dict(zip(columns, row)) for row in rows]
         super().executemany(sql, rows)
+
+    def execute(self, sql, params=()):
+        if sql.startswith("SHOW COLUMNS"):
+            sql = "SELECT name FROM pragma_table_info('rs01_room_revenue_daily') WHERE name=%s"
+        super().execute(sql, params)
+
+    def fetchone(self):
+        return self.result.fetchone()
 
     def fetchall(self):
         if self.query.startswith("SELECT snapshot_time"):
@@ -76,6 +90,8 @@ class PMSHistoryRetentionTests(unittest.TestCase):
             rows = [{**row, "source_platform": source, "room_type_id": None} for row in getattr(fixture, method)()]
             if index == 4:
                 rows = rows[:1]
+            if provider == "bypms" and index == 5:
+                rows = [{**row, "source_payment_id": row["order_id"]} for row in rows]
             module = by_modules[index] if provider == "bypms" else fx_modules[index]
             stamp = rows[0]["snapshot_time"]
             config = foxhis_common.Config(hotel_id="hotel", hotel_name=rows[0]["hotel_name"])
@@ -122,6 +138,21 @@ class PMSHistoryRetentionTests(unittest.TestCase):
         discriminator = next(key for key in ("order_id", "dimension_name", "pms_room_type_id", "room_type_name") if key in row)
         db.seed(table, {**base, "source_platform": "其他PMS", discriminator: "其他来源"})
         return column, expired
+
+    def test_bypms_rs01_preserves_multiple_payments_and_updates_legacy_row(self):
+        table, rows, _, _ = list(self.cases("bypms"))[-1]
+        first = {**rows[0], "order_id": "OTA-123", "source_payment_id": "10:1001"}
+        second = {**first, "source_payment_id": "10:1002", "room_fee": 25}
+        db = Database(table, first)
+        self.addCleanup(db.db.close)
+        db.seed(table, {**first, "order_id": "10:1001", "source_payment_id": ""})
+
+        target = by_revenue.load_target()
+        target.sync_mysql([first, second], db)
+        target.sync_mysql([first, second], db)
+
+        result = db.db.execute(f"SELECT order_id, source_payment_id FROM `{table}` ORDER BY source_payment_id")
+        self.assertEqual(result.fetchall(), [("OTA-123", "10:1001"), ("OTA-123", "10:1002")])
 
     def test_all_twelve_writers_delete_only_expired_own_scope_and_keep_boundaries(self):
         for provider in ("bypms", "foxhis"):

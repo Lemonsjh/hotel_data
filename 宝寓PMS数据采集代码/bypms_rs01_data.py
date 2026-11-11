@@ -64,8 +64,8 @@ def normalized(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
-def order_identifier(payment: dict[str, Any]) -> str:
-    """Keep the contract number and payment record distinct without adding a schema field."""
+def source_payment_id(payment: dict[str, Any]) -> str:
+    """Use the old order_id format to match and update existing payment rows."""
     contract_id = str(payment.get("contractId") or "").strip()
     payment_id = str(payment.get("id") or "").strip()
     return f"{contract_id}:{payment_id}" if contract_id and payment_id else contract_id or payment_id
@@ -161,12 +161,26 @@ def build_rows(
                 "room_nights": number(payment.get("amount")),
                 "room_fee": number(payment.get("priceFang")),
                 "operator_name": str(payment.get("emplName") or "").strip() or None,
-                "order_id": order_identifier(payment),
+                "order_id": str(payment.get("channelOrderId") or "").strip(),
+                "source_payment_id": source_payment_id(payment),
                 "channel_unit_id": str(payment.get("channelUnitId") or "").strip() or None,
                 "snapshot_time": snapshot_time,
             }
         )
     return rows
+
+
+def ensure_source_payment_id(cursor) -> None:
+    cursor.execute(f"SHOW COLUMNS FROM `{PAYMENT_TABLE_NAME}` WHERE `Field`=%s", ("source_payment_id",))
+    if cursor.fetchone():
+        return
+    cursor.execute(f"""
+        ALTER TABLE `{PAYMENT_TABLE_NAME}`
+        ADD COLUMN source_payment_id VARCHAR(100) NOT NULL DEFAULT '' COMMENT '来源流水 ID',
+        DROP INDEX uk_room_fee_daily,
+        ADD UNIQUE KEY uk_room_fee_daily
+            (hotel_id, order_id, business_date, room_no, charge_subject, source_payment_id)
+    """)
 
 
 def sync_mysql(rows: list[dict[str, Any]], connection=None) -> None:
@@ -179,12 +193,12 @@ def sync_mysql(rows: list[dict[str, Any]], connection=None) -> None:
             hotel_name, hotel_id, source_platform, business_date, room_no, room_type_name,
             guest_name, customer_source, checkin_time, checkout_time, rack_rate, price_type,
             room_daily_price, stay_type, charge_subject, room_nights, room_fee, operator_name,
-            order_id, channel_unit_id, snapshot_time
+            order_id, source_payment_id, channel_unit_id, snapshot_time
         ) VALUES (
             %(hotel_name)s, %(hotel_id)s, %(source_platform)s, %(business_date)s, %(room_no)s, %(room_type_name)s,
             %(guest_name)s, %(customer_source)s, %(checkin_time)s, %(checkout_time)s, %(rack_rate)s, %(price_type)s,
             %(room_daily_price)s, %(stay_type)s, %(charge_subject)s, %(room_nights)s, %(room_fee)s, %(operator_name)s,
-            %(order_id)s, %(channel_unit_id)s, %(snapshot_time)s
+            %(order_id)s, %(source_payment_id)s, %(channel_unit_id)s, %(snapshot_time)s
         ) ON DUPLICATE KEY UPDATE
             hotel_name=VALUES(hotel_name), source_platform=VALUES(source_platform), room_type_name=VALUES(room_type_name),
             guest_name=VALUES(guest_name), customer_source=VALUES(customer_source), checkin_time=VALUES(checkin_time),
@@ -195,6 +209,16 @@ def sync_mysql(rows: list[dict[str, Any]], connection=None) -> None:
     """
     try:
         with connection.cursor() as cursor:
+            ensure_source_payment_id(cursor)
+            cursor.executemany(f"""
+                UPDATE `{PAYMENT_TABLE_NAME}`
+                SET order_id=%(order_id)s, source_payment_id=%(source_payment_id)s
+                WHERE hotel_id=%(hotel_id)s AND source_platform=%(source_platform)s
+                    AND business_date=%(business_date)s AND room_no=%(room_no)s
+                    AND charge_subject=%(charge_subject)s
+                    AND ((source_payment_id='' AND order_id=%(source_payment_id)s)
+                         OR (source_payment_id=%(source_payment_id)s AND order_id<>%(order_id)s))
+            """, [row for row in rows if row["source_payment_id"]])
             cursor.executemany(sql, rows)
             cleanup_rows(cursor, PAYMENT_TABLE_NAME, rows, HOTEL_ID, SOURCE_PLATFORM)
         connection.commit()
