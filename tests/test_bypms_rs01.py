@@ -6,6 +6,7 @@ import sys
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from unittest.mock import Mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,7 @@ class BypmsRs01Tests(unittest.TestCase):
             {
                 "flowType": "I", "paymentType": "收房费", "occurTime": "2026-09-17 00:49:03",
                 "id": 1001, "roomId": 1, "channel": "Meituan", "channelUnitId": "goods-1", "contractId": 10,
+                "channelOrderId": "000123",
                 "amount": 1, "priceFang": 66.42, "priceNight": 92, "paymentChannel": "平台代收",
             },
             {
@@ -54,9 +56,25 @@ class BypmsRs01Tests(unittest.TestCase):
         self.assertEqual(rows[0]["room_type_name"], "渠道映射房型")
         self.assertEqual(rows[0]["room_fee"], 66.42)
         self.assertEqual(rows[0]["business_date"], date(2026, 9, 17))
-        self.assertEqual(rows[0]["order_id"], "10:1001")
+        self.assertEqual(rows[0]["order_id"], "000123")
+        self.assertEqual(rows[0]["source_payment_id"], "10:1001")
         self.assertEqual(rows[0]["channel_unit_id"], "goods-1")
         self.assertEqual(rows[1]["room_type_name"], "房态兜底房型2")
+        self.assertEqual(rows[1]["order_id"], "")
+
+    def test_source_payment_id_schema_upgrade(self):
+        target = load_target()
+        for column in (("source_payment_id",), None):
+            with self.subTest(column=column):
+                cursor = Mock()
+                cursor.fetchone.return_value = column
+                target.ensure_source_payment_id(cursor)
+                ddl = [call.args[0] for call in cursor.execute.call_args_list if "ALTER TABLE" in call.args[0]]
+                if column is None:
+                    self.assertEqual(len(ddl), 1)
+                    self.assertIn("ADD COLUMN source_payment_id", ddl[0])
+                else:
+                    self.assertEqual(ddl, [])
 
     def test_sync_writes_existing_rs01_table(self):
         target = load_target()
@@ -71,8 +89,11 @@ class BypmsRs01Tests(unittest.TestCase):
             def executemany(self, sql, _rows):
                 self.sql = sql
 
-            def execute(self, sql, args):
+            def execute(self, sql, args=None):
                 self.cleanup = (sql, args)
+
+            def fetchone(self):
+                return ("source_payment_id",)
 
         class Connection:
             def __init__(self):
@@ -89,7 +110,7 @@ class BypmsRs01Tests(unittest.TestCase):
 
         connection = Connection()
         target.sync_mysql([{"hotel_id": target.HOTEL_ID, "source_platform": target.SOURCE_PLATFORM,
-                            "snapshot_time": datetime(2026, 10, 29)}], connection)
+                            "snapshot_time": datetime(2026, 10, 29), "source_payment_id": "10:1001"}], connection)
         self.assertIn("rs01_room_revenue_daily", connection.cursor_instance.sql)
         self.assertIn("channel_unit_id", connection.cursor_instance.sql)
         self.assertIn("ON DUPLICATE KEY UPDATE", connection.cursor_instance.sql)
