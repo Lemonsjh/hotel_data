@@ -219,7 +219,10 @@ def merge_jy03(left: list[dict], right: list[dict], hotel_id: str, hotel_name: s
 
 
 def _parts(row: dict, period: str) -> tuple[Decimal, Decimal, Decimal, Decimal]:
-    """由已按美团口径算好的指标反推间夜、房费、可售和总房，供两侧相加。"""
+    """美团业绩接口没有房量，只在比率不是 0 时还原可售和总房。
+
+    比率为 0 时房量是未知的，不能当成 0。已经在 components 里留下房日的一侧不走这里。
+    """
     nights = _decimal(row["间夜数"][period])
     revenue = _decimal(row["总房费"][period])
     occupancy = _decimal(row["出租率"][period])
@@ -227,6 +230,27 @@ def _parts(row: dict, period: str) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     rentable = nights / (occupancy / 100) if occupancy else Decimal(0)
     rooms = revenue / revpar if revpar else Decimal(0)
     return nights, revenue, rentable, rooms
+
+
+def _component_parts(metric_rows: dict[str, dict], period: str):
+    """采集时留下的总房、可售、间夜和房费。没有这段记录才退回已发布比率。"""
+    for name in ("间夜数", "总房费", "出租率", "平均房价", "RevPar"):
+        row = metric_rows.get(name)
+        if not row:
+            continue
+        components = row.get("components")
+        if not isinstance(components, dict) or period not in components:
+            continue
+        nights, revenue, rentable, rooms = components[period]
+        return (_decimal(nights), _decimal(revenue), _decimal(rentable), _decimal(rooms))
+    return None
+
+
+def _side_parts(metric_rows: dict[str, dict], period: str, column: str):
+    stored = _component_parts(metric_rows, period)
+    if stored is not None:
+        return stored
+    return _parts({name: {column: row[column]} for name, row in metric_rows.items()}, column)
 
 
 def _metric_rows(parts: dict[str, tuple], hotel_id: str, hotel_name: str, day: date, snapshot: datetime) -> list[dict]:
@@ -294,7 +318,10 @@ def performance_from_daily(days: dict[date, dict], hotel_id: str, hotel_name: st
             "month": pack(business_date.replace(day=1), business_date),
             "year": pack(date(business_date.year, 1, 1), business_date),
         }
-        rows.extend(_metric_rows(parts, hotel_id, hotel_name, business_date, snapshot))
+        built = _metric_rows(parts, hotel_id, hotel_name, business_date, snapshot)
+        for row in built:
+            row["components"] = parts
+        rows.extend(built)
     return rows
 
 
@@ -324,8 +351,8 @@ def merge_jl02(left: list[dict], right: list[dict], hotel_id: str, hotel_name: s
             raise ValueError("经营业绩核心指标不完整，拒绝写入")
         parts = {}
         for period, column in (("day", "value_day"), ("month", "value_month"), ("year", "value_year")):
-            left_part = _parts({name: {column: row[column]} for name, row in one[day].items()}, column)
-            right_part = _parts({name: {column: row[column]} for name, row in other[day].items()}, column)
+            left_part = _side_parts(one[day], period, column)
+            right_part = _side_parts(other[day], period, column)
             parts[period] = tuple(left_item + right_item for left_item, right_item in zip(left_part, right_part))
         merged.extend(_metric_rows(parts, hotel_id, hotel_name, day, snapshot))
     return merged

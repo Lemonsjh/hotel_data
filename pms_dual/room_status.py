@@ -13,7 +13,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from meituan_pms.collector import collect as collect_meituan
 from pms_dual.merge import SOURCE, aliases_from_rows, merge_rows
-from pms_dual.state import remember
+from pms_dual.state import remember, remember_room_types
 from rezen_pms.collector import _tax, _view_days, collect as collect_rezen
 from rezen_pms.storage import sync_mysql
 
@@ -65,6 +65,10 @@ def run(clock=now_shanghai, aliases=None) -> dict[str, list]:
         view_days=_view_days(os.environ.get("REZEN_VIEW_DAYS", "")),
         include_tax=_tax(os.environ.get("REZEN_INCLUDE_TAX", "")))
     remember("rezen")
+    remember_room_types(
+        (row.get("room_type_name") for row in meituan),
+        (row.get("room_type_name") for row in rezen),
+    )
     try:
         mapping = load_aliases(hotel_id) if aliases is None else aliases
     except ValueError:

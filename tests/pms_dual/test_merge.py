@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -14,7 +15,7 @@ from rezen_pms.storage import sync_mysql
 
 from pms_dual.merge import aliases_from_rows, merge_rows
 from pms_dual.room_status import run
-from pms_dual.state import remember
+from pms_dual.state import remember, remember_room_types
 
 
 STAMP = datetime(2026, 11, 10, 10, 0, 0)
@@ -137,6 +138,24 @@ class MergeTests(unittest.TestCase):
         self.assertIn("meituan", text)
         self.assertNotIn("rezen", text)
         self.assertNotIn("溪眠", text)
+
+    def test_successful_collection_remembers_each_sides_original_names(self):
+        meituan = [row("标准大床房", "11", 2, "100")]
+        rezen = [row("雅致大床房", "FSSC", 1, "50")]
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("pms_dual.room_status.collect_meituan", return_value=meituan), \
+             patch("pms_dual.room_status.collect_rezen", return_value=rezen), \
+             patch.dict(os.environ, {"HOTEL_ID": "h1", "MEITUAN_PMS_HOTEL_NAME": "测试酒店",
+                                     "REZEN_HOTEL_NAME": "测试酒店"}, clear=False):
+            state = Path(folder) / "pms_dual.json"
+            with patch("pms_dual.room_status.remember", side_effect=lambda side: remember(side, path=state)), \
+                 patch("pms_dual.room_status.remember_room_types",
+                       side_effect=lambda left, right: remember_room_types(left, right, path=state)):
+                run(aliases={})
+            data = json.loads(state.read_text(encoding="utf-8"))
+        self.assertEqual(data["room_types"]["meituan"], ["标准大床房"])
+        self.assertEqual(data["room_types"]["rezen"], ["雅致大床房"])
+        self.assertNotIn(" / ", json.dumps(data["room_types"], ensure_ascii=False))
 
     def test_removing_one_room_type_changes_the_written_range(self):
         aliases = {("pms_meituan", "溪眠"): "U1", ("pms_rezen", "溪眠舒适"): "U1"}

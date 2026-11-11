@@ -122,6 +122,165 @@ class RoomMappingAliasTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertTrue(all("mapping_status='REJECTED'" in sql for sql, _ in calls))
 
+    def test_combined_provider_drops_joined_forecast_names(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            {"name": "标准大床房 / 雅致大床房"},
+            {"name": "标准大床房"},
+        ]
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value.__enter__.return_value = cursor
+        settings = {"pms": {"provider": "meituan_rezen"}, "hotel": {"hotel_id": "h1"}, "ctrip": {}}
+        with patch.object(self.store.price_tasks, "connection", return_value=connection), \
+             patch.object(self.store.runner, "internal_hotel_id", return_value="h1"):
+            _hotels, rooms, _meituan, _ctrip = self.store.room_options(settings)
+        self.assertEqual(rooms, ["标准大床房"])
+
+    def test_side_options_keep_original_names_and_skip_the_joined_label(self):
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            [
+                {"source_platform": "pms_meituan", "name": "标准大床房"},
+                {"source_platform": "pms_rezen", "name": "雅致大床房"},
+            ],
+            [
+                {"name": "标准大床房 / 雅致大床房", "raw_id": "U01"},
+                {"name": "未映射大床房", "raw_id": "mt:9"},
+                {"name": "观岚行政套房", "raw_id": "rz:GL"},
+                {"name": "同名大床房", "raw_id": "同名大床房"},
+            ],
+        ]
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value.__enter__.return_value = cursor
+        settings = {"pms": {"provider": "meituan_rezen"}, "hotel": {"hotel_id": "h1"}}
+        with patch.object(self.store, "_observed_room_types", return_value=(["山语亲子房"], ["雅致大床房"])), \
+             patch.object(self.store.price_tasks, "connection", return_value=connection):
+            meituan, rezen = self.store.side_room_options(settings)
+        self.assertEqual(meituan, ["同名大床房", "山语亲子房", "未映射大床房", "标准大床房"])
+        self.assertEqual(rezen, ["同名大床房", "观岚行政套房", "雅致大床房"])
+        self.assertIsNone(self.store.side_room_options({"pms": {"provider": "meituan_pms"}}))
+
+    def test_dual_save_writes_each_side_to_its_own_platform(self):
+        settings = {"pms": {"provider": "meituan_rezen"}}
+        data = {
+            "hotel_id": "h1", "pms_hotel_name": "测试酒店", "hotel_name": "测试酒店",
+            "ctrip_hotel_name": "", "room_type_id": "U01", "room_type_name": "大床房",
+            "pms_room_type_name": "", "meituan_room_type_name": "大床房", "ctrip_room_type_name": "",
+            "dual_pms_aliases": True,
+            "meituan_pms_room_type_names": ["标准大床房"],
+            "rezen_pms_room_type_names": ["雅致大床房"],
+        }
+        aliases = {platform: set() for platform in self.store.BASE_PLATFORMS}
+        cursor = self._cursor()
+        with patch.object(self.store.price_tasks, "connection", return_value=self._connection(cursor)), \
+             patch.object(self.store, "_collect_aliases", return_value=aliases), \
+             patch.object(self.store, "_assert_no_conflicts"), \
+             patch.object(self.store, "_replace_ota_base_rows"), \
+             patch.object(self.store, "_sync_product_rows"), \
+             patch.object(self.store, "_sync_pms_alias_rows") as sync:
+            change = self.store.save_group(settings, data, "h1", "U01")
+        self.assertEqual(
+            [call.args[4:] for call in sync.call_args_list],
+            [(["标准大床房"], self.store.PMS_MEITUAN_PLATFORM), (["雅致大床房"], self.store.PMS_REZEN_PLATFORM)],
+        )
+        self.assertEqual(change["aliases"][self.store.PMS_MEITUAN_PLATFORM], {"标准大床房"})
+        self.assertEqual(change["aliases"][self.store.PMS_REZEN_PLATFORM], {"雅致大床房"})
+
+    def test_joined_label_is_not_saved_as_one_alias(self):
+        data = {
+            "hotel_id": "h1", "pms_hotel_name": "测试酒店", "hotel_name": "测试酒店",
+            "room_type_id": "U01", "room_type_name": "大床房", "meituan_room_type_name": "大床房",
+            "ctrip_room_type_name": "", "dual_pms_aliases": True,
+            "meituan_pms_room_type_names": ["标准大床房 / 雅致大床房"],
+            "rezen_pms_room_type_names": [],
+        }
+        with self.assertRaisesRegex(ValueError, "合并后的名称"):
+            self.store.save_group({"pms": {"provider": "meituan_rezen"}}, data, "h1", "U01")
+
+    def test_clearing_one_side_does_not_build_an_empty_in_list(self):
+        cursor = self._cursor()
+        data = {"hotel_id": "h1", "room_type_id": "U01", "room_type_name": "大床房", "pms_hotel_name": "测试酒店"}
+        self.store._sync_pms_alias_rows(cursor, data, "h1", "U01", [], self.store.PMS_REZEN_PLATFORM)
+        self.assertTrue(any("REJECTED" in sql for sql, _params in cursor.calls))
+        self.assertFalse(any("NOT IN ()" in sql for sql, _params in cursor.calls))
+
+    def test_dual_form_edits_the_two_sources_separately(self):
+        import room_mappings
+
+        html = room_mappings._render_form(
+            {
+                "hotel_id": "h1", "room_type_id": "U01",
+                "meituan_pms_room_type_names": ["标准大床房"],
+                "rezen_pms_room_type_names": ["雅致大床房"],
+            },
+            ["标准大床房 / 雅致大床房"], [], [], True,
+            sides=(["标准大床房"], ["雅致大床房"]),
+        )
+        self.assertIn("name='meituan_pms_room_type_names'", html)
+        self.assertIn("name='rezen_pms_room_type_names'", html)
+        self.assertIn("value='标准大床房' selected", html)
+        self.assertIn("value='雅致大床房' selected", html)
+        self.assertNotIn("标准大床房 / 雅致大床房", html)
+        self.assertNotIn("name='pms_room_type_name'", html)
+        self.assertIn("美团 PMS：标准大床房", room_mappings._pms_alias_html(
+            {"pms_room_type_name": "标准大床房", "pms_side_label": "美团 PMS"}
+        ))
+
+    def test_combined_history_matches_either_pms_alias(self):
+        import room_type_enrichment
+
+        class SqlCursor:
+            rowcount = 0
+
+            def execute(self, sql, params=None):
+                self.sql = sql
+
+        cursor = SqlCursor()
+        room_type_enrichment._update_active_pms_alias(cursor, "rs01_room_revenue_daily", "")
+        self.assertIn("m.source_platform IN ('pms_meituan','pms_rezen')", cursor.sql)
+        self.assertIn("COUNT(DISTINCT d.room_type_id)", cursor.sql)
+        self.assertIn("t.`room_type_name`", cursor.sql)
+
+    def _cursor(self):
+        class Cursor:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, sql, params=None):
+                self.calls.append((sql, params))
+
+            def fetchall(self):
+                return []
+
+            def fetchone(self):
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        return Cursor()
+
+    def _connection(self, cursor):
+        class Connection:
+            def cursor(self):
+                return cursor
+
+            def commit(self):
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        return Connection()
+
 
 if __name__ == "__main__":
     unittest.main()

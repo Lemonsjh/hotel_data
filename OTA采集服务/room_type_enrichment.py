@@ -287,7 +287,15 @@ def _update_active_pms_alias(cur, table: str, hotel_id: str) -> int:
            (t.source_platform='PMS（宝寓）' AND m.source_platform='pms_bypms')
            OR (t.source_platform='PMS（Foxhis）' AND m.source_platform='pms_foxhis')
            OR (t.source_platform='PMS（美团）' AND m.source_platform='pms_meituan')
-           OR (t.source_platform='PMS（美团+Rezen）' AND m.source_platform='pms_meituan')
+           OR (t.source_platform='PMS（美团+Rezen）' AND m.source_platform IN ('pms_meituan','pms_rezen')
+               AND (
+                 SELECT COUNT(DISTINCT d.room_type_id)
+                 FROM hotel_room_type_mapping d
+                 WHERE d.is_active=1 AND d.source_product_id='' AND d.source_room_type_name<>''
+                   AND d.hotel_id=t.hotel_id
+                   AND BINARY d.source_room_type_name=BINARY t.`{name_column}`
+                   AND d.source_platform IN ('pms_meituan','pms_rezen')
+               ) = 1)
            OR (t.source_platform='PMS（慧云）' AND m.source_platform='pms_huiyun')
            OR (t.source_platform='PMS（Rezen）' AND m.source_platform='pms_rezen')
            OR (t.source_platform NOT IN ('PMS（宝寓）','PMS（Foxhis）','PMS（美团）','PMS（慧云）','PMS（Rezen）','PMS（美团+Rezen）') AND m.source_platform='pms_byh')

@@ -1,11 +1,12 @@
 """JL11 留空没有房日的比率，RS01 把同一科目加总后仍能对上房费。"""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import unittest
+from unittest.mock import patch
 
-from pms_dual.business import JL11_COLUMNS, RS01_COLUMNS
+from pms_dual.business import JL11_COLUMNS, RS01_COLUMNS, SOURCE
 from pms_dual.classification import merge_jl11, rezen_room_totals
-from pms_dual.store import TABLES, create_statement
+from pms_dual.store import PREVIOUS_MEITUAN, TABLES, create_statement, previous_meituan_rows, write_rs01
 from rezen_pms.room_fee import assigned_nights, collapse_revenue, nights_by_room_type, revenue_lines
 
 
@@ -137,3 +138,114 @@ class ClassificationTests(unittest.TestCase):
         self.assertIn("charge_subject", RS01_COLUMNS)
         self.assertIn("source_payment_id", RS01_COLUMNS)
         self.assertNotIn("trn_id", RS01_COLUMNS)
+
+
+def fee_row(stamp):
+    row = {column: "" for column in RS01_COLUMNS}
+    row.update({
+        "hotel_id": "h1", "hotel_name": "测试酒店", "source_platform": SOURCE,
+        "business_date": DAY, "order_id": "100", "room_no": "101", "charge_subject": "房费",
+        "snapshot_time": stamp, "room_nights": Decimal("1"), "room_fee": Decimal("100.00"),
+        "mapping_platform": "pms_meituan",
+    })
+    return row
+
+
+class Cursor:
+    def __init__(self, existing):
+        self.existing = existing
+        self.statements = []
+        self.last = ""
+
+    def execute(self, sql, params=None):
+        self.last = sql
+        self.statements.append((sql, params))
+
+    def executemany(self, sql, rows):
+        self.statements.append((sql, rows))
+
+    def fetchone(self):
+        return ("source_payment_id",)
+
+    def fetchall(self):
+        if "snapshot_time FROM `rs01_room_revenue_daily`" in self.last:
+            return self.existing
+        return []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class Connection:
+    def __init__(self, cursor):
+        self.cursor_obj = cursor
+        self.committed = 0
+        self.rolled_back = False
+
+    def cursor(self):
+        return self.cursor_obj
+
+    def commit(self):
+        self.committed += 1
+
+    def rollback(self):
+        self.rolled_back = True
+
+
+class RevenueSwitchTests(unittest.TestCase):
+    def test_previous_meituan_is_the_only_source_that_can_be_replaced(self):
+        self.assertTrue(previous_meituan_rows(
+            [(PREVIOUS_MEITUAN, STAMP)], STAMP, other_message="其他", newer_message="更新"))
+        self.assertFalse(previous_meituan_rows(
+            [(SOURCE, STAMP)], STAMP, other_message="其他", newer_message="更新"))
+        with self.assertRaisesRegex(ValueError, "其他"):
+            previous_meituan_rows([("PMS（宝寓）", STAMP)], STAMP, other_message="其他", newer_message="更新")
+        with self.assertRaisesRegex(ValueError, "更新"):
+            previous_meituan_rows(
+                [(PREVIOUS_MEITUAN, STAMP + timedelta(seconds=1))], STAMP,
+                other_message="其他", newer_message="更新")
+        with self.assertRaisesRegex(ValueError, "其他"):
+            previous_meituan_rows(
+                [(PREVIOUS_MEITUAN, STAMP), ("PMS（Foxhis）", STAMP)], STAMP,
+                other_message="其他", newer_message="更新")
+
+    def test_previous_meituan_revenue_in_the_window_is_replaced(self):
+        cursor = Cursor([{"source_platform": PREVIOUS_MEITUAN, "snapshot_time": STAMP}])
+        connection = Connection(cursor)
+        with patch("pms_dual.store._cleanup"):
+            write_rs01([fee_row(STAMP)], STAMP, initial=False, connection=connection)
+        replaced = [
+            params for sql, params in cursor.statements
+            if sql.startswith("DELETE") and params and params[1] == PREVIOUS_MEITUAN
+        ]
+        self.assertEqual(replaced, [("h1", PREVIOUS_MEITUAN, date(2026, 11, 1), DAY)])
+        self.assertFalse(connection.rolled_back)
+        self.assertGreaterEqual(connection.committed, 1)
+
+    def test_another_pms_still_blocks_the_revenue_window(self):
+        cursor = Cursor([{"source_platform": "PMS（宝寓）", "snapshot_time": STAMP}])
+        connection = Connection(cursor)
+        with patch("pms_dual.store._cleanup"), self.assertRaisesRegex(ValueError, "其他 PMS"):
+            write_rs01([fee_row(STAMP)], STAMP, initial=False, connection=connection)
+        self.assertFalse(any(sql.startswith("DELETE") for sql, _params in cursor.statements))
+        self.assertTrue(connection.rolled_back)
+
+    def test_a_newer_batch_still_blocks_the_revenue_window(self):
+        cursor = Cursor([{"source_platform": SOURCE, "snapshot_time": STAMP + timedelta(seconds=1)}])
+        connection = Connection(cursor)
+        with patch("pms_dual.store._cleanup"), self.assertRaisesRegex(ValueError, "更新批次"):
+            write_rs01([fee_row(STAMP)], STAMP, initial=False, connection=connection)
+        self.assertTrue(connection.rolled_back)
+
+    def test_empty_revenue_does_not_delete_history(self):
+        connection = Connection(Cursor([]))
+        write_rs01([], STAMP, initial=False, connection=connection)
+        self.assertEqual(connection.committed, 0)
+        self.assertEqual(cursor_statements(connection), [])
+
+
+def cursor_statements(connection):
+    return connection.cursor_obj.statements

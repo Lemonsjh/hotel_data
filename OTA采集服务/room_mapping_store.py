@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
 from typing import Any
 
 import pymysql
@@ -58,6 +61,14 @@ def active_pms_platform(settings: dict[str, Any]) -> str:
     return {"bypms": PMS_BYPMS_PLATFORM, "foxhis": PMS_FOXHIS_PLATFORM,
             "meituan_pms": PMS_MEITUAN_PLATFORM, "meituan_rezen": PMS_MEITUAN_PLATFORM,
             "rezen": PMS_REZEN_PLATFORM, "huiyun": PMS_HUIYUN_PLATFORM}.get(provider, PMS_BYH_PLATFORM)
+
+
+def pms_alias_platforms(settings: dict[str, Any]) -> tuple[str, ...]:
+    """双系统的原始房型分属两个来源。其它模式仍只有当前这一个平台。"""
+    provider = str((settings.get("pms") or {}).get("provider") or "").strip().lower()
+    if provider == "meituan_rezen":
+        return (PMS_MEITUAN_PLATFORM, PMS_REZEN_PLATFORM)
+    return (active_pms_platform(settings),)
 
 
 def defaults(settings: dict[str, Any]) -> dict[str, Any]:
@@ -198,12 +209,91 @@ def room_options(
             else ((source_label,) if source_label else pms_params)
         )
         forecast_params = pms_params if source_label else forecast_params
+        hotels = _query_names(cur, pms_hotel_sql, pms_params)
+        rooms = _query_names(cur, pms_room_sql, forecast_params)
+        if source_label == "PMS（美团+Rezen）":
+            rooms = [name for name in rooms if " / " not in name]
         return (
-            _query_names(cur, pms_hotel_sql, pms_params),
-            _query_names(cur, pms_room_sql, forecast_params),
+            hotels,
+            rooms,
             _query_names(cur, meituan_room_sql),
             _query_names(cur, ctrip_room_sql, (runner.internal_hotel_id(settings, "ctrip"),)),
         )
+
+
+def _dual_state_path() -> Path:
+    root = Path(os.environ.get("HOTEL_OTA_PROJECT_ROOT") or Path(__file__).resolve().parents[1])
+    return root / "OTA采集服务" / "state" / "pms_dual.json"
+
+
+def _observed_room_types() -> tuple[list[str], list[str]]:
+    try:
+        data = json.loads(_dual_state_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [], []
+    bucket = data.get("room_types") if isinstance(data, dict) else None
+    if not isinstance(bucket, dict):
+        return [], []
+
+    def names(side: str) -> list[str]:
+        raw = bucket.get(side)
+        if not isinstance(raw, list):
+            return []
+        return [str(item).strip() for item in raw if str(item).strip()]
+
+    return names("meituan"), names("rezen")
+
+
+def side_room_options(settings: dict[str, Any]) -> tuple[list[str], list[str]] | None:
+    """双系统下拉使用合并前的原始房型。合并后的「名称 / 名称」不能当作一个别名。"""
+    if pms_alias_platforms(settings) != (PMS_MEITUAN_PLATFORM, PMS_REZEN_PLATFORM):
+        return None
+    meituan, rezen = (set(names) for names in _observed_room_types())
+    known_meituan, known_rezen = set(meituan), set(rezen)
+    hotel_id = str((settings.get("hotel") or {}).get("hotel_id") or "").strip()
+    hotel_sql = " AND hotel_id=%s" if hotel_id else ""
+    hotel_params = (hotel_id,) if hotel_id else ()
+    with price_tasks.connection(settings) as conn, conn.cursor() as cur:
+        try:
+            cur.execute(
+                "SELECT source_platform, source_room_type_name AS name FROM hotel_room_type_mapping "
+                "WHERE source_product_id='' AND mapping_status<>'REJECTED' AND source_room_type_name<>'' "
+                "AND source_platform IN (%s,%s)" + hotel_sql,
+                (PMS_MEITUAN_PLATFORM, PMS_REZEN_PLATFORM, *hotel_params),
+            )
+            for row in cur.fetchall():
+                platform, name = str(row["source_platform"]), str(row["name"]).strip()
+                if not name:
+                    continue
+                if platform == PMS_MEITUAN_PLATFORM:
+                    meituan.add(name)
+                elif platform == PMS_REZEN_PLATFORM:
+                    rezen.add(name)
+        except pymysql.MySQLError:
+            pass
+        try:
+            cur.execute(
+                "SELECT DISTINCT room_type_name AS name, pms_room_type_id AS raw_id "
+                "FROM pms_room_type_forecast WHERE source_platform=%s "
+                "AND room_type_name IS NOT NULL AND TRIM(room_type_name)<>''" + hotel_sql,
+                ("PMS（美团+Rezen）", *hotel_params),
+            )
+            forecast_rows = list(cur.fetchall())
+        except pymysql.MySQLError:
+            forecast_rows = []
+    for row in forecast_rows:
+        name = str(row["name"]).strip()
+        raw_id = str(row.get("raw_id") or "")
+        if not name or " / " in name or name in known_meituan or name in known_rezen:
+            continue
+        if raw_id.startswith("mt:"):
+            meituan.add(name)
+        elif raw_id.startswith("rz:"):
+            rezen.add(name)
+        else:
+            meituan.add(name)
+            rezen.add(name)
+    return sorted(meituan), sorted(rezen)
 
 
 def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
@@ -245,6 +335,8 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
                 "room_type_name": row["room_type_name"],
                 "pms_room_type_name": "",
                 PMS_ALIASES_FIELD: set(),
+                "meituan_pms_room_type_names": set(),
+                "rezen_pms_room_type_names": set(),
                 "meituan_room_type_name": "",
                 "ctrip_room_type_name": "",
                 "is_active": 0,
@@ -268,7 +360,12 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
         if platform in PMS_PLATFORMS:
             group["pms_hotel_name"] = row["pms_hotel_name"]
             if row["source_room_type_name"]:
-                group[PMS_ALIASES_FIELD].add(str(row["source_room_type_name"]))
+                source_name = str(row["source_room_type_name"])
+                group[PMS_ALIASES_FIELD].add(source_name)
+                if platform == PMS_MEITUAN_PLATFORM:
+                    group["meituan_pms_room_type_names"].add(source_name)
+                elif platform == PMS_REZEN_PLATFORM:
+                    group["rezen_pms_room_type_names"].add(source_name)
         elif platform == MEITUAN_PLATFORM:
             group["hotel_name"] = row["ota_hotel_name"]
             group["meituan_room_type_name"] = row["source_room_type_name"]
@@ -284,6 +381,8 @@ def list_groups(settings: dict[str, Any]) -> list[dict[str, Any]]:
     for group in groups.values():
         aliases = sorted(group[PMS_ALIASES_FIELD])
         group[PMS_ALIASES_FIELD] = aliases
+        group["meituan_pms_room_type_names"] = sorted(group["meituan_pms_room_type_names"])
+        group["rezen_pms_room_type_names"] = sorted(group["rezen_pms_room_type_names"])
         group["pms_room_type_name"] = aliases[0] if aliases else ""
         result.append(group)
     return sorted(result, key=lambda item: item["updated_at"], reverse=True)
@@ -308,15 +407,18 @@ def list_pms_mapping_rows(settings: dict[str, Any]) -> list[dict[str, Any]]:
         (str(item["hotel_id"]), str(item["room_type_id"])): item
         for item in list_groups(settings)
     }
-    sql = """
-    SELECT hotel_id, room_type_id, source_room_type_name, is_active, updated_at
+    platforms = pms_alias_platforms(settings)
+    placeholders = ",".join(["%s"] * len(platforms))
+    labels = {PMS_MEITUAN_PLATFORM: "美团 PMS", PMS_REZEN_PLATFORM: "Rezen"}
+    sql = f"""
+    SELECT hotel_id, room_type_id, source_platform, source_room_type_name, is_active, updated_at
     FROM hotel_room_type_mapping
-    WHERE source_platform=%s AND source_product_id=''
+    WHERE source_platform IN ({placeholders}) AND source_product_id=''
       AND source_room_type_name<>'' AND mapping_status<>'REJECTED'
     ORDER BY updated_at DESC, id DESC
     """
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
-        cur.execute(sql, (active_pms_platform(settings),))
+        cur.execute(sql, platforms)
         aliases = cur.fetchall()
 
     rows = []
@@ -325,7 +427,9 @@ def list_pms_mapping_rows(settings: dict[str, Any]) -> list[dict[str, Any]]:
         if not group:
             continue
         row = dict(group)
+        row["source_platform"] = alias["source_platform"]
         row["pms_room_type_name"] = alias["source_room_type_name"]
+        row["pms_side_label"] = labels.get(str(alias["source_platform"]), "") if len(platforms) > 1 else ""
         row["is_active"] = int(alias["is_active"] or 0)
         row["updated_at"] = alias["updated_at"]
         rows.append(row)
@@ -559,6 +663,18 @@ def _sync_pms_alias_rows(
     for source_name in pms_names:
         _insert_pms_alias(cur, data, source_name, pms_platform)
 
+    if not pms_names:
+        cur.execute(
+            """
+            UPDATE hotel_room_type_mapping
+            SET mapping_status='REJECTED', is_active=0
+            WHERE hotel_id=%s AND room_type_id=%s
+              AND source_platform=%s AND source_product_id=''
+            """,
+            (data["hotel_id"], data["room_type_id"], pms_platform),
+        )
+        return
+
     placeholders = ",".join(["%s"] * len(pms_names))
     cur.execute(
         f"""
@@ -643,6 +759,87 @@ def _sync_product_rows(
     sync_ctrip_products(cur)
 
 
+def _save_dual_aliases(
+    settings: dict[str, Any],
+    data: dict[str, Any],
+    original_hotel_id: str,
+    original_id: str,
+) -> dict[str, Any]:
+    provider = str((settings.get("pms") or {}).get("provider") or "").strip().lower()
+    if provider != "meituan_rezen":
+        raise ValueError("只有美团 PMS + Rezen 可以分侧保存房型别名")
+    side_names = {
+        PMS_MEITUAN_PLATFORM: pms_room_type_names({PMS_ALIASES_FIELD: data.get("meituan_pms_room_type_names")}),
+        PMS_REZEN_PLATFORM: pms_room_type_names({PMS_ALIASES_FIELD: data.get("rezen_pms_room_type_names")}),
+    }
+    joined = [name for names in side_names.values() for name in names if " / " in name]
+    if joined:
+        raise ValueError("请分别选择两侧的原始房型，不要使用合并后的名称")
+    if not any(side_names.values()):
+        raise ValueError("至少选择一个 PMS 房型")
+
+    with price_tasks.connection(settings) as conn, conn.cursor() as cur:
+        old_hotel_id = original_hotel_id or data["hotel_id"]
+        lookup_id = original_id or data["room_type_id"]
+        old_aliases = _collect_aliases(cur, old_hotel_id, lookup_id, active_only=False)
+        if not original_id:
+            for platform in (PMS_MEITUAN_PLATFORM, PMS_REZEN_PLATFORM):
+                side_names[platform] = [
+                    name for name in _merge_pms_names(old_aliases[platform], side_names[platform])
+                    if " / " not in name
+                ]
+        if not any(side_names.values()):
+            raise ValueError("至少选择一个 PMS 房型")
+        data["pms_room_type_name"] = (side_names[PMS_MEITUAN_PLATFORM] or side_names[PMS_REZEN_PLATFORM])[0]
+        data[PMS_ALIASES_FIELD] = side_names[PMS_MEITUAN_PLATFORM] + [
+            name for name in side_names[PMS_REZEN_PLATFORM] if name not in side_names[PMS_MEITUAN_PLATFORM]
+        ]
+        for platform, names in side_names.items():
+            _assert_no_conflicts(cur, data, original_id, names, platform)
+
+        if original_id:
+            cur.execute(
+                """
+                UPDATE hotel_room_type_mapping
+                SET hotel_id=%s,room_type_id=%s,room_type_name=%s,
+                    pms_hotel_name=%s,pms_room_type_name=%s
+                WHERE hotel_id=%s AND room_type_id=%s AND source_product_id=''
+                  AND source_platform IN (%s,%s,%s,%s)
+                """,
+                (
+                    data["hotel_id"],
+                    data["room_type_id"],
+                    data["room_type_name"],
+                    data["pms_hotel_name"],
+                    data["pms_room_type_name"],
+                    original_hotel_id or data["hotel_id"],
+                    original_id,
+                    *OTA_BASE_LABELS,
+                ),
+            )
+
+        for platform, names in side_names.items():
+            _sync_pms_alias_rows(cur, data, original_hotel_id, original_id, names, platform)
+        _replace_ota_base_rows(cur, data, original_hotel_id, original_id)
+        _sync_product_rows(cur, data, original_hotel_id, original_id)
+        conn.commit()
+
+    new_aliases = {platform: set() for platform in BASE_PLATFORMS}
+    new_aliases[PMS_MEITUAN_PLATFORM] = set(side_names[PMS_MEITUAN_PLATFORM])
+    new_aliases[PMS_REZEN_PLATFORM] = set(side_names[PMS_REZEN_PLATFORM])
+    new_aliases[MEITUAN_PLATFORM] = {data["meituan_room_type_name"]} if data.get("meituan_room_type_name") else set()
+    new_aliases[CTRIP_PLATFORM] = {data["ctrip_room_type_name"]} if data.get("ctrip_room_type_name") else set()
+    return {
+        "hotel_ids": {old_hotel_id, data["hotel_id"]},
+        "room_type_ids": {value for value in (original_id, data["room_type_id"]) if value},
+        "aliases": {
+            platform: old_aliases[platform] | new_aliases[platform]
+            for platform in BASE_PLATFORMS
+        },
+        "target_hotel_id": data["hotel_id"],
+    }
+
+
 def save_group(
     settings: dict[str, Any],
     data: dict[str, Any],
@@ -650,6 +847,8 @@ def save_group(
     original_id: str,
 ) -> dict[str, Any]:
     data = dict(data)
+    if data.get("dual_pms_aliases"):
+        return _save_dual_aliases(settings, data, original_hotel_id, original_id)
     requested_pms_names = pms_room_type_names(data)
     if not requested_pms_names:
         raise ValueError("至少选择一个 PMS 房型")
@@ -718,9 +917,13 @@ def save_group(
 
 
 def set_pms_alias_active(
-    settings: dict[str, Any], hotel_id: str, room_type_id: str, pms_room_type_name: str, active: bool
+    settings: dict[str, Any], hotel_id: str, room_type_id: str, pms_room_type_name: str, active: bool,
+    source_platform: str = "",
 ) -> dict[str, Any] | None:
-    pms_platform = active_pms_platform(settings)
+    allowed = pms_alias_platforms(settings)
+    pms_platform = source_platform.strip() or allowed[0]
+    if pms_platform not in allowed:
+        raise ValueError("房型来源与当前 PMS 不一致")
     with price_tasks.connection(settings) as conn, conn.cursor() as cur:
         cur.execute(
             """

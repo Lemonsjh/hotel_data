@@ -24,6 +24,22 @@ TABLES = {
 }
 if SOURCE != MERGE_SOURCE:
     raise RuntimeError("汇总来源不一致")
+PREVIOUS_MEITUAN = "PMS（美团）"
+
+
+def previous_meituan_rows(existing, snapshot: datetime, *, other_message: str, newer_message: str) -> bool:
+    """窗口里只有原来的美团 PMS 时，由这次双系统汇总替换。其它来源和更新批次仍拒绝。"""
+    replace = False
+    for source, stamp in existing:
+        if stamp is not None and stamp > snapshot:
+            raise ValueError(newer_message)
+        if source == SOURCE:
+            continue
+        if source == PREVIOUS_MEITUAN:
+            replace = True
+            continue
+        raise ValueError(other_message)
+    return replace
 
 
 def create_statement(table: str) -> str:
@@ -199,13 +215,23 @@ def write_jl02(rows: list[dict], connection=None) -> None:
         with connection.cursor() as cur:
             dates = sorted(expected)
             marks = ", ".join(["%s"] * len(dates))
-            cur.execute(f"SELECT business_date, metric_name, source_platform FROM `jl02_hotel_performance_daily` "
+            cur.execute(f"SELECT business_date, metric_name, source_platform, snapshot_time FROM `jl02_hotel_performance_daily` "
                         f"WHERE hotel_id=%s AND category=%s AND business_date IN ({marks}) FOR UPDATE",
                         (first["hotel_id"], CATEGORY, *dates))
+            overlapping = []
             for existing in cur.fetchall():
-                day, name, source = _fields(existing, "business_date", "metric_name", "source_platform")
+                day, name, source, stamp = _fields(existing, "business_date", "metric_name", "source_platform", "snapshot_time")
                 if (day, name) in keys and source != SOURCE:
-                    raise ValueError("同指标的经营业绩属于其他 PMS，拒绝覆盖")
+                    overlapping.append((source, stamp, day, name))
+            if previous_meituan_rows(
+                [(source, stamp) for source, stamp, _day, _name in overlapping], first["snapshot_time"],
+                other_message="同指标的经营业绩属于其他 PMS，拒绝覆盖",
+                newer_message="经营业绩已有更新批次，拒绝旧快照覆盖",
+            ):
+                for _source, _stamp, day, name in overlapping:
+                    cur.execute("DELETE FROM `jl02_hotel_performance_daily` WHERE hotel_id=%s AND source_platform=%s "
+                                "AND category=%s AND business_date=%s AND metric_name=%s",
+                                (first["hotel_id"], PREVIOUS_MEITUAN, CATEGORY, day, name))
             if any(not CORE_METRICS <= {metric for row_day, metric in keys if row_day == day} for day in expected):
                 raise ValueError("经营业绩核心指标不完整，拒绝写入")
             _upsert(cur, "jl02_hotel_performance_daily", rows, JL02_COLUMNS,
@@ -244,12 +270,22 @@ def write_jl01(rows: list[dict], connection=None) -> None:
             cur.execute(f"SELECT business_date, room_type_name, source_platform, snapshot_time "
                         f"FROM `jl01_room_type_performance_daily` WHERE hotel_id=%s AND business_date IN ({marks}) "
                         f"FOR UPDATE", (first["hotel_id"], *dates))
+            overlapping = []
             for existing in cur.fetchall():
                 day, name, source, stamp = _fields(existing, "business_date", "room_type_name", "source_platform", "snapshot_time")
-                if (day, name) in keys and source != SOURCE:
-                    raise ValueError("同房型业绩属于其他 PMS，拒绝覆盖")
                 if source == SOURCE and stamp > first["snapshot_time"] and (day, name) in keys:
                     raise ValueError("房型业绩已有更新批次，拒绝旧快照覆盖")
+                if (day, name) in keys and source != SOURCE:
+                    overlapping.append((source, stamp, day, name))
+            if previous_meituan_rows(
+                [(source, stamp) for source, stamp, _day, _name in overlapping], first["snapshot_time"],
+                other_message="同房型业绩属于其他 PMS，拒绝覆盖",
+                newer_message="房型业绩已有更新批次，拒绝旧快照覆盖",
+            ):
+                for _source, _stamp, day, name in overlapping:
+                    cur.execute("DELETE FROM `jl01_room_type_performance_daily` WHERE hotel_id=%s AND source_platform=%s "
+                                "AND business_date=%s AND room_type_name=%s",
+                                (first["hotel_id"], PREVIOUS_MEITUAN, day, name))
             _upsert(cur, "jl01_room_type_performance_daily", rows, JL01_COLUMNS,
                     {"hotel_id", "business_date", "room_type_name"})
             _cleanup(cur, "jl01_room_type_performance_daily", first["hotel_id"], first["snapshot_time"])
@@ -281,6 +317,7 @@ def write_jl11(rows: list[dict], connection=None) -> None:
         with connection.cursor() as cur:
             cur.execute("SELECT snapshot_date, section, room_type_name, dimension_code, source_platform, snapshot_time "
                         "FROM `jl11_room_type_classification` WHERE hotel_id=%s FOR UPDATE", (first["hotel_id"],))
+            overlapping = []
             for existing in cur.fetchall():
                 day, section, name, dimension, source, stamp = _fields(
                     existing, "snapshot_date", "section", "room_type_name", "dimension_code", "source_platform", "snapshot_time")
@@ -288,7 +325,16 @@ def write_jl11(rows: list[dict], connection=None) -> None:
                     raise ValueError("房型分类已有更新批次，拒绝旧快照覆盖")
                 if (source != SOURCE and day == first["snapshot_date"] and section == "summary"
                         and name in names and dimension == ""):
-                    raise ValueError("同房型分类快照属于其他 PMS，拒绝覆盖")
+                    overlapping.append((source, stamp, name))
+            if previous_meituan_rows(
+                [(source, stamp) for source, stamp, _name in overlapping], first["snapshot_time"],
+                other_message="同房型分类快照属于其他 PMS，拒绝覆盖",
+                newer_message="房型分类已有更新批次，拒绝旧快照覆盖",
+            ):
+                for _source, _stamp, name in overlapping:
+                    cur.execute("DELETE FROM `jl11_room_type_classification` WHERE hotel_id=%s AND source_platform=%s "
+                                "AND snapshot_date=%s AND section='summary' AND room_type_name=%s AND dimension_code=''",
+                                (first["hotel_id"], PREVIOUS_MEITUAN, first["snapshot_date"], name))
             cur.execute("DELETE FROM `jl11_room_type_classification` WHERE hotel_id=%s AND source_platform=%s",
                         (first["hotel_id"], SOURCE))
             _insert(cur, "jl11_room_type_classification", rows, JL11_COLUMNS)
@@ -354,10 +400,15 @@ def write_rs01(rows: list[dict], snapshot: datetime, *, initial: bool, connectio
             cur.execute("SELECT source_platform, snapshot_time FROM `rs01_room_revenue_daily` WHERE hotel_id=%s "
                         "AND business_date BETWEEN %s AND %s FOR UPDATE",
                         (first["hotel_id"], windows[0][0], windows[-1][1]))
-            for existing in cur.fetchall():
-                source, stamp = _fields(existing, "source_platform", "snapshot_time")
-                if source != SOURCE or stamp > snapshot:
-                    raise ValueError("房费查询范围已有其他 PMS 或更新批次，拒绝覆盖")
+            existing_rows = [_fields(item, "source_platform", "snapshot_time") for item in cur.fetchall()]
+            if previous_meituan_rows(
+                existing_rows, snapshot,
+                other_message="房费查询范围已有其他 PMS，拒绝覆盖",
+                newer_message="房费查询范围已有更新批次，拒绝覆盖",
+            ):
+                cur.execute("DELETE FROM `rs01_room_revenue_daily` WHERE hotel_id=%s AND source_platform=%s "
+                            "AND business_date BETWEEN %s AND %s",
+                            (first["hotel_id"], PREVIOUS_MEITUAN, windows[0][0], windows[-1][1]))
             _attach_room_types(cur, rows)
             # 以前为了躲开唯一键写成 mt:/rz: 的单号，下次写入时从本次查询窗口里清掉，避免和新的原单号叠成两份房费。
             cur.execute(

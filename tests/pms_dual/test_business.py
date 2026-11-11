@@ -96,6 +96,24 @@ class BusinessMergeTest(unittest.TestCase):
         self.assertEqual(by_name["平均房价"]["value_day"], Decimal("100.0000"))
         self.assertEqual(by_name["RevPar"]["value_day"], Decimal("37.5000"))
 
+    def test_zero_revenue_keeps_collected_room_days(self):
+        days = performance_dates(STAMP.date())
+        inventory = {date(2026, 11, 10): {"nights": 0, "revenue": 0, "rentable": 10, "room_count": 10}}
+        rezen = performance_from_daily(inventory, "h1", "测试酒店", STAMP, zero_before=date(2026, 11, 10))
+        stored = next(row for row in rezen if row["business_date"] == date(2026, 11, 10))
+        self.assertEqual(stored["components"]["day"], (Decimal(0), Decimal(0), Decimal(10), Decimal(10)))
+        meituan = []
+        for day in days:
+            meituan.extend(jl02(day, "1", "100", "50", "100", "50"))
+        merged = merge_jl02(meituan, rezen, "h1", "测试酒店", STAMP)
+        by_name = {row["metric_name"]: row for row in merged if row["business_date"] == date(2026, 11, 10)}
+        self.assertEqual(by_name["间夜数"]["value_day"], Decimal("1.0000"))
+        self.assertEqual(by_name["总房费"]["value_day"], Decimal("100.0000"))
+        self.assertEqual(by_name["RevPar"]["value_day"], Decimal("8.3333"))
+        self.assertEqual(by_name["出租率"]["value_day"], Decimal("8.3333"))
+        self.assertEqual(by_name["平均房价"]["value_day"], Decimal("100.0000"))
+        self.assertNotIn("components", merged[0])
+
     def test_rezen_performance_requires_every_day_in_the_period(self):
         start, end = date(2025, 1, 1), date(2026, 11, 10)
         days = {}
