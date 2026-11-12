@@ -19,6 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
 from collector import BASE_URL, now_shanghai, request_json
 from room_status import metric
 from meituan_pms.retention import cleanup_history
+from meituan_pms.takeover import takeover_date
 
 REPORT_URL = BASE_URL + "/hotelpms/api/v1/report/jy01"
 TABLE = "jl02_hotel_performance_daily"
@@ -31,12 +32,13 @@ def same_day_last_year(day):
     return day.replace(year=day.year - 1, day=min(day.day, monthrange(day.year - 1, day.month)[1]))
 
 
-def collection_dates(today):
+def collection_dates(today, takeover=None):
     yesterday = today - timedelta(days=1)
     previous_end = today.replace(day=1) - timedelta(days=1)
     earlier_end = previous_end.replace(day=1) - timedelta(days=1)
-    return list(dict.fromkeys(day for latest in (yesterday, previous_end, earlier_end)
-                              for day in (latest, same_day_last_year(latest))))
+    return [day for day in dict.fromkeys(day for latest in (yesterday, previous_end, earlier_end)
+                                         for day in (latest, same_day_last_year(latest)))
+            if takeover is None or day >= takeover]
 
 
 def request_body(org_id, business_date):
@@ -101,7 +103,7 @@ def collect(cookie, hotel_id, hotel_name, org_id, *, session=None, clock=now_sha
     if not cookie.strip() or "\r" in cookie or "\n" in cookie:
         raise ValueError("请先手动登录美团 PMS")
     snapshot = clock()
-    dates = collection_dates(snapshot.date())
+    dates = collection_dates(snapshot.date(), takeover_date())
     bodies = [request_body(org_id, day) for day in dates]
     owns = session is None
     session = session or requests.Session()
@@ -120,12 +122,13 @@ def collect(cookie, hotel_id, hotel_name, org_id, *, session=None, clock=now_sha
             session.close()
 
 
-def sync_mysql(rows, connection=None):
+def sync_mysql(rows, connection=None, *, takeover=None):
     if not rows:
         raise ValueError("经营业绩日报为空，保留旧数据")
+    takeover = takeover if takeover is not None else takeover_date()
     first = rows[0]
     keys = {(row["business_date"], row["metric_name"]) for row in rows}
-    expected = set(collection_dates(first["snapshot_time"].date()))
+    expected = set(collection_dates(first["snapshot_time"].date(), takeover))
     if (len(keys) != len(rows) or {day for day, _ in keys} != expected
             or any(not CORE_METRICS <= {name for row_day, name in keys if row_day == day} for day in expected)
             or any(not row.get("hotel_id") or not row.get("hotel_name") or row.get("category") != CATEGORY
@@ -140,12 +143,17 @@ def sync_mysql(rows, connection=None):
         with connection.cursor() as cur:
             dates = sorted(expected)
             marks = ', '.join(['%s'] * len(dates))
-            cur.execute(f"SELECT business_date, metric_name, source_platform FROM `{TABLE}` "
-                        f"WHERE hotel_id=%s AND category=%s AND business_date IN ({marks}) FOR UPDATE",
-                        (first["hotel_id"], CATEGORY, *dates))
-            for day, name, source in cur.fetchall():
-                if (day, name) in keys and source != SOURCE:
-                    raise ValueError("同指标的经营业绩日报属于其他 PMS，拒绝覆盖")
+            if takeover:
+                # 接管起始日及之后由美团负责：清掉同窗口其他 PMS 的整日指标行，避免同日新旧来源并存。
+                cur.execute(f"DELETE FROM `{TABLE}` WHERE hotel_id=%s AND category=%s AND source_platform<>%s "
+                            f"AND business_date IN ({marks})", (first["hotel_id"], CATEGORY, SOURCE, *dates))
+            else:
+                cur.execute(f"SELECT business_date, metric_name, source_platform FROM `{TABLE}` "
+                            f"WHERE hotel_id=%s AND category=%s AND business_date IN ({marks}) FOR UPDATE",
+                            (first["hotel_id"], CATEGORY, *dates))
+                for day, name, source in cur.fetchall():
+                    if (day, name) in keys and source != SOURCE:
+                        raise ValueError("同指标的经营业绩日报属于其他 PMS，拒绝覆盖")
             columns = list(first)
             identity = {"hotel_id", "business_date", "category", "metric_name"}
             cur.executemany(f"INSERT INTO `{TABLE}` ({', '.join(columns)}) VALUES "

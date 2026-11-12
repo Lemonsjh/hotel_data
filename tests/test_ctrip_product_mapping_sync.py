@@ -20,13 +20,18 @@ def load_module():
 
 
 class Cursor:
-    def __init__(self):
+    def __init__(self, table_count=1):
         self.calls = []
         self.rowcount = 0
+        self.table_count = table_count
 
     def execute(self, sql, params):
         self.calls.append((sql, params))
-        self.rowcount += 1
+        if sql.strip().upper().startswith(("UPDATE", "INSERT", "DELETE")):
+            self.rowcount += 1
+
+    def fetchone(self):
+        return {"count": self.table_count}
 
 
 class CtripProductMappingSyncTests(unittest.TestCase):
@@ -40,14 +45,22 @@ class CtripProductMappingSyncTests(unittest.TestCase):
         result = self.module.sync_ctrip_products(cursor)
 
         self.assertEqual(result, {"updated": 1, "inserted_or_refreshed": 2, "deactivated": 3})
-        self.assertEqual(len(cursor.calls), 3)
-        insert_sql, insert_params = cursor.calls[1]
+        self.assertEqual(len(cursor.calls), 4)
+        insert_sql, insert_params = cursor.calls[2]
         self.assertIn("ctrip_ota_goods_price_mapping", insert_sql)
         self.assertIn("product_cipher", insert_sql)
         self.assertIn("price_editable_flag", insert_sql)
         self.assertIn("COALESCE(g.is_hour_room,0)", insert_sql)
         self.assertIn("'AUTO','ROOM_NAME'", insert_sql)
         self.assertEqual(insert_params, ("ctrip", "携程", "ctrip"))
+
+    def test_skip_when_product_table_missing(self):
+        cursor = Cursor(table_count=0)
+
+        result = self.module.sync_ctrip_products(cursor)
+
+        self.assertEqual(result, {"updated": 0, "inserted_or_refreshed": 0, "deactivated": 0})
+        self.assertEqual(len(cursor.calls), 1)
 
 
 if __name__ == "__main__":

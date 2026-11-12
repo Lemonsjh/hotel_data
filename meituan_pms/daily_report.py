@@ -17,6 +17,7 @@ if hasattr(sys.stdout, "reconfigure"):
 from collector import BASE_URL, now_shanghai, request_json
 from room_status import metric, room_count
 from meituan_pms.retention import cleanup_history
+from meituan_pms.takeover import takeover_date
 
 REPORT_URL = BASE_URL + "/hotelpms/api/v1/report/jy03"
 TABLE = "jy01_hotel_statistics_daily"
@@ -24,8 +25,9 @@ SOURCE = "PMS（美团）"
 RECENT_DAYS = 30
 
 
-def collection_dates(today):
-    return [today - timedelta(days=offset) for offset in range(RECENT_DAYS, 0, -1)]
+def collection_dates(today, takeover=None):
+    dates = [today - timedelta(days=offset) for offset in range(RECENT_DAYS, 0, -1)]
+    return [day for day in dates if takeover is None or day >= takeover]
 
 
 def request_body(org_id, dates):
@@ -77,9 +79,14 @@ def transform(response, org_id, dates, snapshot_time, hotel_id, hotel_name):
         if day in summaries:
             raise ValueError("日报同日总营业指标重复")
         summaries[day] = item
-    if summaries.keys() != expected.keys():
-        raise ValueError("日报总营业指标日期不完整，保留旧数据")
-    return [summary_row(summaries[day.isoformat()], day, snapshot_time, hotel_id, hotel_name) for day in dates]
+    # 平台可能只保留最近若干完整营业日（2026-11 起实测仅 7 天）。
+    # 只要返回的日期恰好是期望窗口的最近连续后缀，就采集可用天数；更早历史靠库中已有快照。
+    count = len(summaries)
+    suffix = {day.isoformat() for day in dates[len(dates) - count:]} if count else set()
+    if not count or summaries.keys() != suffix:
+        raise ValueError("日报总营业指标日期不是最近连续营业日，保留旧数据")
+    return [summary_row(summaries[day.isoformat()], day, snapshot_time, hotel_id, hotel_name)
+            for day in dates[len(dates) - count:]]
 
 
 def summary_row(item, business_date, snapshot_time, hotel_id, hotel_name):
@@ -105,7 +112,7 @@ def collect(cookie, hotel_id, hotel_name, org_id, *, session=None, clock=now_sha
     if not cookie.strip() or "\r" in cookie or "\n" in cookie:
         raise ValueError("请先手动登录美团 PMS")
     snapshot = clock()
-    dates = collection_dates(snapshot.date())
+    dates = collection_dates(snapshot.date(), takeover_date())
     body = request_body(org_id, dates)
     owns = session is None
     session = session or requests.Session()
@@ -119,16 +126,19 @@ def collect(cookie, hotel_id, hotel_name, org_id, *, session=None, clock=now_sha
             session.close()
 
 
-def sync_mysql(rows, connection=None):
+def sync_mysql(rows, connection=None, *, takeover=None):
     if not rows:
         raise ValueError("日报总营业指标为空")
+    takeover = takeover if takeover is not None else takeover_date()
     first = rows[0]
-    expected = set(collection_dates(first["snapshot_time"].date()))
-    if (len(rows) != RECENT_DAYS or {row["business_date"] for row in rows} != expected
+    all_days = collection_dates(first["snapshot_time"].date(), takeover)
+    dates = {row["business_date"] for row in rows}
+    expected = set(all_days[len(all_days) - len(dates):]) if dates else set()
+    if (not dates or len(rows) != len(dates) or dates != expected
             or any(row.get("source_platform") != SOURCE or not row.get("hotel_id") or not row.get("hotel_name")
                    or row.get("dimension_type") != "总营业指标" or row.get("dimension_name") != "总营业指标"
                    or any(row[key] != first[key] for key in ("hotel_id", "hotel_name", "snapshot_time")) for row in rows)):
-        raise ValueError("日报必须是同批酒店最近 30 个完整营业日的总营业指标")
+        raise ValueError("日报必须是同批酒店最近连续完整营业日的总营业指标")
     owns = connection is None
     if owns:
         from ota_mysql_writer import connect_mysql
@@ -143,6 +153,13 @@ def sync_mysql(rows, connection=None):
                 existing_id = existing.get("hotel_id") if isinstance(existing, dict) else existing[0]
                 if str(existing_id) != first["hotel_id"]:
                     raise ValueError("同名日报属于其他酒店，拒绝覆盖")
+            if takeover:
+                # 接管起始日及之后由美团负责：清掉同窗口其他 PMS 的日报整行，避免同一天新旧来源并存。
+                marks = ', '.join(['%s'] * len(expected))
+                cur.execute(f"DELETE FROM `{TABLE}` WHERE hotel_name=%s AND hotel_id=%s AND source_platform<>%s "
+                            f"AND business_date IN ({marks}) AND dimension_type=%s AND dimension_name=%s",
+                            (first["hotel_name"], first["hotel_id"], SOURCE, *sorted(expected),
+                             "总营业指标", "总营业指标"))
             columns = list(first)
             updates = [key for key in columns if key not in {"hotel_name", "source_platform", "business_date",
                                                             "dimension_type", "dimension_name", "hotel_id"}]

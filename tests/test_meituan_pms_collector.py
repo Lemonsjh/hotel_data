@@ -94,7 +94,7 @@ class MeituanPmsCollectorTests(unittest.TestCase):
         rows = self.collect()
         connection = MagicMock()
         cur = connection.cursor.return_value.__enter__.return_value
-        cur.fetchall.side_effect = [[], [], [("大床房", "unified")]]
+        cur.fetchall.side_effect = [[], [("大床房", "unified")]]
         storage.sync_mysql(rows, connection)
         self.assertEqual(cur.executemany.call_count, 2)
         connection.commit.assert_called_once()
@@ -108,7 +108,7 @@ class MeituanPmsCollectorTests(unittest.TestCase):
         for collision in (True, False):
             connection = MagicMock()
             cur = connection.cursor.return_value.__enter__.return_value
-            cur.fetchall.side_effect = [[("A", "PMS（别样红）")]] if collision else [[], [], []]
+            cur.fetchall.side_effect = [[("A", "PMS（别样红）")]] if collision else [[], []]
             if not collision:
                 cur.executemany.side_effect = [None, RuntimeError("insert failed")]
             with self.assertRaises((ValueError, RuntimeError)):

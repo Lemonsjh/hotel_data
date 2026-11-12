@@ -309,6 +309,24 @@ CONFIG_SECTIONS = [
         ],
     },
     {
+        "key": "yolo",
+        "title": "PMS（余乐通 E8HotelMis）",
+        "hint": "SQL Server 只读直连（酒店本机迷你 SQL2000，默认 8829 端口）。经营报表取余乐通自算的多维报表（夜审后每日生成一批，写入后不再变动），订单取入住单全状态；与别样红 / 宝寓 / 西软 / 美团 / 慧云互斥启用。",
+        "fields": [
+            ("yolo.hotel_name", "酒店名称", False, False),
+            ("yolo.username", "数据库账号（只读）", False, False),
+            ("yolo.password", "数据库密码", True, False),
+            ("yolo.server", "实例地址（host,port）", False, False),
+            ("yolo.database", "数据库名", False, False),
+            ("yolo.fetch_after", "采集时机（早于该时刻跳过，如 07:00）", False, False),
+            ("yolo.cli_path", "sqlcmd 路径", False, True),
+            ("yolo.code_dir", "代码目录", False, True),
+            ("yolo.charset", "字符集", False, True),
+            ("yolo.business_date_offset_days", "业务日偏移（天）", False, True),
+            ("yolo.timeout_seconds", "超时（秒）", False, True),
+        ],
+    },
+    {
         "key": "huiyun",
         "title": "PMS（慧云）",
         "hint": "",
@@ -340,6 +358,8 @@ NUMBER_FIELDS = {
     "bypms.timeout_seconds",
     "foxhis.timeout_seconds",
     "foxhis.business_date_offset_days",
+    "yolo.timeout_seconds",
+    "yolo.business_date_offset_days",
     "rezen.view_days",
 }
 

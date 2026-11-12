@@ -12,6 +12,11 @@ if str(FOX_CODE) not in sys.path:
     sys.path.insert(0, str(FOX_CODE))
 from foxhis_accounts import MAX_ACCOUNTS, OVERRIDE_FIELDS, apply_foxhis_accounts, display_slots
 
+YOLO_CODE = Path(__file__).resolve().parent.parent / "yolo_pms"
+if str(YOLO_CODE) not in sys.path:
+    sys.path.insert(0, str(YOLO_CODE))
+import yolo_probe  # noqa: E402
+
 from flask import Flask, jsonify, redirect, request, url_for
 
 from config_schema import (
@@ -307,6 +312,14 @@ def config_section(settings: dict[str, Any], section: dict[str, Any]) -> str:
             "<div class='config-actions'>"
             "<button type='submit' class='compact' formaction='/detect-foxhis'>从本机客户端自动读取</button>"
             "<button type='submit' class='secondary compact' name='deep' value='1' formaction='/detect-foxhis'>校验数据库连通性</button>"
+            "</div>"
+        )
+    elif section_key == "yolo":
+        # 余乐通同理：读 数据库设置.ini 得到实例地址与库名，账号密码需人工填写
+        actions = (
+            "<div class='config-actions'>"
+            "<button type='submit' class='compact' formaction='/detect-yolo'>自动识别客户端与库</button>"
+            "<button type='submit' class='secondary compact' name='deep' value='1' formaction='/detect-yolo'>校验数据库连通性</button>"
             "</div>"
         )
     elif section_key == "rezen":
@@ -737,6 +750,56 @@ def detect_foxhis():
     if result.get("warnings"):
         notice += "；提示：" + "；".join(result["warnings"])
     notice += "；数据库名不从客户端回填，账号和密码在各业务库中填写"
+    return redirect(url_for("config_page", notice=notice))
+
+
+@app.post("/detect-yolo")
+def detect_yolo():
+    """读取本机余乐通的 数据库设置.ini 回填连接参数，可选实跑一次只读查询。"""
+    settings = apply_form_to_settings(runner.load_settings())
+    deep = request.form.get("deep") == "1"
+    form = request.form
+    payload = {
+        "deep": deep,
+        "username": (form.get("yolo.username") or "").strip(),
+        "password": (form.get("yolo.password") or "").strip(),
+        "server": (form.get("yolo.server") or "").strip(),
+        "database": (form.get("yolo.database") or "").strip(),
+        "charset": (form.get("yolo.charset") or "").strip(),
+    }
+    try:
+        result = yolo_probe.probe(
+            cli_path=(form.get("yolo.cli_path") or "").strip(), **payload)
+    except TypeError:
+        # cli_path 是本机补丁加的入参；若 yolo_pms 被程序更新覆盖回旧签名，
+        # 退回不带该参数的调用，避免探测按钮直接报错。
+        result = yolo_probe.probe(**payload)
+    if not result.get("ok"):
+        reason = "；".join(result.get("warnings") or ["未探测到完整的连接参数"])
+        return redirect(url_for("config_page", error=f"余乐通自动探测失败：{reason}"))
+
+    fields = result["fields"]
+    mapping = {
+        "yolo.cli_path": "cli_path",
+        "yolo.server": "server",
+        "yolo.database": "database",
+        "yolo.charset": "charset",
+    }
+    filled: list[str] = []
+    for target, source in mapping.items():
+        value = str(fields.get(source) or "").strip()
+        if value:
+            set_path(settings, target, value)
+            filled.append(target.split(".", 1)[1])
+    runner.save_json(runner.CONFIG_PATH, settings)
+
+    notice = (f"已从本机余乐通客户端读取 {len(filled)} 项连接参数（{'、'.join(filled)}）"
+              "；数据库账号与密码为加密存储，需人工填写")
+    deep_result = (result.get("evidence") or {}).get("deep_check") or {}
+    if deep_result.get("verdict"):
+        notice += f"；{deep_result['verdict']}（房号 {deep_result.get('room_count')} 条）"
+    if result.get("warnings"):
+        notice += "；提示：" + "；".join(result["warnings"])
     return redirect(url_for("config_page", notice=notice))
 
 

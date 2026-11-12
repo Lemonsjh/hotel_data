@@ -18,12 +18,14 @@ PMS_FOXHIS_PLATFORM = "pms_foxhis"
 PMS_MEITUAN_PLATFORM = "pms_meituan"
 PMS_HUIYUN_PLATFORM = "pms_huiyun"
 PMS_REZEN_PLATFORM = "pms_rezen"
+PMS_YOLO_PLATFORM = "pms_yolo"
 PMS_PLATFORM = PMS_BYH_PLATFORM
 BYPMS_SOURCE_LABEL = "PMS（宝寓）"
 FOXHIS_SOURCE_LABEL = "PMS（Foxhis）"
+YOLO_SOURCE_LABEL = "PMS（余乐通）"
 MEITUAN_PLATFORM = "meituan"
 CTRIP_PLATFORM = "ctrip"
-PMS_PLATFORMS = (PMS_BYH_PLATFORM, PMS_BYPMS_PLATFORM, PMS_FOXHIS_PLATFORM, PMS_MEITUAN_PLATFORM, PMS_HUIYUN_PLATFORM, PMS_REZEN_PLATFORM)
+PMS_PLATFORMS = (PMS_BYH_PLATFORM, PMS_BYPMS_PLATFORM, PMS_FOXHIS_PLATFORM, PMS_MEITUAN_PLATFORM, PMS_HUIYUN_PLATFORM, PMS_REZEN_PLATFORM, PMS_YOLO_PLATFORM)
 BASE_PLATFORMS = (*PMS_PLATFORMS, MEITUAN_PLATFORM, CTRIP_PLATFORM)
 PRODUCT_PLATFORMS = {
     MEITUAN_PLATFORM: ("美团", "meituan"),
@@ -60,7 +62,8 @@ def active_pms_platform(settings: dict[str, Any]) -> str:
     provider = str((settings.get("pms") or {}).get("provider") or "byh").strip().lower()
     return {"bypms": PMS_BYPMS_PLATFORM, "foxhis": PMS_FOXHIS_PLATFORM,
             "meituan_pms": PMS_MEITUAN_PLATFORM, "meituan_rezen": PMS_MEITUAN_PLATFORM,
-            "rezen": PMS_REZEN_PLATFORM, "huiyun": PMS_HUIYUN_PLATFORM}.get(provider, PMS_BYH_PLATFORM)
+            "rezen": PMS_REZEN_PLATFORM, "huiyun": PMS_HUIYUN_PLATFORM,
+            "yolo": PMS_YOLO_PLATFORM}.get(provider, PMS_BYH_PLATFORM)
 
 
 def pms_alias_platforms(settings: dict[str, Any]) -> tuple[str, ...]:
@@ -74,7 +77,7 @@ def pms_alias_platforms(settings: dict[str, Any]) -> tuple[str, ...]:
 def defaults(settings: dict[str, Any]) -> dict[str, Any]:
     pms_key = {PMS_BYPMS_PLATFORM: "bypms", PMS_FOXHIS_PLATFORM: "foxhis",
                PMS_MEITUAN_PLATFORM: "meituan_pms", PMS_HUIYUN_PLATFORM: "huiyun",
-               PMS_REZEN_PLATFORM: "rezen"}.get(active_pms_platform(settings), "pms")
+               PMS_REZEN_PLATFORM: "rezen", PMS_YOLO_PLATFORM: "yolo"}.get(active_pms_platform(settings), "pms")
     return {
         "hotel_id": str(settings.get("hotel", {}).get("hotel_id", "")).strip(),
         "pms_hotel_name": str(settings.get(pms_key, {}).get("hotel_name", "")).strip(),
@@ -152,7 +155,8 @@ def forecast_source_label(settings: dict[str, Any]) -> str | None:
         return "PMS（美团+Rezen）"
     return {PMS_BYPMS_PLATFORM: BYPMS_SOURCE_LABEL, PMS_FOXHIS_PLATFORM: FOXHIS_SOURCE_LABEL,
             PMS_MEITUAN_PLATFORM: "PMS（美团）", PMS_HUIYUN_PLATFORM: "PMS（慧云）",
-            PMS_REZEN_PLATFORM: "PMS（Rezen）"}.get(active_pms_platform(settings))
+            PMS_REZEN_PLATFORM: "PMS（Rezen）",
+            PMS_YOLO_PLATFORM: YOLO_SOURCE_LABEL}.get(active_pms_platform(settings))
 
 
 def room_options(

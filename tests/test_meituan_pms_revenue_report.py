@@ -20,7 +20,7 @@ class Database:
         self.db = sqlite3.connect(":memory:")
         columns = ', '.join(f"`{key}` TEXT" for key in [*row, "room_type_id"])
         self.db.execute(f"CREATE TABLE {report.TABLE} ({columns}, "
-                        "PRIMARY KEY(hotel_id,order_id,business_date,room_no,charge_subject))")
+                        "PRIMARY KEY(hotel_id,order_id,business_date,room_no,charge_subject,source_payment_id))")
         self.db.execute("CREATE TABLE hotel_room_type_mapping (hotel_id TEXT,source_platform TEXT,is_active INT,"
                         "source_product_id TEXT,source_room_type_name TEXT,room_type_id TEXT)")
 
@@ -47,7 +47,7 @@ class Database:
 
     def executemany(self, sql, rows):
         sql = re.sub(r"%\((\w+)\)s", r":\1", sql)
-        sql = sql.replace("ON DUPLICATE KEY UPDATE", "ON CONFLICT(hotel_id,order_id,business_date,room_no,charge_subject) DO UPDATE SET")
+        sql = sql.replace("ON DUPLICATE KEY UPDATE", "ON CONFLICT(hotel_id,order_id,business_date,room_no,charge_subject,source_payment_id) DO UPDATE SET")
         sql = re.sub(r"VALUES\((\w+)\)", r"excluded.\1", sql)
         values = [{key: value.isoformat(sep=" ") if isinstance(value, datetime)
                    else value.isoformat() if isinstance(value, date)
@@ -154,6 +154,45 @@ class RevenueTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             report.transform(response, "123", self.start, self.end, self.now, "hotel", "酒店")
 
+    def test_single_row_keys_keep_empty_payment_id(self):
+        self.assertEqual([row["source_payment_id"] for row in self.rows()], ["", ""])
+
+    def test_reversal_rows_same_key_get_stable_fingerprints(self):
+        reversal = dict(self.item, roomFee="-110.10", remark="入住未改房价，冲账", operator="admin")
+        again = dict(self.item, roomFee="99.90", remark="入住未改房价", operator="admin")
+        items = self.items + [reversal, again]
+        rows = report.transform(self.payload(items=items), "123", self.start, self.end, self.now, "hotel", "测试酒店")
+        fee_rows = [row for row in rows if row["charge_subject"] == "夜审房费"]
+        self.assertEqual(len(fee_rows), 3)
+        self.assertEqual(len({row["source_payment_id"] for row in fee_rows}), 3)
+        self.assertTrue(all(len(row["source_payment_id"]) == 40 for row in fee_rows))
+        repeat = report.transform(self.payload(items=copy.deepcopy(items)), "123", self.start, self.end,
+                                  self.now, "hotel", "测试酒店")
+        self.assertEqual([row["source_payment_id"] for row in repeat if row["charge_subject"] == "夜审房费"],
+                         [row["source_payment_id"] for row in fee_rows])
+
+    def test_exact_duplicate_rows_still_rejected_even_inside_multi_key_group(self):
+        reversal = dict(self.item, roomFee="-110.10", operator="admin")
+        items = self.items + [reversal, dict(reversal)]
+        with self.assertRaisesRegex(ValueError, "唯一键重复"):
+            report.transform(self.payload(items=items), "123", self.start, self.end, self.now, "hotel", "测试酒店")
+
+    def test_multi_row_keys_replace_legacy_empty_id_rows(self):
+        reversal = dict(self.item, roomFee="-110.10", remark="入住未改房价，冲账", operator="admin")
+        items = self.items + [reversal]
+        rows = report.transform(self.payload(items=items), "123", self.start, self.end, self.now, "hotel", "测试酒店")
+        db = Database(rows[0])
+        self.addCleanup(db.db.close)
+        db.seed(dict(rows[0], room_fee=Decimal("150.50"), source_payment_id=""))
+        db.db.executemany("INSERT INTO hotel_room_type_mapping VALUES ('hotel','pms_meituan',1,'',?,?)",
+                          [("测试大床房", "ROOM-1")])
+        db.commit()
+        report.sync_mysql(rows, "hotel", self.now, initial=False, connection=db)
+        saved = db.db.execute(f"SELECT room_fee, source_payment_id FROM {report.TABLE} "
+                              "WHERE hotel_id='hotel' AND business_date='2026-10-27' AND charge_subject='夜审房费'").fetchall()
+        self.assertEqual(sorted(fee for fee, _ in saved), ["-110.10", "150.50"])
+        self.assertTrue(all(payment for _, payment in saved))
+
     def test_zero_and_negative_adjustments_are_native_values(self):
         self.item.update(roomFee="-150.50", roomNights="-1", actualPrice=None)
         self.items[1].update(roomFee="0", roomNights="0")
@@ -212,6 +251,34 @@ class RevenueTests(unittest.TestCase):
         empty = MagicMock()
         report.sync_mysql([], "hotel", self.now, initial=False, connection=empty)
         empty.cursor.assert_not_called()
+
+    def test_takeover_clamps_windows_to_start_date(self):
+        takeover = date(2026, 11, 5)
+        self.assertEqual(report.collection_windows(date(2026, 11, 12), True, takeover),
+                         [(takeover, date(2026, 11, 11))])
+        self.assertEqual(report.collection_windows(date(2026, 11, 12), False, takeover),
+                         [(takeover, date(2026, 11, 11))])
+        self.assertEqual(report.collection_windows(date(2026, 11, 12), True, date(2027, 1, 1)), [])
+
+    def test_takeover_replaces_other_pms_rows_inside_window(self):
+        takeover = date(2026, 11, 5)
+        now = datetime(2026, 11, 12, 10, 0)
+        rows = [{**row, "business_date": date(2026, 11, 6), "snapshot_time": now} for row in self.rows()]
+        db = self.database()
+        db.seed(dict(rows[0], source_platform="PMS（别样红）", room_no="999"))
+        db.commit()
+        report.sync_mysql(rows, "hotel", now, initial=False, connection=db, takeover=takeover)
+        remaining = db.db.execute(f"SELECT source_platform FROM {report.TABLE}").fetchall()
+        self.assertEqual({source for (source,) in remaining}, {report.SOURCE})
+        self.assertEqual(len(remaining), 2)
+
+    def test_takeover_after_window_rejects_rows_without_writing(self):
+        now = datetime(2026, 11, 12, 10, 0)
+        rows = [{**row, "business_date": date(2026, 11, 6), "snapshot_time": now} for row in self.rows()]
+        connection = MagicMock()
+        with self.assertRaises(ValueError):
+            report.sync_mysql(rows, "hotel", now, initial=False, connection=connection, takeover=date(2027, 1, 1))
+        connection.cursor.assert_not_called()
 
     def test_wrong_hotel_source_date_and_duplicate_batch_never_start_write(self):
         rows = self.rows()

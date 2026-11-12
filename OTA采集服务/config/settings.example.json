@@ -87,11 +87,26 @@
     "reports": "room_status,room_revenue,jl01,jy01,jy03,jl11,jd01",
     "timeout_seconds": 600
   },
+  "yolo": {
+    "enabled": false,
+    "hotel_name": "",
+    "username": "",
+    "password": "",
+    "code_dir": "yolo_pms",
+    "cli_path": "",
+    "server": "127.0.0.1,8829",
+    "database": "Yolo880_Hotel",
+    "charset": "cp936",
+    "fetch_after": "07:00",
+    "business_date_offset_days": 1,
+    "timeout_seconds": 300
+  },
   "meituan_pms": {
     "enabled": false,
     "hotel_name": "",
     "org_id": "",
-    "cookie": ""
+    "cookie": "",
+    "takeover_date": ""
   },
   "rezen": {
     "enabled": false,

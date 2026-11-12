@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import sys
@@ -18,6 +20,7 @@ from collector import BASE_URL, now_shanghai, request_json
 from booking_report import text, timestamp
 from room_status import metric, room_count
 from meituan_pms.retention import cleanup_history
+from meituan_pms.takeover import takeover_date
 
 REPORT_URL = BASE_URL + "/hotelpms/api/v1/report/cw04"
 TABLE = "rs01_room_revenue_daily"
@@ -44,11 +47,11 @@ def needs_initial_backfill(hotel_id, connection=None):
             connection.close()
 
 
-def collection_windows(today, initial):
+def collection_windows(today, initial, takeover=None):
     latest = today - timedelta(days=1)
     current = (latest.replace(day=1), latest)
     if not initial:
-        return [current]
+        return _clamp([current], takeover)
     windows, end = [], today.replace(day=1) - timedelta(days=1)
     for _ in range(BACKFILL_MONTHS):
         start = end.replace(day=1)
@@ -57,7 +60,14 @@ def collection_windows(today, initial):
     windows.reverse()
     if windows[-1] != current:
         windows.append(current)
-    return windows
+    return _clamp(windows, takeover)
+
+
+def _clamp(windows, takeover):
+    """接管起始日之前不采集、也不覆盖旧 PMS 历史；整段都在之前的窗口丢弃。"""
+    if takeover is None:
+        return windows
+    return [(max(start, takeover), end) for start, end in windows if end >= takeover]
 
 
 def request_body(org_id, start, end):
@@ -70,7 +80,18 @@ def request_body(org_id, start, end):
 
 
 def row_key(row):
+    return tuple(row[key] for key in ("order_id", "business_date", "room_no", "charge_subject", "source_payment_id"))
+
+
+def logical_key(row):
     return tuple(row[key] for key in ("order_id", "business_date", "room_no", "charge_subject"))
+
+
+def payment_fingerprint(item):
+    """CW04 无每行流水 ID；同键多行（如手工房费冲账）用稳定业务字段哈希区分，url 可能含令牌故排除。"""
+    payload = {key: item.get(key) for key in sorted(item) if key != "url"}
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
 def transform(response, org_id, start, end, snapshot, hotel_id, hotel_name):
@@ -88,7 +109,7 @@ def transform(response, org_id, start, end, snapshot, hotel_id, hotel_name):
     for key in ("total", "totalCount"):
         if key in data and room_count(data[key], key) != len(items):
             raise ValueError("RS01 房费列表不完整")
-    rows, seen = [], set()
+    rows, sources = [], []
     for item in items:
         if not isinstance(item, dict):
             raise ValueError("RS01 房费记录无效")
@@ -108,12 +129,25 @@ def transform(response, org_id, start, end, snapshot, hotel_id, hotel_name):
                "rack_rate": metric(item.get("marketPrice"), "marketPrice"), "price_type": text(item.get("roomRateType")),
                "room_daily_price": metric(item.get("actualPrice"), "actualPrice"), "stay_type": text(item.get("checkinType")),
                "charge_subject": subject, "room_nights": nights, "room_fee": fee,
-               "operator_name": text(item.get("operator")), "channel_unit_id": None, "snapshot_time": snapshot}
+               "operator_name": text(item.get("operator")), "channel_unit_id": None, "source_payment_id": "",
+               "snapshot_time": snapshot}
+        rows.append(row)
+        sources.append(item)
+    # 同一订单、同日、同房、同科目出现多行（如手工房费冲账）是合法账务流水，
+    # 只有这些键需要指纹区分；单行键保持空串，继续按原键覆盖更新。
+    groups = {}
+    for index, row in enumerate(rows):
+        groups.setdefault(logical_key(row), []).append(index)
+    for indices in groups.values():
+        if len(indices) > 1:
+            for index in indices:
+                rows[index]["source_payment_id"] = payment_fingerprint(sources[index])
+    seen = set()
+    for row in rows:
         key = row_key(row)
         if key in seen:
             raise ValueError("RS01 房费唯一键重复，拒绝丢失明细")
         seen.add(key)
-        rows.append(row)
     return rows
 
 
@@ -123,7 +157,7 @@ def collect(cookie, hotel_id, hotel_name, org_id, *, initial, snapshot=None, ses
     if not cookie.strip() or "\r" in cookie or "\n" in cookie:
         raise ValueError("请先手动登录美团 PMS")
     snapshot = snapshot or clock()
-    windows = collection_windows(snapshot.date(), initial)
+    windows = collection_windows(snapshot.date(), initial, takeover_date())
     bodies = [request_body(org_id, start, end) for start, end in windows]
     owns = session is None
     session = session or requests.Session()
@@ -144,8 +178,13 @@ def collect(cookie, hotel_id, hotel_name, org_id, *, initial, snapshot=None, ses
             session.close()
 
 
-def sync_mysql(rows, hotel_id, snapshot, *, initial, connection=None):
-    windows = collection_windows(snapshot.date(), initial)
+def sync_mysql(rows, hotel_id, snapshot, *, initial, connection=None, takeover=None):
+    takeover = takeover if takeover is not None else takeover_date()
+    windows = collection_windows(snapshot.date(), initial, takeover)
+    if not windows:
+        if rows:
+            raise ValueError("RS01 采集日期早于接管起始日，拒绝写入")
+        return
     if (not hotel_id or len({row_key(row) for row in rows}) != len(rows)
             or any(row.get("hotel_id") != hotel_id or row.get("source_platform") != SOURCE
                    or row.get("snapshot_time") != snapshot
@@ -160,8 +199,26 @@ def sync_mysql(rows, hotel_id, snapshot, *, initial, connection=None):
             cur.execute(f"SELECT source_platform, snapshot_time FROM `{TABLE}` WHERE hotel_id=%s "
                         "AND business_date BETWEEN %s AND %s FOR UPDATE", (hotel_id, windows[0][0], windows[-1][1]))
             for source, stamp in cur.fetchall():
-                if source != SOURCE or stamp > snapshot:
-                    raise ValueError("RS01 查询范围已有其他 PMS 或更新批次，拒绝覆盖")
+                if source == SOURCE:
+                    if stamp > snapshot:
+                        raise ValueError("RS01 查询范围已有更新批次，拒绝覆盖")
+                elif not takeover:
+                    raise ValueError("RS01 查询范围已有其他 PMS，拒绝覆盖")
+            if takeover:
+                # 接管起始日及之后由美团负责：只清掉美团本次实际写入日期的其他 PMS 房费，
+                # 避免旧来源与新来源同一天重复计费；美团没有数据的日期保留旧数据。
+                dates = sorted({row["business_date"] for row in rows})
+                marks = ', '.join(['%s'] * len(dates))
+                cur.execute(f"DELETE FROM `{TABLE}` WHERE hotel_id=%s AND source_platform<>%s "
+                            f"AND business_date IN ({marks})", (hotel_id, SOURCE, *dates))
+            # 同键多行（冲账流水）此前无法入库，可能残留按旧四列键写入的空 ID 行；写入指纹行前先清掉。
+            groups = {}
+            for row in rows:
+                groups.setdefault(logical_key(row), []).append(row)
+            for key in [key for key, group in groups.items() if len(group) > 1]:
+                cur.execute(f"DELETE FROM `{TABLE}` WHERE hotel_id=%s AND source_platform=%s AND source_payment_id='' "
+                            "AND order_id=%s AND business_date=%s AND room_no=%s AND charge_subject=%s",
+                            (hotel_id, SOURCE, *key))
             cur.execute("SELECT source_room_type_name, room_type_id FROM hotel_room_type_mapping "
                         "WHERE hotel_id=%s AND source_platform='pms_meituan' AND is_active=1 AND source_product_id=''",
                         (hotel_id,))

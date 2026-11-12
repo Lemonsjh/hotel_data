@@ -1,6 +1,7 @@
 """促销子项：在当前会话内读取接口及明确的页面状态，未知状态不落库。"""
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -27,6 +28,12 @@ AUTO_ORDER_URL = (
 )
 SCHEDULED_INVOICE_URL = "https://me.meituan.com/ebooking/merchant/ebIframe?iUrl=%2Febk%2Fhotel%2Fhotelinfo.html%23%2F"
 HIGHLIGHTS_EMPTY_TEXT = "当前酒店暂无特色亮点数据"
+# 2026-11 改版：酒店未获亮点功能时展示该文案，且前端不再自动调用 highlight/query
+HIGHLIGHTS_UNAVAILABLE_TEXT = "系统未识别到您的酒店具备特色亮点"
+HIGHLIGHTS_QUERY_PATH = "/gw/api/publish/eb/highlight/query"
+# 主动探测最多两次、间隔 3 秒：接口异常时不在轮询里反复请求
+HIGHLIGHTS_PROBE_RETRY_SECONDS = 3.0
+HIGHLIGHTS_PROBE_MAX_ATTEMPTS = 2
 INVOICE_CLOSED_TEXT = "当前门店暂未开通，快去开通预约发票吧"
 PAGE_CHECK_SECONDS = 10
 PAGE_ACTION_TIMEOUT_MS = 5_000
@@ -102,10 +109,45 @@ def fetch_business_travel_status() -> str:
         raise_unrecognized_status(page, BUSINESS_TRAVEL_NAME)
 
 
+def poi_query_matches(query: str) -> bool:
+    """接口带 poiId 时必须与当前酒店一致；未带该参数时不据此否决。"""
+    values = parse_qs(query).get("poiId")
+    return not values or values == [POI_ID]
+
+
 def highlight_query_status(payload: Any) -> str | None:
+    """亮点列表接口：code=0 且 data 为空表示尚未上传任何亮点。"""
     if not isinstance(payload, dict) or payload.get("code") != 0 or "data" not in payload:
         raise RuntimeError("酒店亮点接口返回异常，保留原值")
-    return "CLOSED" if payload["data"] is None else None
+    return "CLOSED" if payload["data"] in (None, [], {}) else None
+
+
+HIGHLIGHTS_PROBE_JS = """async poiId => {
+    const ids = encodeURIComponent(poiId);
+    try {
+        const response = await fetch(`/gw/api/publish/eb/highlight/query?poiId=${ids}`, {credentials: 'include'});
+        const body = (await response.text()).slice(0, 200000);
+        return {http: response.status, body};
+    } catch (error) {
+        return {http: -1, body: String(error)};
+    }
+}"""
+
+
+def probe_highlights_api(frame: Any) -> Any:
+    """在亮点页内主动请求列表接口。
+
+    2026-11 改版后前端不再自动调用 highlight/query，只能自己发请求；
+    接口本身仍可用，返回 data=null 即表示确实没有亮点。
+    """
+    raw = frame.evaluate(HIGHLIGHTS_PROBE_JS, POI_ID)
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        payload = json.loads(raw.get("body") or "")
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def fetch_hotel_highlights_status() -> str:
@@ -113,38 +155,75 @@ def fetch_hotel_highlights_status() -> str:
         raise RuntimeError("酒店亮点采集缺少酒店参数，请先识别酒店")
     require_backend_session(MEITUAN_HIGHLIGHTS_COOKIE, HIGHLIGHTS_NAME)
     with status_page(WORKBENCH_URL) as page:
-        responses = []
+        query_payloads: list = []
 
         def capture_highlights(response):
             url = urlparse(response.url)
-            if (url.scheme == "https" and url.hostname == "tdc.meituan.com"
-                    and url.path == "/gw/api/publish/eb/highlight/query"
-                    and parse_qs(url.query).get("poiId") == [POI_ID]):
-                try:
-                    payload = response.json() if response.status == 200 else {}
-                except ValueError:
-                    payload = {}
-                responses.append(payload)
+            if url.scheme != "https" or url.hostname != "tdc.meituan.com":
+                return
+            if url.path != HIGHLIGHTS_QUERY_PATH:
+                return
+            if not poi_query_matches(url.query):
+                return
+            try:
+                payload = response.json() if response.status == 200 else {}
+            except ValueError:
+                payload = {}
+            query_payloads.append(payload)
 
         page.on("response", capture_highlights)
         wait_for_workbench_wrapper(page)
         click_workbench_menu(page, "信息管理", HIGHLIGHTS_NAME)
-        for _ in range(PAGE_CHECK_SECONDS * 2):
-            if responses and (status := highlight_query_status(responses[-1])):
-                return status
+
+        probe_query: dict = {}
+        probe_attempts = 0
+        next_probe_at = 0.0
+
+        def probe_if_due() -> None:
+            nonlocal probe_query, probe_attempts, next_probe_at
+            now = time.monotonic()
+            if probe_attempts >= HIGHLIGHTS_PROBE_MAX_ATTEMPTS or now < next_probe_at:
+                return
+            probe_attempts += 1
+            next_probe_at = now + HIGHLIGHTS_PROBE_RETRY_SECONDS
             for frame in page.frames:
                 if urlparse(frame.url).hostname != "tdc.meituan.com":
                     continue
                 try:
-                    if HIGHLIGHTS_EMPTY_TEXT in frame.locator("body").inner_text(timeout=1_000):
-                        return "CLOSED"
-                    tags = [text.strip() for text in frame.locator(".list-card-item .top-tag").all_text_contents()]
-                    if "在线" in tags:
-                        return "OPEN"
-                    if tags and all(text in {"待提交", "待审核", "驳回"} for text in tags):
-                        return "CLOSED"
+                    query_payload = probe_highlights_api(frame)
                 except Exception:
                     continue
+                if query_payload.get("code") == 0:
+                    probe_query = query_payload
+                    return
+
+        for _ in range(PAGE_CHECK_SECONDS * 2):
+            probe_if_due()
+            tags: list[str] = []
+            unavailable = False
+            for frame in page.frames:
+                if urlparse(frame.url).hostname != "tdc.meituan.com":
+                    continue
+                try:
+                    body = "".join(frame.locator("body").inner_text(timeout=1_000).split())
+                    frame_tags = [text.strip() for text in frame.locator(".list-card-item .top-tag").all_text_contents()]
+                except Exception:
+                    continue
+                tags.extend(frame_tags)
+                if HIGHLIGHTS_UNAVAILABLE_TEXT in body or HIGHLIGHTS_EMPTY_TEXT in body:
+                    unavailable = True
+
+            # 页面上的「在线」卡片是最直接的已开通证据，先于接口判空
+            if "在线" in tags:
+                return "OPEN"
+            if probe_query.get("code") == 0 and (status := highlight_query_status(probe_query)):
+                return status
+            if unavailable:
+                return "CLOSED"
+            if tags and all(text in {"待提交", "待审核", "驳回"} for text in tags):
+                return "CLOSED"
+            if query_payloads and (status := highlight_query_status(query_payloads[-1])):
+                return status
             page.wait_for_timeout(500)
         raise_unrecognized_status(page, HIGHLIGHTS_NAME)
 

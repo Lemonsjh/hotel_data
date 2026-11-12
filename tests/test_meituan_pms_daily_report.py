@@ -119,6 +119,56 @@ class MeituanPmsDailyReportTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 report.transform(payload, "123", dates, self.now, "hotel", "酒店")
 
+    def test_recent_continuous_suffix_is_accepted_and_synced(self):
+        dates, payload = self.range_payload()
+        keep = 7
+        payload["data"]["data"]["summaryDetailList"] = payload["data"]["data"]["summaryDetailList"][-keep:]
+        rows = report.transform(payload, "123", dates, self.now, "hotel", "酒店")
+        self.assertEqual([row["business_date"] for row in rows], dates[-keep:])
+        connection = MagicMock()
+        cur = connection.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = [("hotel",)]
+        report.sync_mysql(rows, connection)
+        sql, batch = cur.executemany.call_args.args
+        self.assertEqual(len(batch), keep)
+        self.assertIn("INSERT INTO `jy01_hotel_statistics_daily`", sql)
+
+    def test_days_missing_from_recent_end_are_still_rejected(self):
+        dates, payload = self.range_payload()
+        items = payload["data"]["data"]["summaryDetailList"]
+        items.pop()  # 缺最近一个完整营业日不是连续后缀
+        with self.assertRaises(ValueError):
+            report.transform(payload, "123", dates, self.now, "hotel", "酒店")
+        head, tail = items[:7], items[-7:]
+        payload["data"]["data"]["summaryDetailList"] = head + tail  # 中间断档
+        with self.assertRaises(ValueError):
+            report.transform(payload, "123", dates, self.now, "hotel", "酒店")
+
+    def test_takeover_limits_window_and_clears_other_source_rows(self):
+        takeover = date(2026, 11, 5)
+        now = datetime(2026, 11, 12, 10, 0)
+        dates = report.collection_dates(now.date(), takeover)
+        self.assertEqual((len(dates), dates[0], dates[-1]), (7, takeover, date(2026, 11, 11)))
+        payload = copy.deepcopy(self.payload)
+        payload["data"]["variables"].update(startDate=dates[0].isoformat(), endDate=dates[-1].isoformat())
+        payload["data"]["data"]["summaryDetailList"] = [dict(self.summary, businessDate=day.isoformat()) for day in dates]
+        rows = report.transform(payload, "123", dates, now, "hotel", "酒店")
+        connection = MagicMock()
+        cur = connection.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = [("hotel",)]
+        report.sync_mysql(rows, connection, takeover=takeover)
+        sqls = [call.args[0] for call in cur.execute.call_args_list]
+        self.assertTrue(any(sql.startswith("DELETE FROM `jy01_hotel_statistics_daily`")
+                            and "source_platform<>%s" in sql for sql in sqls))
+        self.assertEqual(len(cur.executemany.call_args.args[1]), 7)
+
+    def test_invalid_takeover_date_stops_before_any_statement(self):
+        with patch.dict(os.environ, {"MEITUAN_PMS_TAKEOVER_DATE": "2026-13-01"}):
+            connection = MagicMock()
+            with self.assertRaises(ValueError):
+                report.sync_mysql(self.rows(), connection)
+            connection.cursor.assert_not_called()
+
     def test_missing_org_id_stops_before_network_and_env_is_independent(self):
         session = MagicMock()
         with self.assertRaises(ValueError):

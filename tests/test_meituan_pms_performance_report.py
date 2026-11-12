@@ -99,6 +99,20 @@ class MeituanPmsPerformanceTests(unittest.TestCase):
         self.assertEqual(cleanup.args[1][:2], ("hotel", report.SOURCE))
         connection.commit.assert_called_once()
 
+    def test_takeover_filters_representative_dates_and_clears_other_source(self):
+        takeover = date(2026, 11, 5)
+        now = datetime(2026, 11, 12, 10, 0)
+        self.assertEqual(report.collection_dates(now.date(), takeover), [date(2026, 11, 11)])
+        rows = [{**row, "business_date": date(2026, 11, 11), "snapshot_time": now} for row in self.rows()]
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        report.sync_mysql(rows, connection, takeover=takeover)
+        sqls = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertTrue(any(sql.startswith("DELETE FROM `jl02_hotel_performance_daily`")
+                            and "source_platform<>%s" in sql for sql in sqls))
+        cursor.executemany.assert_called_once()
+        connection.commit.assert_called_once()
+
     def test_other_pms_collision_and_write_failure_roll_back(self):
         for collision in (True, False):
             connection = MagicMock()

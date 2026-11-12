@@ -93,22 +93,13 @@ def _datalist_input(
     )
 
 
-def _multi(name: str, label: str, options: list[str], selected: Any) -> str:
+def _dual_side(name: str, label: str, options: list[str], selected: Any) -> str:
+    """双 PMS 分侧房型：使用与其它字段一致的下拉框，已关联的其它别名用隐藏域保留。"""
     chosen = [str(value).strip() for value in (selected or []) if str(value).strip()]
-    values = list(options)
-    for value in chosen:
-        if value not in values:
-            values.append(value)
-    chosen_set = set(chosen)
-    choices = []
-    for value in values:
-        selected_attr = " selected" if value in chosen_set else ""
-        choices.append(f"<option value='{esc(value)}'{selected_attr}>{esc(value)}</option>")
-    return (
-        f"<div class='field'><label for='{esc(name)}'>{esc(label)}</label>"
-        f"<select id='{esc(name)}' name='{esc(name)}' multiple size='6'>{''.join(choices)}</select>"
-        f"<div class='muted'>可多选。留空表示这一侧不使用该统一房型。</div></div>"
+    preserved = "".join(
+        f"<input type='hidden' name='{esc(name)}' value='{esc(value)}'>" for value in chosen
     )
+    return preserved + _select(name, label, options, chosen[0] if chosen else "", False)
 
 
 def _render_form(
@@ -140,10 +131,12 @@ def _render_form(
         meituan_options, rezen_options = sides
         pms_fields = (
             "<input type='hidden' name='dual_pms_aliases' value='1'>"
-            + _multi("meituan_pms_room_type_names", "美团 PMS 房型", meituan_options, item.get("meituan_pms_room_type_names"))
-            + _multi("rezen_pms_room_type_names", "Rezen 房型", rezen_options, item.get("rezen_pms_room_type_names"))
+            + _dual_side("meituan_pms_room_type_names", "美团 PMS 房型", meituan_options,
+                         item.get("meituan_pms_room_type_names"))
+            + _dual_side("rezen_pms_room_type_names", "Rezen 房型", rezen_options,
+                         item.get("rezen_pms_room_type_names"))
         )
-        hint = "美团 PMS 与 Rezen 的原始房型分开选择，可以对应同一个统一房型。合并后的名称不会出现在选项里。"
+        hint = "美团 PMS 与 Rezen 的原始房型分开选择，可以对应同一个统一房型；已关联的其它别名会保留。"
     return f"""
     <section class="panel">
       <div class="panel-heading">

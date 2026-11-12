@@ -7,8 +7,25 @@ MEITUAN_LABELS = ("美团", "meituan")
 CTRIP_LABELS = ("携程", "ctrip")
 
 
+def _table_exists(cur: Any, name: str) -> bool:
+    cur.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND TABLE_TYPE='BASE TABLE'
+        """,
+        (name,),
+    )
+    row = cur.fetchone()
+    if isinstance(row, dict):
+        return bool(row["count"])
+    return bool(row[0])
+
+
 def sync_meituan_products(cur: Any) -> dict[str, int]:
     """Refresh current Meituan product rows from the latest goods snapshot."""
+    if not _table_exists(cur, "meituan_ota_goods_price_mapping"):
+        return {"updated": 0, "inserted_or_refreshed": 0, "deactivated": 0}
     labels = MEITUAN_LABELS
     cur.execute(
         """
@@ -103,6 +120,8 @@ def sync_meituan_products(cur: Any) -> dict[str, int]:
 
 def sync_ctrip_products(cur: Any) -> dict[str, int]:
     """Refresh current Ctrip product rows from the latest goods snapshot."""
+    if not _table_exists(cur, "ctrip_ota_goods_price_mapping"):
+        return {"updated": 0, "inserted_or_refreshed": 0, "deactivated": 0}
     labels = CTRIP_LABELS
     cur.execute(
         """

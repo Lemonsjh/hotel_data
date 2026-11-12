@@ -30,6 +30,12 @@ HUIYUN_DEFAULTS = {
     "enabled": False, "hotel_name": "",
     "client_path": "C:/CshisNetProgram/Main/MainShellApp.exe",
 }
+YOLO_DEFAULTS = {
+    "enabled": False, "hotel_name": "", "username": "", "password": "",
+    "code_dir": "yolo_pms", "cli_path": "",
+    "server": "127.0.0.1,8829", "database": "Yolo880_Hotel", "charset": "cp936",
+    "fetch_after": "07:00", "business_date_offset_days": 1, "timeout_seconds": 300,
+}
 REZEN_DEFAULTS = {
     "enabled": False, "hotel_name": "", "base_url": "https://one.rezen.tech",
     "session_token": "", "profile_dir": "", "view_days": 15, "include_tax": "1",
@@ -134,6 +140,32 @@ PMS_PROVIDERS: dict[str, dict[str, Any]] = {
         # 配置页上的「从本机客户端自动读取」按钮
         "probe_action": "/detect-foxhis",
         "channel": "tds",
+    },
+    "yolo": {
+        "label": "余乐通 E8HotelMis",
+        "short_label": "余乐通",
+        "platform": "yolo",
+        "config_key": "yolo",
+        "card_key": "yolo",
+        "badge": "YOLO",
+        "default_code_dir": "yolo_pms",
+        "cwd_from_script": False,
+        # 与 foxhis 同理：多脚本平台入口必须留空，否则所有报表解析到同一个文件
+        "entry_script": "",
+        "entry_args": [],
+        "timeout_seconds": 300,
+        "scripts": [
+            ("yolo", "yolo_daily_report_data.py", []),
+            ("yolo", "yolo_jl11_data.py", []),
+            ("yolo", "yolo_room_status_data.py", []),
+            ("yolo", "yolo_jd01_data.py", []),
+            ("yolo", "yolo_rs01_data.py", []),
+            ("yolo", "yolo_jy03_data.py", []),
+            ("yolo", "yolo_jd02_data.py", []),
+        ],
+        # 配置页上的「探测本机 SQL Server 客户端」按钮
+        "probe_action": "/detect-yolo",
+        "channel": "sqlserver",
     },
     "meituan_pms": {
         "label": "美团 PMS", "short_label": "美团 PMS",

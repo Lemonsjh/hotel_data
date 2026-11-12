@@ -21,17 +21,16 @@ def sync_mysql(rows, connection=None):
         connection = connect_mysql()
     try:
         with connection.cursor() as cur:
-            # 现有唯一键不包含来源；提前拒绝覆盖切换 PMS 前的同 ID 快照。
-            for table, time_key in ((FORECAST, "stay_date"), (HOURLY, "snapshot_hour")):
-                cur.execute(f"SELECT pms_room_type_id, source_platform FROM `{table}` "
-                            f"WHERE hotel_id=%s AND `{time_key}`=%s FOR UPDATE",
-                            (first["hotel_id"], first[time_key]))
-                incoming = {row["pms_room_type_id"] for row in rows}
-                for existing in cur.fetchall():
-                    room_id, source = ((existing["pms_room_type_id"], existing["source_platform"])
-                                       if isinstance(existing, dict) else existing)
-                    if room_id in incoming and source != SOURCE:
-                        raise ValueError("同房型 ID 的快照属于其他 PMS，本轮拒绝覆盖")
+            # 小时快照是时间序列，只替换本来源同一小时；现有唯一键不含来源，先拒绝覆盖其他 PMS 的同 ID 快照。
+            cur.execute(f"SELECT pms_room_type_id, source_platform FROM `{HOURLY}` "
+                        f"WHERE hotel_id=%s AND snapshot_hour=%s FOR UPDATE",
+                        (first["hotel_id"], first["snapshot_hour"]))
+            incoming = {row["pms_room_type_id"] for row in rows}
+            for existing in cur.fetchall():
+                room_id, source = ((existing["pms_room_type_id"], existing["source_platform"])
+                                   if isinstance(existing, dict) else existing)
+                if room_id in incoming and source != SOURCE:
+                    raise ValueError("同房型 ID 的快照属于其他 PMS，本轮拒绝覆盖")
             cur.execute("SELECT source_room_type_name, MIN(room_type_id) AS room_type_id FROM hotel_room_type_mapping "
                         "WHERE hotel_id=%s AND source_platform='pms_meituan' AND is_active=1 "
                         "AND source_product_id='' GROUP BY source_room_type_name "
@@ -42,10 +41,13 @@ def sync_mysql(rows, connection=None):
                                  if isinstance(alias, dict) else alias)
                 aliases[name] = room_id
             records = [{**row, "room_type_id": aliases.get(row["room_type_name"])} for row in rows]
+            # 预测表是实时快照（原 PMS ETL 按酒店整体覆盖，见别样红 room_type_forecast_etl）：
+            # 只保留本轮快照，切换 PMS 前残留的旧来源行一并清除。
+            cur.execute(f"DELETE FROM `{FORECAST}` WHERE hotel_id=%s", (first["hotel_id"],))
             for table, time_key in ((FORECAST, None), (HOURLY, "snapshot_hour")):
-                where = f" AND `{time_key}`=%s" if time_key else ""
-                params = (first["hotel_id"], SOURCE, first[time_key]) if time_key else (first["hotel_id"], SOURCE)
-                cur.execute(f"DELETE FROM `{table}` WHERE hotel_id=%s AND source_platform=%s{where}", params)
+                if time_key:
+                    cur.execute(f"DELETE FROM `{HOURLY}` WHERE hotel_id=%s AND source_platform=%s "
+                                f"AND `{time_key}`=%s", (first["hotel_id"], SOURCE, first[time_key]))
                 columns = ["hotel_id", "hotel_name", "source_platform", "snapshot_time", "stay_date",
                            "room_type_name", "room_type_id", "pms_room_type_id", "total_rooms",
                            "available_rooms", "occupied_rooms", "overbooking_rooms"]

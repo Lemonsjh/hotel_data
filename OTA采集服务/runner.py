@@ -147,6 +147,7 @@ def load_settings() -> dict[str, Any]:
             changed = True
     for key, defaults in (("foxhis", pms_providers.FOXHIS_DEFAULTS),
                           ("huiyun", pms_providers.HUIYUN_DEFAULTS),
+                          ("yolo", pms_providers.YOLO_DEFAULTS),
                           ("rezen", pms_providers.REZEN_DEFAULTS),
                           ("meituan_rezen", pms_providers.DUAL_DEFAULTS)):
         section = settings.setdefault(key, {})
@@ -473,6 +474,7 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
         env["MEITUAN_PMS_HOTEL_NAME"] = str(config.get("hotel_name") or "").strip()
         env["MEITUAN_PMS_ORG_ID"] = str(config.get("org_id") or "").strip()
         env["MEITUAN_PMS_COOKIE"] = str(config.get("cookie") or "").strip()
+        env["MEITUAN_PMS_TAKEOVER_DATE"] = str(config.get("takeover_date") or "").strip()
     if platform in {"rezen", "meituan_rezen"}:
         config = settings.get("rezen") or {}
         env["HOTEL_ID"] = internal_hotel_id(settings)
@@ -511,6 +513,19 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
                 _apply_single_foxhis_account(env, foxhis_accounts[0])
         if len(foxhis_accounts) >= 2:
             env["FOXHIS_ACCOUNTS"] = json.dumps(foxhis_accounts, ensure_ascii=False)
+
+    # 余乐通 E8HotelMis：SQL Server 直连（子进程调 sqlcmd），口令与 Foxhis 一样纳入日志脱敏
+    yolo = settings.get("yolo") or {}
+    env["YOLO_HOTEL_NAME"] = str(yolo.get("hotel_name") or "").strip()
+    put_if(env, "YOLO_CLI_PATH", yolo.get("cli_path"))
+    put_if(env, "YOLO_SERVER", yolo.get("server"))
+    put_if(env, "YOLO_DATABASE", yolo.get("database"))
+    put_if(env, "YOLO_USERNAME", yolo.get("username"))
+    put_if(env, "YOLO_PASSWORD", yolo.get("password"))
+    put_if(env, "YOLO_CHARSET", yolo.get("charset"))
+    put_if(env, "YOLO_FETCH_AFTER", yolo.get("fetch_after"))
+    put_if(env, "YOLO_BUSINESS_DATE_OFFSET_DAYS", yolo.get("business_date_offset_days"))
+    put_if(env, "YOLO_TIMEOUT_SECONDS", yolo.get("timeout_seconds"))
 
     put_if(env, "MEITUAN_HOTEL_NAME", meituan.get("hotel_name"))
     put_if(env, "MEITUAN_POI_ID", meituan.get("poi_id"))
