@@ -172,7 +172,7 @@ HOURLY_COLUMNS = [
 
 
 def build_forecast_rows(room_rows: list[dict], snapshot_time: datetime) -> list[dict]:
-    """仅当天物理房态：空闲房扣除锁定/维修，不推算未来预订或收入。"""
+    """仅当天物理房态：空闲房扣除维修，锁定计入可售；不推算未来预订或收入。"""
     grouped: dict[str, dict] = {}
     room_numbers: set[str] = set()
     for room in room_rows:
@@ -194,8 +194,8 @@ def build_forecast_rows(room_rows: list[dict], snapshot_time: datetime) -> list[
         })
         row["total_rooms"] += 1
         row["occupied_rooms"] += int(occupy == "O")
-        blocked = locked == "L" or room["_raw_status"] in {"S", "O", "X", "OOO", "OOS"}
-        row["available_rooms"] += int(occupy == "V" and not blocked)
+        repair = room["_raw_status"] in {"O", "X", "OOO", "OOS"}
+        row["available_rooms"] += int(occupy == "V" and not repair)
     return [grouped[code] for code in sorted(grouped)]
 
 
@@ -306,7 +306,7 @@ def collect(config: Config, business_date: date, snapshot_time: datetime, *, wri
             "hourly_row_count": len(hourly_rows),
             "hourly_written": forecast_written,
             "hourly_rows": hourly_rows,
-            "inventory_basis": "当天实时物理房态；空闲房扣除锁定/维修，未扣未分房预订；超订未采集",
+            "inventory_basis": "当天实时物理房态；空闲房扣除维修，锁定计入可售，未扣未分房预订；超订未采集",
             "revenue_summary": revenue_summary,
         },
         config,

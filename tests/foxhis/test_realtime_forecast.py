@@ -104,10 +104,11 @@ class RealtimeForecastTests(unittest.TestCase):
     def contents(self):
         return self.db.db.execute("SELECT hotel_id,source_platform,stay_date,pms_room_type_id,total_rooms FROM pms_room_type_forecast ORDER BY hotel_id,stay_date,pms_room_type_id").fetchall()
 
-    def test_current_inventory_excludes_repair_and_locked_rooms(self):
+    def test_current_inventory_counts_locked_rooms_and_excludes_repairs(self):
         a, b = self.forecasts()
+        # 104 是空房但房态为维修，即使同时锁定也不计入可售。201 是锁定空房，计入可售。
         self.assertEqual((a["total_rooms"], a["available_rooms"], a["occupied_rooms"]), (4, 2, 1))
-        self.assertEqual((b["total_rooms"], b["available_rooms"], b["occupied_rooms"]), (1, 0, 0))
+        self.assertEqual((b["total_rooms"], b["available_rooms"], b["occupied_rooms"]), (1, 1, 0))
         self.assertEqual(a["stay_date"], self.stamp.date())
         for field in ("overbooking_rooms", "room_revenue", "adr", "revpar"):
             self.assertIsNone(a[field])
