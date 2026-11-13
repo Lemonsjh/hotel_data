@@ -662,7 +662,8 @@ def run_task(name: str, settings: dict[str, Any], status: dict[str, Any]) -> dic
                     cwd=str(script.parent if item_platform == "pms" else base_dir),
                     env=build_env(settings, item_platform),
                     timeout=(max(7200, task_timeout(settings, item_platform))
-                             if name == "ctrip_order_detail" else task_timeout(settings, item_platform)),
+                             if name in {"ctrip_order_detail", "meituan_order_detail"}
+                             else task_timeout(settings, item_platform)),
                     log_path=log_path,
                     append=index > 0,
                     transform=lambda line: sanitize(line, settings),

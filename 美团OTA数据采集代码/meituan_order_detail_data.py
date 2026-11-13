@@ -1,4 +1,4 @@
-"""美团近30天普通订单及会员等级采集。"""
+"""美团普通订单、入住人姓名及会员等级采集。"""
 from __future__ import annotations
 
 import argparse
@@ -11,20 +11,37 @@ from decimal import Decimal
 from pathlib import Path
 
 import requests
+from pymysql.err import ProgrammingError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from meituan_config import HOTEL_NAME, MEITUAN_EB_COOKIE, PARTNER_ID, POI_ID, USER_AGENT
-from ota_mysql_writer import OUTPUT_DIR, sync_order_detail_history
+from ota_mysql_writer import OUTPUT_DIR, connect_mysql, sync_order_detail_history
 
 API_URL = "https://eb.meituan.com/api/v1/ebooking/orders"
+ORDER_REFERER = "https://eb.meituan.com/sub-app/order-eb/index.html"
 TABLE_NAME = "meituan_ota_order_detail"
 SHANGHAI = timezone(timedelta(hours=8))
 PAGE_SIZE = 10
 MEMBER_LEVELS = {1: "普通会员", 2: "白银会员", 3: "黄金会员", 4: "白金会员", 5: "黑金会员", 6: "黑钻会员"}
 
 
-def report_window(captured_at: datetime) -> tuple[date, date]:
-    return captured_at.date() - timedelta(days=29), captured_at.date()
+def report_window(captured_at: datetime, *, initial: bool = True) -> tuple[date, date]:
+    end = captured_at.date()
+    return end - timedelta(days=29 if initial else 2), end
+
+
+def has_order_history() -> bool:
+    with connect_mysql(autocommit=True) as connection, connection.cursor() as cursor:
+        try:
+            cursor.execute(
+                f"SELECT 1 FROM `{TABLE_NAME}` WHERE hotel_id=%s AND poi_id=%s AND partner_id=%s LIMIT 1",
+                (os.environ.get("HOTEL_ID", "").strip(), POI_ID, PARTNER_ID),
+            )
+        except ProgrammingError as exc:
+            if exc.args[0] != 1146:
+                raise
+            return False
+        return cursor.fetchone() is not None
 
 
 def request_params(start: date, end: date, offset: int) -> dict:
@@ -45,7 +62,7 @@ def request_page(client: requests.Session, start: date, end: date, offset: int) 
             API_URL, params=request_params(start, end, offset),
             headers={"Cookie": MEITUAN_EB_COOKIE, "User-Agent": USER_AGENT,
                      "Accept": "application/json, text/plain, */*",
-                     "Referer": "https://eb.meituan.com/sub-app/order-eb/index.html"},
+                     "Referer": ORDER_REFERER},
             timeout=30, allow_redirects=False,
         )
     except requests.RequestException:
@@ -73,7 +90,7 @@ def fetch_orders(start: date, end: date) -> list[dict]:
                 if (str(item.get("poiIdStr") or item["poiId"]) != POI_ID
                         or str(item["partnerId"]) != PARTNER_ID):
                     raise RuntimeError("美团订单所属酒店与配置不符")
-                orders[str(item["orderId"])] = item
+                orders[str(item.get("orderIdStr") or item["orderId"])] = item
             if page * PAGE_SIZE + len(items) >= total:
                 if len(orders) != total:
                     raise RuntimeError("美团订单分页不完整")
@@ -82,6 +99,57 @@ def fetch_orders(start: date, end: date) -> list[dict]:
                 raise RuntimeError("美团订单分页不完整")
             time.sleep(1)
     raise RuntimeError("美团订单分页超出上限")
+
+
+def fetch_guest_names(client: requests.Session, order_id: str) -> str | None:
+    response = client.get(
+        f"{API_URL}/sensitiveData/{order_id}",
+        params={"requiredSensitiveData": 2, "queryScene": 0},
+        headers={"Cookie": MEITUAN_EB_COOKIE, "User-Agent": USER_AGENT,
+                 "Accept": "application/json, text/plain, */*", "Referer": ORDER_REFERER},
+        timeout=15, allow_redirects=False,
+    )
+    if response.status_code != 200:
+        raise ValueError(f"HTTP {response.status_code}")
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("status") != 0:
+        raise ValueError("接口未返回成功状态")
+    entries = (payload.get("data") or {}).get("sensitiveDataList")
+    if not isinstance(entries, list):
+        raise ValueError("缺少入住人明细")
+    for entry in entries:
+        if str(entry.get("orderId")) != order_id:
+            continue
+        names = []
+        for guest in entry.get("guestInfos") or []:
+            name = str(guest.get("name") or "").strip()
+            if guest.get("guestType") == "check_in_guest" and name:
+                if "*" in name or "＊" in name:
+                    raise ValueError("接口仍返回脱敏姓名")
+                names.append(name)
+        return "、".join(names)[:255] or None
+    if entries:
+        raise ValueError("入住人明细的订单号不符")
+    return None
+
+
+def collect_guest_names(rows: list[dict]) -> str | None:
+    for row in rows:
+        row["guest_name"] = None
+    with requests.Session() as client:
+        for index, row in enumerate(rows):
+            if index:
+                time.sleep(1)
+            try:
+                row["guest_name"] = fetch_guest_names(client, row["order_id"])
+            except requests.RequestException:
+                return f"入住人姓名查询在第 {index + 1}/{len(rows)} 笔遇到网络错误"
+            except ValueError as exc:
+                reason = "响应无法解析" if isinstance(exc, requests.exceptions.JSONDecodeError) else str(exc)
+                return f"入住人姓名查询在第 {index + 1}/{len(rows)} 笔失败：{reason}"
+            if (index + 1) % 50 == 0:
+                print(f"Meituan guest names checked: {index + 1}/{len(rows)}", flush=True)
+    return None
 
 
 def string_id(value) -> str | None:
@@ -128,7 +196,7 @@ def build_rows(items: list[dict], captured_at: datetime) -> list[dict]:
         level = int(level) if level not in (None, "") else None
         rows.append({
             "hotel_id": hotel_id, "hotel_name": HOTEL_NAME or None,
-            "poi_id": POI_ID, "partner_id": PARTNER_ID, "order_id": str(item["orderId"]),
+            "poi_id": POI_ID, "partner_id": PARTNER_ID, "order_id": str(item.get("orderIdStr") or item["orderId"]),
             "source_order_id": string_id(item.get("sourceOrderId")),
             "guest_name": guest_names(item.get("guests")),
             "order_status": item["status"], "order_type": item.get("type"),
@@ -164,16 +232,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="只读取，不写数据库或文件")
     args = parser.parse_args(argv)
     captured_at = datetime.now(SHANGHAI).replace(tzinfo=None)
-    start, end = report_window(captured_at)
+    retention_start, _ = report_window(captured_at)
+    initial = not has_order_history()
+    start, end = report_window(captured_at, initial=initial)
     rows = build_rows(fetch_orders(start, end), captured_at)
+    guest_error = collect_guest_names(rows)
+    if initial and guest_error:
+        raise RuntimeError(f"{guest_error}，首次回补未写入，下次仍采集最近 30 天")
     if not args.dry_run:
-        sync_orders(rows, start)
+        sync_orders(rows, retention_start)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         summary = {"table_name": TABLE_NAME, "row_count": len(rows), "start_date": str(start),
                    "end_date": str(end), "snapshot_time": str(captured_at)}
         (OUTPUT_DIR / f"{TABLE_NAME}.json").write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
     print(f"Meituan order detail {'validated' if args.dry_run else 'synced'}: rows={len(rows)} period={start}..{end}")
-    return 0
+    if guest_error:
+        print(f"RuntimeError: {guest_error}，剩余姓名保留旧值", flush=True)
+    return 1 if guest_error else 0
 
 
 if __name__ == "__main__":

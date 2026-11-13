@@ -38,9 +38,49 @@ class OrderTests(unittest.TestCase):
 
     def test_window_and_request_dates(self):
         self.assertEqual(data.report_window(NOW), (START, END))
+        self.assertEqual(data.report_window(NOW, initial=False), (date(2026, 10, 28), END))
         params = data.request_params(START, END, 20)
         self.assertEqual((params["offset"], params["searchTimeType"], params["filter"]), (20, 2, "ALL"))
         self.assertEqual(params["endTime"] - params["startTime"] + 1, 30 * 86400000)
+
+    def test_incremental_refresh_keeps_thirty_day_retention(self):
+        clock = MagicMock(wraps=datetime)
+        clock.now.return_value = NOW
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(data, "datetime", clock), \
+                patch.object(data, "OUTPUT_DIR", Path(directory)), \
+                patch.object(data, "has_order_history", return_value=True), \
+                patch.object(data, "collect_guest_names", return_value=None), \
+                patch.object(data, "fetch_orders", return_value=[item()]) as fetch, \
+                patch.object(data, "sync_orders") as sync:
+            self.assertEqual(data.main([]), 0)
+        fetch.assert_called_once_with(date(2026, 10, 28), END)
+        self.assertEqual(sync.call_args.args[1], START)
+
+    def test_guest_details_keep_each_checkin_guest_and_exclude_contact(self):
+        client = MagicMock()
+        response = client.get.return_value
+        response.status_code = 200
+        response.json.return_value = {"status": 0, "data": {"totalCount": 0, "sensitiveDataList": [{
+            "orderId": 123, "guestInfos": [
+                {"guestType": "link_guest", "name": "联系人"},
+                {"guestType": "check_in_guest", "name": "测试甲"},
+                {"guestType": "check_in_guest", "name": "测试乙"},
+                {"guestType": "check_in_guest", "name": "测试甲"},
+            ],
+        }]}}
+        self.assertEqual(data.fetch_guest_names(client, "123"), "测试甲、测试乙、测试甲")
+        self.assertEqual(client.get.call_args.kwargs["params"], {"requiredSensitiveData": 2, "queryScene": 0})
+        with self.assertRaisesRegex(ValueError, "订单号不符"):
+            data.fetch_guest_names(client, "456")
+
+    def test_guest_detail_failure_stops_queries_and_preserves_old_names_on_write(self):
+        rows = [{"order_id": str(i), "guest_name": "测*"} for i in range(3)]
+        with patch.object(data, "fetch_guest_names", side_effect=["测试甲", ValueError("HTTP 403")]) as fetch, \
+                patch.object(data.time, "sleep"):
+            self.assertIn("HTTP 403", data.collect_guest_names(rows))
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual([row["guest_name"] for row in rows], ["测试甲", None, None])
 
     def test_pagination_and_empty_result(self):
         with patch.object(data, "PAGE_SIZE", 2), patch.object(data.time, "sleep") as sleep, \
@@ -79,11 +119,14 @@ class OrderTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             data.request_page(client, START, END, 0)
         with tempfile.TemporaryDirectory() as directory, patch.object(data, "OUTPUT_DIR", Path(directory)), \
+                patch.object(data, "has_order_history", return_value=False), \
+                patch.object(data, "collect_guest_names", return_value=None), \
                 patch.object(data, "fetch_orders", return_value=[item()]), patch.object(data, "sync_orders") as sync:
             data.main(["--dry-run"])
             sync.assert_not_called()
             self.assertEqual(list(Path(directory).iterdir()), [])
         with patch.object(data, "fetch_orders", side_effect=RuntimeError("failed")), \
+                patch.object(data, "has_order_history", return_value=False), \
                 patch.object(data, "sync_orders") as sync:
             with self.assertRaises(RuntimeError):
                 data.main([])
