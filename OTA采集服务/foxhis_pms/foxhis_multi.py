@@ -101,6 +101,8 @@ def _identity(config: Config, report_key: str, stamp: datetime, realtime: bool) 
         "server": config.server,
         "hotel_id": config.hotel_id,
         "hotel_name": config.hotel_name,
+        "count_locked_as_available": "1" if config.count_locked_as_available else "0",
+        "occupancy_denominator": config.occupancy_denominator,
         "business_date": day.isoformat(),
         "mysql_host": str(mysql.get("host") or ""),
         "mysql_database": str(mysql.get("database") or ""),
@@ -206,7 +208,12 @@ def sum_jy01(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
         revenue = sum((_decimal(row.get("room_revenue")) for row in items), Decimal(0))
         sold = sum(_whole(row.get("sold_rooms"), "已售房") for row in items)
         remaining = sum(_whole(row.get("remaining_rooms"), "可售房") for row in items)
-        available = sold + remaining
+        if config.occupancy_denominator == "total":
+            rate_base = room_count
+        elif any("available_rooms" not in row for row in items):
+            raise foxhis_common.FoxhisError("经营日报缺少可售房，拒绝汇总。")
+        else:
+            rate_base = sum(_whole(row.get("available_rooms"), "可售房") for row in items)
         merged.append({
             "hotel_name": config.hotel_name,
             "hotel_id": config.hotel_id,
@@ -218,7 +225,7 @@ def sum_jy01(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
             "room_count": room_count,
             "room_nights": nights,
             "room_revenue": rounded(revenue),
-            "occupancy_rate": rounded(nights * 100 / available) if available else Decimal(0),
+            "occupancy_rate": rounded(nights * 100 / rate_base) if rate_base else Decimal(0),
             "adr": rounded(revenue / nights) if nights else Decimal(0),
             "revpar": rounded(revenue / room_count) if room_count else Decimal(0),
             "sold_rooms": sold,
@@ -295,8 +302,25 @@ def _same_name_missing_components(report_key: str, payloads: list[dict[str, Any]
             else:
                 key = (row.get("business_date"), str(row.get("room_type_name") or "").strip())
             grouped.setdefault(key, []).append(row)
-    required = ("available_rooms",) if report_key == "jl11" else ("available_rooms", "total_rooms")
+    denominator = Config.from_env().occupancy_denominator
+    if report_key == "jl11":
+        required = () if denominator == "total" else ("available_rooms",)
+    else:
+        required = ("total_rooms",) if denominator == "total" else ("total_rooms", "available_rooms")
     return any(len(items) > 1 and any(field not in item for item in items for field in required) for items in grouped.values())
+
+
+def _cached_parts_need_requery(report_key: str, payloads: list[dict[str, Any]]) -> bool:
+    """旧缓存按当时口径保存。分母改回可售后，缺可售房日的缓存要重查。"""
+    if report_key in {"jl01", "jl11"} and _same_name_missing_components(report_key, payloads):
+        return True
+    if report_key != "jy01" or Config.from_env().occupancy_denominator == "total":
+        return False
+    for payload in payloads:
+        rows = payload.get("rows") or []
+        if not isinstance(rows, list) or any(not isinstance(row, dict) or "available_rooms" not in row for row in rows):
+            return True
+    return False
 
 
 def sum_jl11(batches: list[list[dict[str, Any]]], config: Config, stamp: datetime) -> list[dict[str, Any]]:
@@ -304,6 +328,7 @@ def sum_jl11(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
 
     from foxhis_jy01_data import rounded
 
+    uses_total = config.occupancy_denominator == "total"
     grouped: dict[str, dict[str, Any]] = {}
     for rows in batches:
         seen: set[str] = set()
@@ -326,10 +351,12 @@ def sum_jl11(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
             for field in ("snapshot_date", "period_start", "period_end", "section", "source_platform"):
                 if current.get(field) != row.get(field):
                     raise foxhis_common.FoxhisError("JL11 各业务库的统计周期不一致，拒绝汇总。")
-            if "available_rooms" not in current or "available_rooms" not in row:
-                raise foxhis_common.FoxhisError("JL11 同名房型缺少可加的可用房日，拒绝汇总。")
-            for field in ("room_count", "room_nights", "room_revenue", "available_rooms"):
+            for field in ("room_count", "room_nights", "room_revenue"):
                 current[field] = _decimal(current.get(field)) + _decimal(row.get(field))
+            if not uses_total:
+                if "available_rooms" not in current or "available_rooms" not in row:
+                    raise foxhis_common.FoxhisError("JL11 同名房型缺少可售房日，拒绝汇总。")
+                current["available_rooms"] = _decimal(current.get("available_rooms")) + _decimal(row.get("available_rooms"))
             current["_sources"] += 1
     result = []
     for name in sorted(grouped):
@@ -342,8 +369,14 @@ def sum_jl11(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
         count = _decimal(item["room_count"])
         nights = _decimal(item["room_nights"])
         revenue = rounded(_decimal(item["room_revenue"]))
-        available = _decimal(item.pop("available_rooms"))
-        occupancy = (nights * 100 / available).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if available else None
+        if uses_total:
+            rate_base = count
+            item.pop("available_rooms", None)
+        elif "available_rooms" not in item:
+            raise foxhis_common.FoxhisError("JL11 同名房型缺少可售房日，拒绝汇总。")
+        else:
+            rate_base = _decimal(item.pop("available_rooms"))
+        occupancy = (nights * 100 / rate_base).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if rate_base else None
         item.update({
             "room_count": count,
             "room_nights": nights,
@@ -366,6 +399,8 @@ def _day_text(value: Any) -> str:
 
 def sum_jl01(batches: list[list[dict[str, Any]]], config: Config, stamp: datetime) -> list[dict[str, Any]]:
     from foxhis_jl01_data import derived, rounded
+
+    uses_total = config.occupancy_denominator == "total"
 
     date_sets = [
         {row.get("business_date") for row in rows if isinstance(row, dict)}
@@ -401,11 +436,16 @@ def sum_jl01(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
                     "_sources": 1,
                 }
                 continue
-            if any(field not in current or field not in row for field in ("available_rooms", "total_rooms")):
+            if "total_rooms" not in current or "total_rooms" not in row:
                 raise foxhis_common.FoxhisError("JL01 同名房型缺少可加的房日，拒绝汇总。")
+            if not uses_total and ("available_rooms" not in current or "available_rooms" not in row):
+                raise foxhis_common.FoxhisError("JL01 同名房型缺少可售房日，拒绝汇总。")
             if (current.get("pms_rate_room_type_id") or "") != (row.get("pms_rate_room_type_id") or ""):
                 current["pms_rate_room_type_id"] = ""
-            for field in ("room_nights", "room_revenue", "available_rooms", "total_rooms"):
+            fields = ("room_nights", "room_revenue", "total_rooms")
+            if not uses_total:
+                fields = (*fields, "available_rooms")
+            for field in fields:
                 current[field] = _decimal(current.get(field)) + _decimal(row.get(field))
             current["_sources"] += 1
     result = []
@@ -417,12 +457,15 @@ def sum_jl01(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
             item.pop("total_rooms", None)
             result.append(item)
             continue
-        metrics = derived({
+        available = item.pop("available_rooms", None)
+        metrics_in = {
             "room_revenue": _decimal(item["room_revenue"]),
             "room_nights": _decimal(item["room_nights"]),
-            "available_rooms": _decimal(item.pop("available_rooms")),
             "total_rooms": _decimal(item.pop("total_rooms")),
-        })
+        }
+        if available is not None:
+            metrics_in["available_rooms"] = _decimal(available)
+        metrics = derived(metrics_in, denominator=config.occupancy_denominator)
         item.update({
             "room_nights": metrics["room_nights"],
             "room_revenue": rounded(_decimal(item["room_revenue"])),
@@ -621,7 +664,7 @@ def run_multi(report_key: str, collect: Callable[..., dict[str, Any]], accounts:
     if waiting:
         print(f"SKIP [{report_key}] 还有业务库未到采集时机，本轮不写入：" + "；".join(waiting))
         return 0
-    if report_key in {"jl01", "jl11"} and _same_name_missing_components(report_key, payloads):
+    if _cached_parts_need_requery(report_key, payloads):
         payloads = []
         for _account, config in ready:
             payload = _query(report_key, collect, config, stamp, realtime)

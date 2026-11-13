@@ -122,7 +122,7 @@ select convert(char(8),date,112) as business_date, class as metric_code,
 from yjourrep
 where date >= '{start_date}' and date < '{end_date}'
   and class in ('010100','010110','010120','010130','010190',
-                '011000','012000','013000','014000','018530','018560')
+                '011000','013000','014000','018530','018560')
 order by date,class
 """.strip()
 
@@ -134,7 +134,7 @@ select convert(char(8),date,112) as business_date, class as metric_code,
 from yjourrep
 where date >= '{start_date}' and date < '{end_date}'
   and class in ('010100','010110','010120','010130','010190',
-                '011000','012000','013000','014000','017000','018000','018530','018560')
+                '011000','013000','014000','017000','018000','018530','018560')
 order by date,class
 """.strip()
 
@@ -175,7 +175,7 @@ JL01_CONTROL_QUERY = """
 select convert(char(8),date,112) as business_date, class as metric_code,
        convert(numeric(18,4),day) as metric_value
 from yjourrep
-where class in ('010100','010190','011000','012000','013000','014000','018560') and (
+where class in ('010100','010190','011000','013000','014000','018560') and (
  (date >= '{yesterday}' and date < dateadd(day,1,'{yesterday}')) or
  (date >= '{last_year}' and date < dateadd(day,1,'{last_year}'))
 )

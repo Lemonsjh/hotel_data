@@ -80,14 +80,15 @@ def build_rows(records: list[dict], rooms: list[dict], config: Config, snapshot:
                 room_type_id=None, dimension_code="", dimension_name="", snapshot_time=snapshot.replace(microsecond=0))
     rows, components = [], {}
     for name, v in sorted(grouped.items()):
-        count, available, nights, revenue = (v[field] for field in ROOM_FIELDS)
-        occupancy = (nights * 100 / available).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if available else None
+        count, _available, nights, revenue = (v[field] for field in ROOM_FIELDS)
+        rate_base = count if config.occupancy_denominator == "total" else _available
+        occupancy = (nights * 100 / rate_base).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if rate_base else None
         rows.append({**base, "room_type_name": name, "room_count": count, "room_nights": nights,
                      "occupancy_rate": occupancy, "room_revenue": rounded(revenue),
                      "average_room_price": rounded(revenue / nights) if nights else None,
                      "revpar": rounded(revenue / count) if count else None,
                      "overnight_room_count": nights, "overnight_occupancy_rate": occupancy})
-        components[name] = {"available_rooms": available}
+        components[name] = {"available_rooms": _available}
     if not rows:
         raise FoxhisError("JL11 无有效房型汇总。")
     return rows, {"period_start": str(start), "period_end": str(end), "completed_days": WINDOW_DAYS,

@@ -118,6 +118,10 @@ class AccountValidationTests(unittest.TestCase):
         self.assertIn("name='foxhis_account_0_hotel_name'", html)
         self.assertIn("仅在此对照显示", html)
         self.assertIn("移除", html)
+        self.assertIn("name='foxhis.count_locked_as_available'", html)
+        self.assertIn("锁定不计入可售", html)
+        self.assertIn("name='foxhis.occupancy_denominator'", html)
+        self.assertIn("value='available' selected", html)
 
     def test_slot_hotel_name_is_only_stored_for_display_and_a_slot_can_be_removed(self):
         settings = {"foxhis": {"hotel_name": "汇总", "database": "foxhis1", "username": "foxsyb", "password": "password-old"}}
@@ -170,22 +174,59 @@ class MergeTests(unittest.TestCase):
     def test_daily_totals_add_amounts_and_recalculate_rates(self):
         day = date(2026, 11, 8)
 
-        def row(count, nights, revenue, sold, remaining):
+        def row(count, nights, revenue, sold, remaining, available):
             return {"business_date": day, "room_count": count, "room_nights": Decimal(nights),
-                    "room_revenue": Decimal(revenue), "sold_rooms": sold, "remaining_rooms": remaining}
+                    "room_revenue": Decimal(revenue), "sold_rooms": sold, "remaining_rooms": remaining,
+                    "available_rooms": available}
 
         merged = multi.sum_jy01([
-            [row(63, 30, 3000, 20, 40)],
-            [row(61, 20, 1000, 10, 30)],
+            [row(63, 30, 3000, 20, 40, 50)],
+            [row(61, 20, 1000, 10, 30, 53)],
         ], self.config, self.stamp)
         self.assertEqual(merged[0]["room_count"], 124)
         self.assertEqual(merged[0]["room_nights"], Decimal(50))
         self.assertEqual(merged[0]["room_revenue"], Decimal("4000.00"))
-        self.assertEqual(merged[0]["occupancy_rate"], Decimal("50.00"))
+        self.assertEqual(merged[0]["sold_rooms"], 30)
+        self.assertEqual(merged[0]["remaining_rooms"], 70)
+        self.assertEqual(merged[0]["occupancy_rate"], Decimal("48.54"))
         self.assertEqual(merged[0]["adr"], Decimal("80.00"))
         self.assertEqual(merged[0]["revpar"], Decimal("32.26"))
         with self.assertRaises(common.FoxhisError):
-            multi.sum_jy01([[row(63, 30, 3000, 20, 40)], []], self.config, self.stamp)
+            multi.sum_jy01([[row(63, 30, 3000, 20, 40, 50)], []], self.config, self.stamp)
+        bare = {"business_date": day, "room_count": 63, "room_nights": Decimal(30),
+                "room_revenue": Decimal(3000), "sold_rooms": 20, "remaining_rooms": 40}
+        with self.assertRaisesRegex(common.FoxhisError, "可售"):
+            multi.sum_jy01([[bare], [dict(bare)]], self.config, self.stamp)
+
+    def test_total_room_denominator_uses_added_room_counts(self):
+        total = Config(hotel_id="bailing", hotel_name="贵阳百灵", occupancy_denominator="total")
+        day = date(2026, 11, 8)
+        daily = {"business_date": day, "room_count": 63, "room_nights": Decimal(30),
+                 "room_revenue": Decimal(3000), "sold_rooms": 20, "remaining_rooms": 40, "available_rooms": 1}
+        other = {**daily, "room_count": 61, "room_nights": Decimal(20), "room_revenue": Decimal(1000),
+                 "sold_rooms": 10, "remaining_rooms": 30}
+        merged = multi.sum_jy01([[daily], [other]], total, self.stamp)
+        self.assertEqual(merged[0]["occupancy_rate"], Decimal("40.32"))
+        self.assertEqual(merged[0]["revpar"], Decimal("32.26"))
+        self.assertNotIn("available_rooms", merged[0])
+        period = {"snapshot_date": date(2026, 11, 10), "period_start": date(2026, 10, 11),
+                  "period_end": date(2026, 11, 9), "section": "summary", "source_platform": "PMS（Foxhis）",
+                  "dimension_code": "", "dimension_name": ""}
+        named = {**period, "room_type_name": "云居", "room_count": Decimal(330), "room_nights": Decimal(170),
+                 "room_revenue": Decimal("22635.72"), "available_rooms": Decimal(1)}
+        added = {**named, "room_count": Decimal(2), "room_nights": Decimal(0), "room_revenue": Decimal(0)}
+        self.assertEqual(multi.sum_jl11([[named], [added]], total, self.stamp)[0]["occupancy_rate"], Decimal("51.2048"))
+        jl_day = date(2026, 11, 9)
+
+        def jl_row(rooms, nights, revenue):
+            return {"business_date": jl_day, "room_type_name": "云居", "pms_rate_room_type_id": "HT",
+                    "room_nights": Decimal(nights), "room_revenue": Decimal(revenue),
+                    "available_rooms": Decimal(1), "total_rooms": Decimal(rooms),
+                    "source_platform": "PMS（Foxhis）"}
+
+        combined = multi.sum_jl01([[jl_row(30, 10, 1000)], [jl_row(2, 0, 0)]], total, self.stamp)[0]
+        self.assertEqual(combined["occupancy_rate"], Decimal("31.2500"))
+        self.assertEqual(combined["revpar"], Decimal("31.25"))
 
     def test_monthly_totals_use_added_capacity_not_averaged_rates(self):
         def part(nights, revenue, capacity, maintain, available):
@@ -472,13 +513,17 @@ class MultiRunTests(unittest.TestCase):
             revenue = 3000 if config.database == "foxhis" else 1000
             sold = 20 if config.database == "foxhis" else 10
             remaining = 40 if config.database == "foxhis" else 30
+            available = 50 if config.database == "foxhis" else 53
             return {"rows": [{"business_date": day, "room_count": count, "room_nights": Decimal(nights),
-                              "room_revenue": Decimal(revenue), "sold_rooms": sold, "remaining_rooms": remaining}]}
+                              "room_revenue": Decimal(revenue), "sold_rooms": sold, "remaining_rooms": remaining,
+                              "available_rooms": available}]}
 
         sync = Mock(return_value=1)
         self.run_report("jy01", daily, [account("foxhis"), account("foxhis1")], sync)
-        self.assertEqual(sync.call_args.args[0][0]["room_count"], 124)
-        self.assertEqual(sync.call_args.args[0][0]["revpar"], Decimal("32.26"))
+        written = sync.call_args.args[0][0]
+        self.assertEqual(written["room_count"], 124)
+        self.assertEqual(written["occupancy_rate"], Decimal("48.54"))
+        self.assertEqual(written["revpar"], Decimal("32.26"))
 
         def monthly(config, _day, _stamp, *, write=True):
             part = {"room_nights": Decimal(100), "net_room_revenue": Decimal(2000), "room_days": Decimal(300),
@@ -617,6 +662,26 @@ class CacheAndSchedulerTests(unittest.TestCase):
              patch("foxhis_multi.run_multi", return_value=0) as combined:
             self.assertEqual(common.report_main("jl01", Mock(), sync=Mock()), 0)
         combined.assert_called_once()
+
+    def test_runner_shares_foxhis_switches_across_databases(self):
+        settings = json.loads((ROOT / "OTA采集服务/config/settings.example.json").read_text(encoding="utf-8-sig"))
+        settings["foxhis"].pop("count_locked_as_available")
+        settings["foxhis"].pop("occupancy_denominator")
+        defaults = runner.build_env(settings, "foxhis")
+        self.assertEqual(defaults["FOXHIS_COUNT_LOCKED_AS_AVAILABLE"], "0")
+        self.assertEqual(defaults["FOXHIS_OCCUPANCY_DENOMINATOR"], "available")
+        self.assertFalse(Config.from_env(defaults).count_locked_as_available)
+        self.assertEqual(Config.from_env(defaults).occupancy_denominator, "available")
+        settings["foxhis"].update(count_locked_as_available=True, occupancy_denominator="total", server="FoxFront",
+                                  accounts=[account("foxhis", server="RoomFront"), account("foxhis1")])
+        opened = runner.build_env(settings, "foxhis")
+        self.assertEqual(opened["FOXHIS_COUNT_LOCKED_AS_AVAILABLE"], "1")
+        self.assertEqual(opened["FOXHIS_OCCUPANCY_DENOMINATOR"], "total")
+        self.assertEqual(opened["FOXHIS_SERVER"], "FoxFront")
+        loaded = Config.from_env(opened)
+        self.assertTrue(loaded.count_locked_as_available)
+        self.assertEqual(loaded.occupancy_denominator, "total")
+        self.assertEqual(Config.from_env({"FOXHIS_OCCUPANCY_DENOMINATOR": "rooms"}).occupancy_denominator, "available")
 
     def test_runner_passes_two_databases_and_refuses_a_blank_summary_name(self):
         settings = json.loads((ROOT / "OTA采集服务/config/settings.example.json").read_text(encoding="utf-8-sig"))

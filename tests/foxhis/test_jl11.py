@@ -87,6 +87,11 @@ class JL11Tests(unittest.TestCase):
         self.assertEqual((row["average_room_price"], row["revpar"], row["occupancy_rate"]), (D("29.85"), D("14.90"), D("55.4614")))
         self.assertEqual(len(rows), 1)
 
+    def test_total_room_denominator_is_optional(self):
+        self.config.occupancy_denominator = "total"
+        row = self.build()[0][0]
+        self.assertEqual((row["revpar"], row["occupancy_rate"], row["overnight_occupancy_rate"]), (D("14.90"), D("49.9153"), D("49.9153")))
+
     def test_manual_income_is_audited_but_not_written_as_room_type(self):
         rooms = [{**r,"room_revenue":"80"} if r["business_date"]=="20260919" and r["room_type_code"]=="AR" else r for r in self.rooms]
         rooms.append({"business_date":"20260919", "gkey":"t", "hall":"{", "room_type_code":"ZZZ", "room_type_name":"手工输入",

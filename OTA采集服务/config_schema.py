@@ -294,6 +294,8 @@ CONFIG_SECTIONS = [
         "hint": "数据库只读直连（Sybase）。多个业务库在内存里汇总后写入这一个酒店。房态随每轮刷新，日结经营报表夜审后每个业务库每天成功采集一次，失败会重试；与别样红 / 宝寓互斥启用。",
         "fields": [
             ("foxhis.hotel_name", "汇总酒店名称（单个业务库可留空自动读取）", False, False),
+            ("foxhis.count_locked_as_available", "房态可售是否计入锁定", False, False),
+            ("foxhis.occupancy_denominator", "出租率分母", False, False),
             ("foxhis.username", "数据库账号（只读）", False, False),
             ("foxhis.password", "数据库密码", True, False),
             ("foxhis.fetch_after", "采集时机（早于该时刻跳过，如 03:30）", False, False),

@@ -20,7 +20,7 @@ COLUMNS = ["hotel_name", "hotel_id", "source_platform", "business_date", "dimens
            "occupancy_rate", "adr", "revpar", "sold_rooms", "remaining_rooms", "orders_today", "snapshot_time"]
 CONTROL_FIELDS = {"010100": "total_rooms", "010110": "maintain_rooms", "010120": "locked_rooms",
                   "010130": "own_use_rooms", "010190": "available_rooms", "011000": "room_nights",
-                  "012000": "occupancy_rate", "013000": "room_revenue", "014000": "adr",
+                  "013000": "room_revenue", "014000": "adr",
                   "017000": "room_other_income", "018000": "room_income_total",
                   "018530": "free_rooms", "018560": "revpar"}
 REVENUE_CODES = ("013000", "017000", "018000")
@@ -132,17 +132,18 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
             raise FoxhisError(f"JY01 {day} 免费房与计费出租间夜不一致。")
         # 空房按西软原值保存。可用房减已售可能与空房差一两间，不再因此拒绝整天。
         for field, numerator, denominator, factor in (
-                ("occupancy_rate", "room_nights", "available_rooms", 100),
                 ("adr", "room_revenue", "room_nights", 1),
                 ("revpar", "room_revenue", "total_rooms", 1)):
             expected = rounded(metric[numerator] * factor / metric[denominator]) if metric[denominator] else Decimal(0)
             if rounded(metric[field]) != expected:
                 raise FoxhisError(f"JY01 {day} 原生 {field} 与房费/房量不一致。")
+        rate_base = metric["total_rooms"] if config.occupancy_denominator == "total" else metric["available_rooms"]
         rows.append({"hotel_name": config.hotel_name, "hotel_id": config.hotel_id, "source_platform": SOURCE_PLATFORM,
                      "business_date": day, "dimension_type": DIMENSION, "dimension_name": DIMENSION,
                      "room_type_id": None, "room_count": whole(metric["total_rooms"]),
+                     "available_rooms": whole(metric["available_rooms"]),
                      "room_nights": metric["room_nights"], "room_revenue": rounded(revenue),
-                     "occupancy_rate": rounded(metric["occupancy_rate"]),
+                     "occupancy_rate": rounded(metric["room_nights"] * 100 / rate_base) if rate_base else Decimal(0),
                      "adr": rounded(revenue / metric["room_nights"]) if metric["room_nights"] else Decimal(0),
                      "revpar": rounded(revenue / metric["total_rooms"]) if metric["total_rooms"] else Decimal(0),
                      "sold_rooms": whole(total["sold_rooms"]),
@@ -157,7 +158,9 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
                   "room_revenue_total": sum((r["room_revenue"] for r in rows), Decimal(0)),
                   "room_nights_total": sum((r["room_nights"] for r in rows), Decimal(0)),
                   "unmapped_fields": {"orders_today": "未验证当日新增订单数的等价指标，保留 NULL"},
-                  "basis": "yjourrep 018000客房收入合计含返减及其他客房收入；ADR、RevPAR按客房净收入重算；计费间夜不含免费房"}
+                  "basis": "yjourrep 018000客房收入合计含返减及其他客房收入；出租率=计费间夜/"
+                           + ("总房" if config.occupancy_denominator == "total" else "可售")
+                           + "；ADR、RevPAR按客房净收入重算；计费间夜不含免费房"}
 
 
 def fetch_rows(config: Config, snapshot: datetime) -> tuple[list[dict], dict]:

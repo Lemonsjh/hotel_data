@@ -8,10 +8,23 @@ from typing import Any
 
 DEFAULT_CHARSET = "cp936"
 DEFAULT_OUTPUT_DIR = "OTA数据"
+_TRUE_TEXT = {"1", "true", "yes", "on"}
 
 
 class FoxhisError(RuntimeError):
     pass
+
+
+def parse_count_locked(value: Any) -> bool:
+    """缺省和无法识别的值都按西软原口径：锁定不计入可售。"""
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in _TRUE_TEXT
+
+
+def parse_occupancy_denominator(value: Any) -> str:
+    """缺省和无法识别的值都按西软原口径：出租率分母用可售。"""
+    return "total" if str(value or "").strip().lower() == "total" else "available"
 
 
 @dataclass
@@ -28,6 +41,8 @@ class Config:
     output_dir: str = DEFAULT_OUTPUT_DIR
     fetch_after: str = ""
     business_date_offset_days: int = 1
+    count_locked_as_available: bool = False
+    occupancy_denominator: str = "available"
     mysql: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -55,6 +70,7 @@ class Config:
             "charset": "utf8mb4",
         }
 
+        raw = environ
         return cls(
             isql_path=env("FOXHIS_ISQL_PATH", default=r"C:\SYBASE\BIN\isql.exe"),
             interfaces_file=env("FOXHIS_INTERFACES_FILE", default=r"C:\SYBASE\ini\SQL.INI"),
@@ -68,6 +84,8 @@ class Config:
             output_dir=env("HOTEL_OTA_OUTPUT_DIR", default=DEFAULT_OUTPUT_DIR),
             fetch_after=env("FOXHIS_FETCH_AFTER"),
             business_date_offset_days=offset,
+            count_locked_as_available=parse_count_locked(raw.get("FOXHIS_COUNT_LOCKED_AS_AVAILABLE")),
+            occupancy_denominator=parse_occupancy_denominator(raw.get("FOXHIS_OCCUPANCY_DENOMINATOR")),
             mysql=mysql,
         )
 

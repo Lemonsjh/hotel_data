@@ -329,6 +329,8 @@ def report_main(report_key: str, collect: Callable[[Config, date, datetime], dic
         record = {"business_date": day.isoformat(), "source_endpoint": list(config.endpoint()),
                   "source_database": config.database, "source_user": config.username,
                   "hotel_id": config.hotel_id, "hotel_name": config.hotel_name,
+                  "count_locked_as_available": "1" if config.count_locked_as_available else "0",
+                  "occupancy_denominator": config.occupancy_denominator,
                   "target_host": config.mysql.get("host"), "target_port": config.mysql.get("port"),
                   "target_database": config.mysql.get("database")}
         try:
