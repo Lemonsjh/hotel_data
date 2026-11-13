@@ -36,12 +36,11 @@ class JY03Tests(unittest.TestCase):
             day = (self.month + timedelta(days=n)).strftime("%Y%m%d")
             m = {"010100": D(capacity), "010110": D(maintain), "010120": D(0), "010130": D(0),
                  "010190": D(capacity-maintain), "011000": paid, "013000": gross, "018530": free}
-            m.update({"012000": jy.rounded(paid*100/m["010190"]), "014000": jy.rounded(gross/paid), "018560": jy.rounded(gross/m["010100"])})
+            m.update({"014000": jy.rounded(gross/paid), "018560": jy.rounded(gross/m["010100"])})
             for code, value in m.items():
-                if code not in ("012000", "014000", "018560"):
+                if code not in ("014000", "018560"):
                     cumulative[code] = cumulative.get(code, D(0)) + value
-            cumulative.update({"012000": jy.rounded(cumulative["011000"]*100/cumulative["010190"]),
-                               "014000": jy.rounded(cumulative["013000"]/cumulative["011000"]),
+            cumulative.update({"014000": jy.rounded(cumulative["013000"]/cumulative["011000"]),
                                "018560": jy.rounded(cumulative["013000"]/cumulative["010100"])})
             for code, value in m.items():
                 records.append({"business_date": day, "metric_code": code, "metric_value": str(value), "month_value": str(cumulative[code]),
@@ -72,7 +71,8 @@ class JY03Tests(unittest.TestCase):
         self.assertLess(jy.month_end(date(2025, 10, 1), self.month), date(2025, 10, 1))
 
     def test_monthly_control_fields_keep_existing_revenue_basis(self):
-        self.assertEqual(len(jy.CONTROL_FIELDS), 11)
+        self.assertEqual(len(jy.CONTROL_FIELDS), 10)
+        self.assertNotIn("012000", jy.CONTROL_FIELDS)
         self.assertIn('013000', jy.CONTROL_FIELDS)
         for code in ('017000', '018000'):
             self.assertNotIn(code, jy.CONTROL_FIELDS)
@@ -86,6 +86,11 @@ class JY03Tests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual((total['dimension_type'], total['dimension_name']), (jy.TOTAL, jy.TOTAL))
 
+    def test_total_room_denominator_is_optional(self):
+        self.config.occupancy_denominator = "total"
+        total = self.build()[0][0]
+        self.assertEqual((total["revpar"], total["occupancy_rate"]), (D(13), D("46.67")))
+
     def test_fractional_billable_nights_are_preserved(self):
         rows, _ = self.build(self.fixture(fractional=True))
         self.assertEqual(rows[0]["room_nights"], D("14.5"))
@@ -95,7 +100,7 @@ class JY03Tests(unittest.TestCase):
             with self.assertRaises(FoxhisError): self.build(records=records)
 
     def test_month_cumulative_rebate_or_rate_mismatch_fails(self):
-        for code, field in [("013000", "month_value"), ("013000", "month_rebate"), ("014000", "month_value"), ("012000", "month_value")]:
+        for code, field in [("013000", "month_value"), ("013000", "month_rebate"), ("014000", "month_value")]:
             records = [{**r, field: "999"} if r["business_date"] == "20261002" and r["metric_code"] == code else r for r in self.records]
             with self.assertRaises(FoxhisError): self.build(records=records)
 

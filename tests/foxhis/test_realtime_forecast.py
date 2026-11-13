@@ -93,8 +93,8 @@ class RealtimeForecastTests(unittest.TestCase):
         ]
         return status.build_rows(records, {"A": "大床房", "B": "双床房"}, self.config, self.stamp.date(), self.stamp)
 
-    def forecasts(self):
-        return status.build_forecast_rows(self.rooms(), self.stamp)
+    def forecasts(self, count_locked=False):
+        return status.build_forecast_rows(self.rooms(), self.stamp, count_locked)
 
     def seed(self, row):
         sql = "INSERT INTO pms_room_type_forecast (" + ",".join(status.FORECAST_COLUMNS) + ") VALUES (" + ",".join(["%s"] * len(status.FORECAST_COLUMNS)) + ")"
@@ -104,10 +104,19 @@ class RealtimeForecastTests(unittest.TestCase):
     def contents(self):
         return self.db.db.execute("SELECT hotel_id,source_platform,stay_date,pms_room_type_id,total_rooms FROM pms_room_type_forecast ORDER BY hotel_id,stay_date,pms_room_type_id").fetchall()
 
-    def test_current_inventory_excludes_repair_and_locked_rooms(self):
+    def test_current_inventory_excludes_locked_rooms_and_repairs(self):
         a, b = self.forecasts()
+        # 104 是空房但房态为维修，即使同时锁定也不计入可售。201 是锁定空房，默认不计入。
         self.assertEqual((a["total_rooms"], a["available_rooms"], a["occupied_rooms"]), (4, 2, 1))
         self.assertEqual((b["total_rooms"], b["available_rooms"], b["occupied_rooms"]), (1, 0, 0))
+        self.assertEqual(a["stay_date"], self.stamp.date())
+        for field in ("overbooking_rooms", "room_revenue", "adr", "revpar"):
+            self.assertIsNone(a[field])
+
+    def test_locked_rooms_can_be_counted_as_available(self):
+        a, b = self.forecasts(count_locked=True)
+        self.assertEqual((a["total_rooms"], a["available_rooms"], a["occupied_rooms"]), (4, 2, 1))
+        self.assertEqual((b["total_rooms"], b["available_rooms"], b["occupied_rooms"]), (1, 1, 0))
         self.assertEqual(a["stay_date"], self.stamp.date())
         for field in ("overbooking_rooms", "room_revenue", "adr", "revpar"):
             self.assertIsNone(a[field])

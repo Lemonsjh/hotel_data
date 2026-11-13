@@ -83,6 +83,8 @@
     "database": "",
     "charset": "cp936",
     "fetch_after": "03:30",
+    "count_locked_as_available": false,
+    "occupancy_denominator": "available",
     "business_date_offset_days": 1,
     "reports": "room_status,room_revenue,jl01,jy01,jy03,jl11,jd01",
     "timeout_seconds": 600

@@ -25,7 +25,7 @@ class JL01Tests(unittest.TestCase):
                         self.record("20261018", "ZZZ", "手工输入", 0, 0, 0, "0", "{"),
                         self.record("20251018", "RR", "去年历史房型", 20, 19, 19, "2353.23"),
                         self.record("20251018", "{{{", "总计", 20, 19, 19, "2353.23", "{")]
-        self.controls = self.control("20261018", (61, 55, 41, "74.55", "4603.62", "112.28", "75.47")) + self.control("20251018", (20, 19, 19, "100", "2353.23", "123.85", "117.66"))
+        self.controls = self.control("20261018", (61, 55, 41, "4603.62", "112.28", "75.47")) + self.control("20251018", (20, 19, 19, "2353.23", "123.85", "117.66"))
         self.db = DatabaseAdapter()
         columns = ",".join(f"`{name}` TEXT" for name in jl.COLUMNS)
         self.db.db.execute(f"CREATE TABLE jl01_room_type_performance_daily ({columns}, UNIQUE(hotel_id,business_date,room_type_name))")
@@ -70,8 +70,14 @@ class JL01Tests(unittest.TestCase):
         self.assertEqual(prior["pms_rate_room_type_id"], "RR")
         self.assertEqual(summary["manual_zero_rows_skipped"], 1)
 
+    def test_total_room_denominator_is_optional(self):
+        self.config.occupancy_denominator = "total"
+        ar = next(r for r in self.build()[0] if r["pms_rate_room_type_id"] == "AR")
+        self.assertEqual(ar["occupancy_rate"], Decimal("50.0000"))
+        self.assertEqual(ar["revpar"], Decimal("59.28"))
+
     def test_hotel_daily_revenue_or_nights_mismatch_fails(self):
-        for code in ("013000", "011000", "012000", "014000", "018560"):
+        for code in ("013000", "011000", "014000", "018560"):
             controls = [{**r, "metric_value": "999"} if r["business_date"] == "20261018" and r["metric_code"] == code else r for r in self.controls]
             with self.assertRaises(FoxhisError): self.build(controls=controls)
 

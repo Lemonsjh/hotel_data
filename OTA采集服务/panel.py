@@ -11,6 +11,7 @@ FOX_CODE = Path(__file__).resolve().parent / "foxhis_pms"
 if str(FOX_CODE) not in sys.path:
     sys.path.insert(0, str(FOX_CODE))
 from foxhis_accounts import MAX_ACCOUNTS, OVERRIDE_FIELDS, apply_foxhis_accounts, display_slots
+from foxhis_config import parse_count_locked, parse_occupancy_denominator
 
 YOLO_CODE = Path(__file__).resolve().parent.parent / "yolo_pms"
 if str(YOLO_CODE) not in sys.path:
@@ -123,6 +124,21 @@ def config_control(settings: dict[str, Any], key: str, label: str, secret: bool)
                           for minute, text in MINUTE_CHOICES.items())
         return (f"<div class='field'><label for='collection-minute'>{esc(label)}</label>"
                 f"<select id='collection-minute' name='{key}'>{options}</select></div>")
+    if key == "foxhis.count_locked_as_available":
+        selected = "1" if parse_count_locked(current) else "0"
+        choices = (("0", "锁定不计入可售"), ("1", "锁定计入可售"))
+    elif key == "foxhis.occupancy_denominator":
+        selected = parse_occupancy_denominator(current)
+        choices = (("available", "可售"), ("total", "总房"))
+    else:
+        choices = ()
+    if choices:
+        options = "".join(
+            f"<option value='{esc(value)}'{' selected' if value == selected else ''}>{esc(text)}</option>"
+            for value, text in choices
+        )
+        return (f"<div class='field'><label>{esc(label)}</label>"
+                f"<select name='{esc(key)}'>{options}</select></div>")
     if key == 'huiyun.client_path':
         return (f"<div class='field client-path-field'><label for='huiyun-client-path'>{esc(label)}</label>"
                 "<div class='client-path-control'>"

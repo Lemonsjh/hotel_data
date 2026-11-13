@@ -141,6 +141,14 @@ def validate_settings(settings: Any) -> list[str]:
             datetime.strptime(gate, "%H:%M")
         except (TypeError, ValueError):
             errors.append("foxhis.fetch_after 必须是有效的 HH:MM 时刻")
+    locked = get_path(settings, "foxhis.count_locked_as_available")
+    if locked is not None and not isinstance(locked, bool) and str(locked).strip().lower() not in {
+        "0", "1", "true", "false", "yes", "no", "on", "off",
+    }:
+        errors.append("foxhis.count_locked_as_available 只能表示是否把锁定计入房态可售")
+    denominator = get_path(settings, "foxhis.occupancy_denominator")
+    if denominator not in (None, "", "available", "total"):
+        errors.append("foxhis.occupancy_denominator 只能是 available 或 total")
     reports = get_path(settings, "foxhis.reports")
     if reports:
         allowed = {"room_status", "room_revenue", "jl01", "jy01", "jy03", "jl11", "jd01"}

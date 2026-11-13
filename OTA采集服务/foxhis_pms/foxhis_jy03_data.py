@@ -17,7 +17,7 @@ TOTAL = "总营业指标"
 DIMENSIONS = (TOTAL,)
 # 月报保留既有指标口径，不随 JY01 新增客房其他收入而变化。
 CONTROL_FIELDS = ("010100", "010110", "010120", "010130", "010190",
-                  "011000", "012000", "013000", "014000", "018530", "018560")
+                  "011000", "013000", "014000", "018530", "018560")
 COLUMNS = ["hotel_name", "hotel_id", "source_platform", "period_month", "dimension_type", "dimension_name",
            "room_type_id", "room_count", "room_nights", "room_revenue", "maintain_rooms", "occupancy_rate", "adr", "revpar", "snapshot_time"]
 
@@ -51,9 +51,9 @@ def has_monthly_data(config: Config) -> bool:
         connection.close()
 
 
-def rates(revenue: Decimal, nights: Decimal, available: Decimal | None, capacity: Decimal | None) -> dict:
+def rates(revenue: Decimal, nights: Decimal, occupancy_base: Decimal | None, capacity: Decimal | None) -> dict:
     return {"adr": rounded(revenue / nights) if nights else None,
-            "occupancy_rate": rounded(nights * 100 / available) if available else None,
+            "occupancy_rate": rounded(nights * 100 / occupancy_base) if occupancy_base else None,
             "revpar": rounded(revenue / capacity) if capacity else None}
 
 
@@ -64,7 +64,8 @@ def output_row(config: Config, month: date, snapshot: datetime,
             "room_count": whole(capacity) if capacity is not None else None,
             "room_nights": nights, "room_revenue": rounded(revenue),
             "maintain_rooms": whole(maintain) if maintain is not None else None,
-            **rates(revenue, nights, available, capacity), "snapshot_time": snapshot.replace(microsecond=0)}
+            **rates(revenue, nights, capacity if config.occupancy_denominator == "total" else available, capacity),
+            "snapshot_time": snapshot.replace(microsecond=0)}
 
 
 def build_month(records: list[dict], config: Config, month: date, end: date, snapshot: datetime) -> tuple[list[dict], dict]:
@@ -94,12 +95,12 @@ def build_month(records: list[dict], config: Config, month: date, end: date, sna
             raise FoxhisError("JY03 日结房量或计费间夜无效。")
     summed = {code: sum((m[code] for m in daily.values()), Decimal(0)) for code in CONTROL_FIELDS}
     for code in CONTROL_FIELDS:
-        if code not in ("012000", "014000", "018560") and summed[code] != references[code]:
+        if code not in ("014000", "018560") and summed[code] != references[code]:
             raise FoxhisError(f"JY03 原生月累计与逐日合计 {code} 不一致。")
     rebate = sum(rebates.values(), Decimal(0))
     if rebate != reference_rebate:
         raise FoxhisError("JY03 返减月累计与逐日合计不一致。")
-    for code, numerator, denominator, factor in (("012000", "011000", "010190", 100), ("014000", "013000", "011000", 1), ("018560", "013000", "010100", 1)):
+    for code, numerator, denominator, factor in (("014000", "013000", "011000", 1), ("018560", "013000", "010100", 1)):
         expected = rounded(summed[numerator] * factor / summed[denominator]) if summed[denominator] else Decimal(0)
         if rounded(references[code]) != expected:
             raise FoxhisError(f"JY03 原生月累计比率 {code} 不一致。")

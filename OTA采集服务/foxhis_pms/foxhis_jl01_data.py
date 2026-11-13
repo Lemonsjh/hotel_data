@@ -16,7 +16,7 @@ COLUMNS = ["hotel_id", "hotel_name", "source_platform", "business_date", "room_t
            "pms_rate_room_type_id", "room_nights", "occupancy_rate", "room_revenue", "adr", "revpar", "snapshot_time"]
 BASE_METRICS = ("total_rooms", "available_rooms", "room_nights", "room_revenue")
 CONTROL_FIELDS = {"010100": "total_rooms", "010190": "available_rooms", "011000": "room_nights",
-                  "012000": "occupancy_rate", "013000": "room_revenue", "014000": "adr", "018560": "revpar"}
+                  "013000": "room_revenue", "014000": "adr", "018560": "revpar"}
 
 
 def collection_dates(today: date) -> list[date]:
@@ -49,12 +49,19 @@ def rounded(value: Decimal, places: str = "0.01") -> Decimal:
     return value.quantize(Decimal(places), rounding=ROUND_HALF_UP)
 
 
-def derived(metrics: dict) -> dict:
+def derived(metrics: dict, *, denominator: str = "available") -> dict:
     revenue, nights = metrics["room_revenue"], metrics["room_nights"]
+    total = metrics["total_rooms"]
+    if denominator == "total":
+        base = total
+    elif "available_rooms" not in metrics:
+        raise FoxhisError("JL01 缺少可售房日，拒绝计算出租率。")
+    else:
+        base = metrics["available_rooms"]
     return {**metrics,
-            "occupancy_rate": rounded(nights * 100 / metrics["available_rooms"], "0.0001") if metrics["available_rooms"] else None,
+            "occupancy_rate": rounded(nights * 100 / base, "0.0001") if base else None,
             "adr": rounded(revenue / nights) if nights else None,
-            "revpar": rounded(revenue / metrics["total_rooms"]) if metrics["total_rooms"] else None}
+            "revpar": rounded(revenue / total) if total else None}
 
 
 def build_rows(records: list[dict], controls: list[dict], config: Config, days: list[date], snapshot: datetime,
@@ -128,7 +135,7 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
         summed = {field: value + manual_totals.get(day, {}).get(field, Decimal(0)) for field, value in summed.items()}
         if any(summed[field] != totals[day][field] for field in BASE_METRICS):
             raise FoxhisError("JL01 房型明细与原生总计不一致。")
-        metrics = derived(summed)
+        metrics = derived(summed, denominator=config.occupancy_denominator)
         for code, field in CONTROL_FIELDS.items():
             reference = control_map.get((day, code))
             if reference is None:
@@ -139,7 +146,7 @@ def build_rows(records: list[dict], controls: list[dict], config: Config, days: 
         audits[day.isoformat()] = metrics
     rows, components = [], {}
     for (day, code), values in sorted(grouped.items()):
-        metrics = derived(values)
+        metrics = derived(values, denominator=config.occupancy_denominator)
         rows.append({"hotel_id": config.hotel_id, "hotel_name": config.hotel_name, "source_platform": SOURCE_PLATFORM,
                      "business_date": day, "room_type_name": values["name"], "room_type_id": None,
                      "pms_rate_room_type_id": code, "room_nights": metrics["room_nights"],

@@ -379,6 +379,14 @@ def configured_foxhis_accounts(foxhis: dict[str, Any]) -> list[dict[str, Any]]:
     return pms_providers.load_foxhis_accounts().complete_accounts(foxhis)
 
 
+def _foxhis_switch_env(foxhis: dict[str, Any]) -> tuple[str, str]:
+    """酒店级口径。缺省保持西软原口径，不随单个业务库覆盖。"""
+    raw_locked = foxhis.get("count_locked_as_available")
+    locked = raw_locked is True or str(raw_locked or "").strip().lower() in {"1", "true", "yes", "on"}
+    denominator = "total" if str(foxhis.get("occupancy_denominator") or "").strip().lower() == "total" else "available"
+    return ("1" if locked else "0"), denominator
+
+
 _FOXHIS_ACCOUNT_ENV = (
     ("server", "FOXHIS_SERVER"),
     ("charset", "FOXHIS_CHARSET"),
@@ -502,6 +510,9 @@ def build_env(settings: dict[str, Any], platform: str | None = None) -> dict[str
         put_if(env, "FOXHIS_REPORTS", ",".join(str(item) for item in reports))
     else:
         put_if(env, "FOXHIS_REPORTS", reports)
+    locked_flag, occupancy_base = _foxhis_switch_env(foxhis)
+    env["FOXHIS_COUNT_LOCKED_AS_AVAILABLE"] = locked_flag
+    env["FOXHIS_OCCUPANCY_DENOMINATOR"] = occupancy_base
     env.pop("FOXHIS_ACCOUNTS", None)
     if platform == "foxhis":
         foxhis_accounts = configured_foxhis_accounts(foxhis)

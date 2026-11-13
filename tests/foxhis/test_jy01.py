@@ -62,11 +62,19 @@ class JY01Tests(unittest.TestCase):
         rows, summary = self.build()
         self.assertEqual(len(rows), 30)
         self.assertEqual(rows[-1]["occupancy_rate"], Decimal("74.55"))
+        self.assertIn("计费间夜/可售", summary["basis"])
         self.assertEqual(rows[-1]["room_revenue"], Decimal("4603.62"))
         self.assertEqual(rows[-1]["sold_rooms"], 41)
         self.assertEqual(rows[-1]["remaining_rooms"], 14)
         self.assertIsNone(rows[-1]["orders_today"])
         self.assertIn("orders_today", summary["unmapped_fields"])
+
+    def test_total_room_denominator_is_optional(self):
+        self.config.occupancy_denominator = "total"
+        rows, summary = self.build()
+        self.assertEqual(rows[-1]["occupancy_rate"], Decimal("67.21"))
+        self.assertEqual(rows[-1]["revpar"], Decimal("75.47"))
+        self.assertIn("计费间夜/总房", summary["basis"])
 
     def test_free_room_is_occupied_but_not_a_paid_night(self):
         # 西软 2026-09-30 的实际反例：37 间占用，1 间免费，计费出租 36。
@@ -185,7 +193,7 @@ class JY01Tests(unittest.TestCase):
             with self.assertRaises(FoxhisError): self.build(metrics=records)
 
     def test_journal_formulas_and_room_detail_mismatches_fail(self):
-        for code in ("012000", "014000", "018560", "013000", "011000"):
+        for code in ("014000", "018560", "013000", "011000"):
             records = [{**r, "metric_value": "999"} if r["metric_code"] == code else r for r in self.metrics]
             with self.assertRaises(FoxhisError): self.build(metrics=records)
         rooms = [{**self.rooms[0], "room_revenue": "1"}, *self.rooms[1:]]
