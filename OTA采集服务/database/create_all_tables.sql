@@ -202,6 +202,7 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_order_detail` (
   `form_id` bigint unsigned NOT NULL,
   `order_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `client_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `member_level_name` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '优享会会员等级',
   `order_source_type` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `ctrip_source_type` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `alliance_name` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,

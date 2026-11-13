@@ -41,9 +41,11 @@ def prepare(root: Path, backup: Path, manifest: dict, content: dict[str, bytes])
     for relative in [*content, *removed]:
         path = destination(root, relative)
         original = path.read_bytes() if path.exists() else None
-        if relative in managed and original is not None and digest(original) != managed[relative]:
+        checksum = digest(original) if original is not None else None
+        if (relative in managed and checksum is not None and checksum != managed[relative]
+                and original != content.get(relative)):
             raise ValueError("Locally modified program file; refusing overwrite: " + relative)
-        plan["files"][relative] = digest(original) if original is not None else None
+        plan["files"][relative] = checksum
         if original is not None:
             copy = backup / "files" / relative
             copy.parent.mkdir(parents=True, exist_ok=True)

@@ -126,12 +126,12 @@ class CtripOrderDetailTests(unittest.TestCase):
         names = [dict(zip(self.module.HEADERS, row))["client_name"] for row in rows]
         self.assertEqual(names, ["测试客人", None])
 
-    def test_existing_order_table_gains_name_and_amount_only_once(self):
+    def test_existing_order_table_gains_name_amounts_and_level_only_once(self):
         import ota_mysql_writer as writer
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         columns = {key: "varchar" for key in self.module.HEADERS
-                   if key not in {"client_name", *self.module.AMOUNT_FIELDS}}
+                   if key not in {"client_name", "member_level_name", *self.module.AMOUNT_FIELDS}}
         with patch.dict("os.environ", {"HOTEL_ID": "test"}):
             rows = self.module.build_rows([
                 {"formId": 1, "arrival": "2026-10-30", "clientName": "测试客人"}
@@ -142,7 +142,8 @@ class CtripOrderDetailTests(unittest.TestCase):
                 writer.sync_order_detail_history(self.module.TABLE_NAME, self.module.HEADERS,
                                                  rows, "test", date(2026, 10, 1))
         alters = [call for call in cursor.execute.call_args_list if call.args[0].startswith("ALTER TABLE")]
-        self.assertEqual(len(alters), 5)
+        self.assertEqual(len(alters), 6)
+        self.assertTrue(any("`member_level_name`" in call.args[0] for call in alters))
         self.assertIn("`client_name`", alters[0].args[0])
         self.assertIn("`order_amount`", alters[1].args[0])
         self.assertIn("`client_name`=VALUES(`client_name`)", cursor.executemany.call_args.args[0])
@@ -156,8 +157,11 @@ class CtripOrderDetailTests(unittest.TestCase):
         client.post_json.side_effect = [
             {"resStatus": {"rcode": 200}, "detail": {
                 "amount": "1,234.50", "originTotalPrice": "2000.00",
-                "totalPrice": "1800.50", "originTotalCost": "1600.00"}},
-            {"resStatus": {"rcode": 200}, "detail": {key: 0 for key in self.module.AMOUNT_FIELDS.values()}},
+                "totalPrice": "1800.50", "originTotalCost": "1600.00",
+                "promotionList": [{"name": "天天特价"}, {"type": 2695, "name": "优享会钻石会员85折"}]}},
+            {"resStatus": {"rcode": 200}, "detail": {
+                **dict.fromkeys(self.module.AMOUNT_FIELDS.values(), 0),
+                "promotionList": [{"name": "门店新客（额外折扣）"}]}},
             {"resStatus": {"rcode": 200}, "detail": {}},
         ]
         items = [{"hotel": 9, "formId": i, "orderId": str(i), "arrival": "2026-10-30",
@@ -167,6 +171,8 @@ class CtripOrderDetailTests(unittest.TestCase):
             rows = self.module.build_rows(items, datetime(2026, 10, 30))
         amounts = [dict(zip(self.module.HEADERS, row))["order_amount"] for row in rows]
         self.assertEqual(amounts, [Decimal("1234.50"), Decimal(0), None])
+        self.assertEqual([dict(zip(self.module.HEADERS, row))["member_level_name"] for row in rows],
+                         ["优享会钻石会员", None, None])
         for column, expected in (("origin_total_price", "2000.00"), ("total_price", "1800.50"),
                                  ("origin_total_cost", "1600.00")):
             self.assertEqual([dict(zip(self.module.HEADERS, row))[column] for row in rows],

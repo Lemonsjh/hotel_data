@@ -429,6 +429,7 @@ def sync_order_detail_history(
                     ("origin_total_price", "DECIMAL(14,2) DEFAULT NULL COMMENT '原卖价'", "decimal"),
                     ("total_price", "DECIMAL(14,2) DEFAULT NULL COMMENT '优惠后卖价'", "decimal"),
                     ("origin_total_cost", "DECIMAL(14,2) DEFAULT NULL COMMENT '原底价'", "decimal"),
+                    ("member_level_name", "VARCHAR(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '优享会会员等级'", "varchar"),
                 ):
                     if column in headers and column not in column_types:
                         cursor.execute(f"ALTER TABLE `ctrip_ota_order_detail` ADD COLUMN `{column}` {definition}")

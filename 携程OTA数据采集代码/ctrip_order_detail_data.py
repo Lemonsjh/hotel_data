@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -33,7 +34,7 @@ HEADERS = [
     "order_source_type", "ctrip_source_type", "alliance_name", "order_type", "order_type_name",
     "order_status_code", "order_status", "order_status_type", "booking_time", "arrival_date",
     "departure_date", "room_type_name", "room_quantity", "room_night_count", "guest_count",
-    "currency", *AMOUNT_FIELDS, "payment_type", "payment_term", "is_auto_confirmed", "is_guaranteed",
+    "currency", *AMOUNT_FIELDS, "member_level_name", "payment_type", "payment_term", "is_auto_confirmed", "is_guaranteed",
     "is_hour_room", "is_credit_order", "is_free_room_order", "snapshot_time",
 ]
 PLATFORM_SCOPES = {
@@ -164,6 +165,20 @@ def fetch_orders(client: FlowBrowserClient, start: date, end: date, captured_at:
     return list(orders_by_form_id.values())
 
 
+def preferred_member_level(promotions: Any) -> str | None:
+    if not isinstance(promotions, list):
+        return None
+    levels = set()
+    for promotion in promotions:
+        if not isinstance(promotion, dict):
+            continue
+        name = str(promotion.get("name") or "").strip()
+        match = re.fullmatch(r"(优享会\s*[\u4e00-\u9fff]{1,12}会员)\s*(?:[0-9]+(?:\.[0-9]+)?\s*折)?", name)
+        if match:
+            levels.add(match[1])
+    return next(iter(levels)) if len(levels) == 1 else None
+
+
 def fetch_order_amounts(client: FlowBrowserClient, items: list[dict[str, Any]]) -> None:
     for index, item in enumerate(items):
         if index:
@@ -181,6 +196,7 @@ def fetch_order_amounts(client: FlowBrowserClient, items: list[dict[str, Any]]) 
         for column, source in AMOUNT_FIELDS.items():
             amount = detail.get(source)
             item[column] = None if amount in (None, "") else Decimal(str(amount).replace(",", ""))
+        item["member_level_name"] = preferred_member_level(detail.get("promotionList"))
         if (index + 1) % PAGE_SIZE == 0 or index + 1 == len(items):
             print(f"Ctrip order amounts fetched: {index + 1}/{len(items)}", flush=True)
 
@@ -208,6 +224,7 @@ def build_rows(items: list[dict[str, Any]], captured_at: datetime) -> list[list[
             date_value(item.get("departure")), item.get("roomName"), int_value(item.get("quantity")),
             int_value(item.get("liveDays")), int_value(item.get("persons")), item.get("currency"),
             *[item.get(column) for column in AMOUNT_FIELDS],
+            item.get("member_level_name"),
             item.get("paymentType"), item.get("paymentTerm"), flag(item.get("isAutoConfirmed")),
             flag(item.get("isGuaranteed")), flag(item.get("isHourRoom")), flag(item.get("isCreditOrder")),
             flag(item.get("isFreeRoomOrder")), captured_at,

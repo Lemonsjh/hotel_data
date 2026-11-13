@@ -24,7 +24,8 @@ MySQL 统一存储
 
 部署目录包含 `一键更新.bat`、`update_guard.py` 和 `updater/` 时，可双击入口从 Gitee `Lemonsjh/hotel_data` 检查并确认安装最新正式 Release，不需要 Git 或 Token。此前发出的旧部署包需先补装更新器。
 
-- 只替换白名单内的本地程序文件，不覆盖酒店配置、Cookie、浏览器资料、日志、采集数据和运行环境；不连接或迁移数据库。
+- 新版更新器根据正式更新包的清单安装程序文件，校验路径、扩展名及文件哈希。酒店配置、Cookie、浏览器资料、日志、采集数据和运行环境仍受保护，更新器不连接或迁移数据库。
+- 已安装的旧更新器如果报 `Path is not an allowed program file`，需通过兼容旧白名单的过渡包或新版完整便携包升级一次。此后新增代码目录无需再升级更新器的目录白名单。
 - 有采集、调价、回复等业务正在运行时拒绝更新。校验通过、业务空闲后才停服，备份、安装并检查，失败回退代码，恢复此前运行的组件。
 - Python/依赖不匹配时停止，另行安装运行环境。更新器不从 master 源码包直接覆盖程序。
 - 发布者可继续通过 GitHub Actions 的 **Build release update** 工作流构建。酒店更新端读取 Gitee；需在对应 Gitee 正式发行版上传 `hotel-collector-update.zip` 和 `hotel-collector-update.sha256`。Git 双端推送不会同步发行版附件，自动生成的源码 ZIP 不能替代更新包。

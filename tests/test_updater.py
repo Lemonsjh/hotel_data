@@ -145,6 +145,28 @@ class UpdaterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             core.prepare(self.root, self.root / "updater/backups/test", manifest, content)
 
+    def test_already_matching_managed_file_can_be_installed(self):
+        name = "mysql_connection.py"
+        _, manifest, content = self.package()
+        (self.root / name).write_bytes(content[name])
+        (self.root / "updater").mkdir()
+        (self.root / "updater/installed.json").write_text(
+            json.dumps({"files": {name: fmt.digest(b"# old")}})
+        )
+        plan = core.prepare(self.root, self.root / "updater/backups/test", manifest, content)
+        self.assertEqual(plan["files"][name], manifest["files"][name])
+
+    def test_new_code_directory_keeps_data_paths_protected(self):
+        name = "future_hotel_connector/collector.py"
+        path, _, _ = self.package({name: b"# new PMS"})
+        self.assertIn(name, fmt.validate_package(path, self.root)[1])
+        for protected in ("future_hotel_connector/config/settings.py", "future_hotel_connector/state/run.py",
+                          "future_hotel_connector/settings.json", "future_hotel_connector/client.exe",
+                          "runtime/boot.py", ".git/hooks/post-merge.py",
+                          "future_hotel_connector/edge-user-data/cache.js"):
+            with self.subTest(name=protected), self.assertRaises(ValueError):
+                fmt.allowed_path(protected)
+
     def test_code_only_updater_rejects_database_migrations(self):
         for changes in ({"schema": [{"table": "anything"}]}, {"migrations": ["some.sql"]}):
             path, _, _ = self.package(manifest_changes=changes)
@@ -303,14 +325,15 @@ class UpdaterTests(unittest.TestCase):
         self.assertFalse(fmt.BROWSER_EXTENSION_FILES & content.keys())
         self.assertEqual(manifest["removed"], [])
 
-    def test_dual_and_rezen_sources_ship_with_the_session_library(self):
+    def test_new_pms_sources_ship_with_the_rezen_session_library(self):
         tracked = subprocess.check_output(
-            ["git", "ls-files", "-z", "--", "pms_dual", "rezen_pms"], cwd=ROOT).decode("utf-8").split("\0")
+            ["git", "ls-files", "-z", "--", "pms_dual", "rezen_pms", "yolo_pms"], cwd=ROOT).decode("utf-8").split("\0")
         tracked = [name for name in tracked if name]
         self.assertIn("pms_dual/room_status.py", tracked)
         self.assertIn("rezen_pms/collector.py", tracked)
         self.assertIn("rezen_pms/lib/Microsoft.Diagnostics.Runtime.dll", tracked)
         self.assertIn("rezen_pms/lib/License-Stable.rtf", tracked)
+        self.assertIn("yolo_pms/yolo_daily_report_data.py", tracked)
         for name in tracked:
             self.assertEqual(fmt.allowed_path(name), name)
         for name in ("rezen_pms/RezenProcessSession.exe", "huiyun_pms/ClientHost.exe", "pms_dual/config/settings.json"):
@@ -319,7 +342,7 @@ class UpdaterTests(unittest.TestCase):
 
     def test_publisher_includes_only_tracked_program_files(self):
         required = ["mysql_connection.py", "ota_mysql_writer.py", "OTA采集服务/runner.py", "OTA采集服务/panel.py",
-                    "meituan_pms/collector.py"]
+                    "meituan_pms/collector.py", "future_hotel_connector/collector.py"]
         for name in required:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)

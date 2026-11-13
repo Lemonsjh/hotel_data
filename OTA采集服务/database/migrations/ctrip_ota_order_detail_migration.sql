@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS ctrip_ota_order_detail (
     form_id BIGINT UNSIGNED NOT NULL,
     order_id VARCHAR(64) NULL,
     client_name VARCHAR(255) NULL,
+    member_level_name VARCHAR(64) NULL COMMENT '优享会会员等级',
     order_source_type VARCHAR(32) NULL,
     ctrip_source_type VARCHAR(32) NULL,
     alliance_name VARCHAR(32) NULL,

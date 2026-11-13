@@ -210,7 +210,7 @@ class MergeTests(unittest.TestCase):
         for _provider, script, _args in pms_providers.task_specs("pms_fetch", settings):
             self.assertTrue(pms_providers.script_path(settings, "meituan_rezen", script).is_file())
 
-    def test_combined_source_can_be_written_without_touching_the_other_source(self):
+    def test_combined_source_replaces_hotel_forecast_and_only_its_own_hourly_rows(self):
         forecast = [row("溪眠 / 溪眠舒适", "U1", 3, "150")]
         hourly = [row("溪眠 / 溪眠舒适", "U1", 3, None)]
         for item in (*forecast, *hourly):
@@ -218,9 +218,11 @@ class MergeTests(unittest.TestCase):
             item["room_type_id"] = "U1"
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchall.side_effect = [[], []]
+        cursor.fetchall.return_value = []
+        cursor.fetchone.return_value = None
         with patch.dict(os.environ, {"PMS_RETENTION": "{}"}):
             sync_mysql(forecast, hourly, source="PMS（美团+Rezen）", connection=connection)
         connection.commit.assert_called_once()
-        deletes = [call.args[1][1] for call in cursor.execute.call_args_list if "DELETE FROM" in call.args[0]]
-        self.assertEqual(deletes, ["PMS（美团+Rezen）", "PMS（美团+Rezen）", "PMS（美团+Rezen）"])
+        deletes = [call.args for call in cursor.execute.call_args_list if "DELETE FROM" in call.args[0]]
+        self.assertEqual(deletes[0], ("DELETE FROM `pms_room_type_forecast` WHERE hotel_id=%s", ("h1",)))
+        self.assertTrue(all(args[:2] == ("h1", "PMS（美团+Rezen）") for _, args in deletes[1:]))

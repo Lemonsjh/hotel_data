@@ -12,13 +12,8 @@ from pathlib import Path, PurePosixPath
 REPOSITORY = "Lemonsjh/hotel_data"
 ASSET_NAME = "hotel-collector-update.zip"
 MAX_BYTES = 50 * 1024 * 1024
-CODE_DIRS = {
-    "OTA采集服务", "美团OTA数据采集代码", "携程OTA数据采集代码",
-    "宝寓PMS数据采集代码", "别样红PMS数据采集代码", "正式数据抓取-PMS（别样红）",
-    "meituan_pms", "huiyun_pms", "pms_dual", "rezen_pms", "updater",
-}
-ROOT_FILES = {"mysql_connection.py", "ota_mysql_writer.py", "update_guard.py", "一键更新.bat"}
 BLOCKED = {"config", "state", "logs", "output", "__pycache__", "browser_profiles", "user-data", "backups", "work"}
+EXCLUDED_ROOTS = {"runtime", "docs", "tests", "exports", "dist", "ota数据", "文档", "sites", "extensions"}
 EXTENSIONS = {".py", ".ps1", ".bat", ".sql", ".css", ".html", ".js", ".cs", ".dll", ".rtf"}
 BROWSER_EXTENSION_FILES = {
     "extensions/meituan-login-sync/" + name for name in (
@@ -44,7 +39,7 @@ def version(value: str) -> tuple[int, int, int]:
 
 
 def allowed_path(value: str) -> str:
-    if not isinstance(value, str) or "\\" in value or value != str(PurePosixPath(value)):
+    if not isinstance(value, str) or value.startswith("/") or "\\" in value or value != str(PurePosixPath(value)):
         raise ValueError("Noncanonical package path")
     parts = PurePosixPath(value).parts
     if not parts or any(
@@ -54,10 +49,11 @@ def allowed_path(value: str) -> str:
         for part in parts
     ):
         raise ValueError("Unsafe package path")
-    if any(part.lower() in BLOCKED for part in parts):
+    if any(part.startswith(".") or part.casefold() in BLOCKED
+           or part.casefold().endswith("user-data") for part in parts):
         raise ValueError("Protected deployment data path")
-    if value not in ROOT_FILES | BROWSER_EXTENSION_FILES and not (
-        len(parts) > 1 and parts[0] in CODE_DIRS and PurePosixPath(value).suffix in EXTENSIONS
+    if value not in BROWSER_EXTENSION_FILES and (
+        parts[0].casefold() in EXCLUDED_ROOTS or PurePosixPath(value).suffix not in EXTENSIONS
     ):
         raise ValueError("Path is not an allowed program file: " + value)
     return value

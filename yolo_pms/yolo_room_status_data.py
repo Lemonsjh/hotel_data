@@ -249,18 +249,17 @@ def sync_snapshot(rows: list[dict], config) -> int:
         with connection.cursor() as cursor:
             cursor.execute(
                 f"SELECT MAX(snapshot_time) FROM `{FORECAST_TABLE}` "
-                "WHERE hotel_id=%s AND source_platform=%s FOR UPDATE",
-                (config.hotel_id, SOURCE_PLATFORM),
+                "WHERE hotel_id=%s FOR UPDATE",
+                (config.hotel_id,),
             )
             existing = cursor.fetchone()
             if existing and existing[0] and existing[0] > moment:
                 raise YoloError("已有更新的实时快照，拒绝用较早数据覆盖。")
 
             cursor.execute(
-                f"DELETE FROM `{FORECAST_TABLE}` WHERE hotel_id=%s AND source_platform=%s",
-                (config.hotel_id, SOURCE_PLATFORM),
+                f"DELETE FROM `{FORECAST_TABLE}` WHERE hotel_id=%s",
+                (config.hotel_id,),
             )
-            # 目标主键不含来源。与其他 PMS 撞键时让 INSERT 报错回滚，避免互相覆盖。
             cursor.executemany(
                 f"INSERT INTO `{FORECAST_TABLE}` ({column_sql(FORECAST_COLUMNS)}) "
                 f"VALUES ({placeholders(FORECAST_COLUMNS)})",

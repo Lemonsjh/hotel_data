@@ -1,4 +1,4 @@
-"""房态与预测快照同一事务写入。来源由调用方指定，避免单侧采集清掉另一侧。"""
+"""同一事务替换酒店预测快照及当前来源的小时快照。"""
 from __future__ import annotations
 
 from OTA采集服务.pms_history_retention import cleanup_history
@@ -75,9 +75,14 @@ def sync_mysql(forecast_rows: list[dict], hourly_rows: list[dict], *, source: st
         connection = connect_mysql()
     try:
         with connection.cursor() as cur:
-            _reject_other_source(cur, FORECAST, "stay_date", forecast_rows, source)
             _reject_other_source(cur, HOURLY, "snapshot_hour", hourly_rows, source)
+            first = forecast_rows[0]
+            cur.execute(f"SELECT snapshot_time FROM `{FORECAST}` WHERE hotel_id=%s AND snapshot_time>%s "
+                        "LIMIT 1 FOR UPDATE", (first["hotel_id"], first["snapshot_time"]))
+            if cur.fetchone():
+                raise ValueError("已有更新的实时快照，拒绝用较早数据覆盖")
             aliases = _mapped_ids(cur, forecast_rows[0]["hotel_id"], mapping_platform) if mapping_platform else {}
+            cur.execute(f"DELETE FROM `{FORECAST}` WHERE hotel_id=%s", (first["hotel_id"],))
             for table, rows, time_key, extra in (
                 (FORECAST, forecast_rows, None, ["room_revenue", "adr", "revpar"]),
                 (HOURLY, hourly_rows, "snapshot_hour", ["snapshot_hour"]),
@@ -86,9 +91,9 @@ def sync_mysql(forecast_rows: list[dict], hourly_rows: list[dict], *, source: st
                 for row in rows:
                     room_type_id = aliases.get(row["room_type_name"]) if mapping_platform else row.get("room_type_id")
                     prepared.append({**row, "room_type_id": room_type_id})
-                where = f" AND `{time_key}`=%s" if time_key else ""
-                params = (rows[0]["hotel_id"], source, rows[0][time_key]) if time_key else (rows[0]["hotel_id"], source)
-                cur.execute(f"DELETE FROM `{table}` WHERE hotel_id=%s AND source_platform=%s{where}", params)
+                if time_key:
+                    cur.execute(f"DELETE FROM `{table}` WHERE hotel_id=%s AND source_platform=%s AND `{time_key}`=%s",
+                                (rows[0]["hotel_id"], source, rows[0][time_key]))
                 columns = BASE_COLUMNS + extra
                 cur.executemany(
                     f"INSERT INTO `{table}` ({', '.join(columns)}) VALUES "
