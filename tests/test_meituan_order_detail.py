@@ -90,7 +90,8 @@ class OrderTests(unittest.TestCase):
             sync.assert_not_called()
 
     def test_shared_writer_upsert_cleanup_and_rollback(self):
-        row = data.build_rows([item()], NOW)[0]
+        row = data.build_rows([item(guests=[{"name": "测试甲"}, {"name": " 测试甲 "}, {"name": "测试乙"}])], NOW)[0]
+        self.assertEqual(row["guest_name"], "测试甲、测试乙")
         db = Database(row)
         self.addCleanup(db.db.close)
         db.seed({**row, "order_id": "expired", "booking_time": datetime(2026, 9, 30)})
@@ -101,6 +102,9 @@ class OrderTests(unittest.TestCase):
                 patch.object(writer, "load_column_types", return_value={key: "varchar" for key in row}):
             for level in (2, 4):
                 data.sync_orders([{**row, "member_level": level}], START)
+            data.sync_orders([{**row, "member_level": 4, "guest_name": None}], START)
+            self.assertEqual(db.db.execute(f"SELECT guest_name FROM {data.TABLE_NAME} WHERE order_id=?",
+                                          (row["order_id"],)).fetchone()[0], "测试甲、测试乙")
             actual = dict(db.db.execute(f"SELECT order_id,member_level FROM {data.TABLE_NAME}"))
             self.assertEqual(actual, {row["order_id"]: "4", "boundary": "3", "other": "3", "other-poi": "3"})
             db.fail_delete = True

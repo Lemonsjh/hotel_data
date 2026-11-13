@@ -418,6 +418,10 @@ def sync_order_detail_history(
     try:
         with connection.cursor() as cursor:
             column_types = load_column_types(cursor, table_name)
+            if table_name == "meituan_ota_order_detail" and "guest_name" in headers and "guest_name" not in column_types:
+                cursor.execute("ALTER TABLE `meituan_ota_order_detail` ADD COLUMN `guest_name` "
+                               "VARCHAR(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '入住人姓名'")
+                column_types["guest_name"] = "varchar"
             if table_name == "ctrip_ota_order_detail":
                 for column, definition, kind in (
                     ("client_name", "VARCHAR(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL", "varchar"),
@@ -436,7 +440,9 @@ def sync_order_detail_history(
             columns = ", ".join(f"{quote}{column}{quote}" for column in headers)
             values = ", ".join(["%s"] * len(headers))
             updates = ", ".join(
-                f"{quote}{column}{quote}=VALUES({quote}{column}{quote})"
+                "`guest_name`=COALESCE(VALUES(`guest_name`), `guest_name`)"
+                if table_name == "meituan_ota_order_detail" and column == "guest_name"
+                else f"{quote}{column}{quote}=VALUES({quote}{column}{quote})"
                 for column in headers if column not in {"hotel_id", key_column}
             )
             cursor.executemany(

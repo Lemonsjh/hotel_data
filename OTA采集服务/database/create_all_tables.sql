@@ -1267,6 +1267,7 @@ CREATE TABLE IF NOT EXISTS `meituan_ota_order_detail` (
   `partner_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `order_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `source_order_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `guest_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '入住人姓名',
   `order_status` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `order_type` int DEFAULT NULL,
   `payment_type` int DEFAULT NULL,

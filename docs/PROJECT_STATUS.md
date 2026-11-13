@@ -1,5 +1,10 @@
 # 项目当前进度（PROJECT_STATUS）
 
+## 2026-11-13：美团 OTA 订单明细保存入住人姓名
+
+从订单列表的 `guests[].name` 读取入住人姓名。同一订单有多位入住人时按接口顺序去重，用顿号连接，写入 `guest_name`。旧表首次写入时补列，接口没有返回姓名时保留已有值。
+
+
 ## 2026-11-12：接入余乐通 E8HotelMis（PMS）
 
 新增 PMS 平台 `yolo`（显示名「PMS（余乐通 E8HotelMis）」，来源标签 `PMS（余乐通）`）。采集走酒店本机 SQL Server 只读直连（迷你 SQL2000，默认 `127.0.0.1,8829`），子进程调用 `sqlcmd`/`osql`，口令经 `SQLCMDPASSWORD` 传递，不进命令行。共 7 个报表脚本：经营日报（jl01 + jy01）、房型分类（jl11）、房态与小时留档（forecast + room_status）、预订明细（jd01）、房费明细（rs01）、月度统计（jy03）、离店客人（jd02，客史保留 60 天）。落库按 `hotel_id + source_platform + business_date/period` 整段替换，`jl11` 按 `hotel_id + source_platform` 整批替换；已有更新批次时拒绝旧快照覆盖。配置页新增「PMS（余乐通 E8HotelMis）」卡片，提供「自动识别客户端与库」与「校验数据库连通性」，读取本机 `数据库设置.ini` 回填实例、库名与客户端路径，账号密码人工填写。余乐通与别样红 / 宝寓 / 西软 / 美团 / 慧云互斥启用；美团 PMS + Rezen 的双侧关系保持不变。房型映射与历史清理的来源白名单同步加入 `pms_yolo` 与 `PMS（余乐通）`。

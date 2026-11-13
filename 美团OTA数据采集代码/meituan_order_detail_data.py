@@ -108,6 +108,16 @@ def date_value(value) -> date | None:
     return parsed.date() if parsed else None
 
 
+def guest_names(guests) -> str | None:
+    if not isinstance(guests, list):
+        return None
+    names = dict.fromkeys(
+        guest["name"].strip() for guest in guests
+        if isinstance(guest, dict) and isinstance(guest.get("name"), str) and guest["name"].strip()
+    )
+    return ("、".join(names)[:255]) or None
+
+
 def build_rows(items: list[dict], captured_at: datetime) -> list[dict]:
     hotel_id = os.environ.get("HOTEL_ID", "").strip()
     if not hotel_id:
@@ -120,6 +130,7 @@ def build_rows(items: list[dict], captured_at: datetime) -> list[dict]:
             "hotel_id": hotel_id, "hotel_name": HOTEL_NAME or None,
             "poi_id": POI_ID, "partner_id": PARTNER_ID, "order_id": str(item["orderId"]),
             "source_order_id": string_id(item.get("sourceOrderId")),
+            "guest_name": guest_names(item.get("guests")),
             "order_status": item["status"], "order_type": item.get("type"),
             "payment_type": item.get("paymentType"),
             "booking_time": time_value(item.get("bookingTimeString") or item.get("bookingTime")),
