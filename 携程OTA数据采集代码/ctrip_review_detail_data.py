@@ -244,6 +244,16 @@ def dimension_scores(item: dict[str, Any]) -> dict[str, float | None]:
     return result
 
 
+def merchant_reply(item: dict[str, Any]) -> dict[str, Any]:
+    replies = item.get("qReplyList") or []
+    if isinstance(replies, list):
+        for reply in reversed(replies):
+            if isinstance(reply, dict) and reply.get("isOwner") in (1, "1"):
+                return reply
+    reply = item.get("replyDetail")
+    return reply if isinstance(reply, dict) else {}
+
+
 def normalize_rows(
     payload: dict[str, Any], channel_name: str, captured_at: datetime | None = None
 ) -> list[list[Any]]:
@@ -256,8 +266,9 @@ def normalize_rows(
             continue
         images = image_urls(item)
         scores = dimension_scores(item)
-        reply = str(nested(item, "replyDetail.replyContent", "replyContent", "hotelReply", "merchantReply",
-                           "replyInfo.content", "reply.content")).strip()
+        feedback = merchant_reply(item)
+        reply = str(feedback.get("replyContent") or nested(item, "replyContent", "hotelReply", "merchantReply",
+                                                         "replyInfo.content", "reply.content")).strip()
         hotel_id = str(nested(item, "hotelId", "hotelID", default=payload_hotel_id)).strip()
         rating = normalize_score(nested(item, "avgScore", "score.avgScoreSimple", "reviewScore", "rating", "totalScore"))
         negative = nested(item, "isNegative", "isBadComment", "badComment", default=None)
@@ -271,7 +282,7 @@ def normalize_rows(
             to_datetime(nested(item, "addtime", "commentTime", "commentDate", "createTime", "reviewTime")),
             to_date(nested(item, "checkinTimeStr", "checkInDate", "consumeTime", "stayDate", "orderInfo.checkInDate")),
             reply,
-            to_datetime(nested(item, "replyDetail.replyTime", "replyTime", "replyDate", "replyInfo.replyTime", "reply.createTime")),
+            to_datetime(feedback.get("replyTime") or nested(item, "replyTime", "replyDate", "replyInfo.replyTime", "reply.createTime")),
             bool(reply),
             str(nested(item, "hotelRoomInfo", "roomName", "roomTypeName", "orderInfo.roomName")).strip(),
             str(nested(item, "productName", "ratePlanName", "orderName", "orderInfo.productName")).strip(),

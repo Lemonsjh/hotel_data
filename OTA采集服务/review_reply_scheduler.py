@@ -69,25 +69,28 @@ def wait_until(target: datetime) -> bool:
 def run_executor(settings: dict[str, Any], max_tasks: int) -> int:
     from update_guard import ensure_not_updating
     ensure_not_updating()
-    script = runner.script_path(settings, "meituan", "meituan_review_reply_task.py")
-    if not script.exists():
-        raise FileNotFoundError(f"Reply executor not found: {script}")
     maintain_logs(LOG_PATH.parent, LOG_PATH)
+    failed = False
     with LOG_PATH.open("a", encoding="utf-8") as log:
-        log.write(f"\n[{now_text()}] pending review reply scan started\n")
-        log.flush()
-        completed = subprocess.run(
-            [str(runner.python_path(settings)), str(script), "--max-tasks", str(max_tasks)],
-            cwd=str(ROOT),
-            env=runner.build_env(settings, "meituan"),
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        log.write(f"[{now_text()}] scan finished, return_code={completed.returncode}\n")
-    return completed.returncode
+        for platform in ("meituan", "ctrip"):
+            if not (settings.get(platform) or {}).get("enabled", True) or STOP_PATH.exists():
+                continue
+            script = runner.script_path(settings, platform, f"{platform}_review_reply_task.py")
+            log.write(f"\n[{now_text()}] {platform} pending review reply scan started\n")
+            log.flush()
+            try:
+                completed = subprocess.run(
+                    [str(runner.python_path(settings)), str(script), "--max-tasks", str(max_tasks)],
+                    cwd=str(ROOT), env=runner.build_env(settings, platform),
+                    stdout=log, stderr=subprocess.STDOUT,
+                )
+            except OSError as exc:
+                log.write(f"[{now_text()}] {platform} scan could not start: {exc}\n")
+                failed = True
+                continue
+            log.write(f"[{now_text()}] {platform} scan finished, return_code={completed.returncode}\n")
+            failed |= completed.returncode != 0
+    return int(failed)
 
 
 def run_scheduler() -> int:
