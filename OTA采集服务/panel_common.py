@@ -62,6 +62,7 @@ TASK_LABELS = {
 
 STATUS_LABELS = {
     "success": "成功",
+    "skipped": "已跳过",
     "failed": "失败",
     "pending": "待执行",
     "running": "运行中",

@@ -30,11 +30,13 @@ import pms_utils
 import runner
 from data_retention import cleanup_pms_history
 from mysql_connection import connect_mysql
+from pms_subtasks import SHANGHAI, daily_state
 
 OUTPUT_DIR = os.path.join(current_dir, "output")
 FETCH_DELAY_MIN_SECONDS = 2.0
 FETCH_DELAY_MAX_SECONDS = 5.0
 FAILURE_CIRCUIT_BREAKER_THRESHOLD = 3
+DAILY_REPORTS = {"RS01", "JD11", "JY01", "JY03", "JL01", "JL02", "JL11"}
 
 
 def run_fetch(code, label, fetcher):
@@ -231,6 +233,16 @@ def main() -> int:
         fetch_jobs = [job for job in fetch_jobs if job[0] in selected]
     else:
         fetch_jobs = [job for job in fetch_jobs if job[0] not in {"KF11", "JD04"}]
+    checkpoint = None
+    if os.environ.get("PMS_DAILY_CHECKPOINT") == "1" and not args.reports:
+        checkpoint = daily_state(runner, "pms", os.environ)
+        day = datetime.now(SHANGHAI).date().isoformat()
+        daily = runner.load_json(checkpoint, {})
+        skipped = {code for code in DAILY_REPORTS if daily.get(code) == day}
+        for code, _, _ in fetch_jobs:
+            if code in skipped:
+                print(f"⏭️ {code} 今日已成功采集，本轮跳过")
+        fetch_jobs = [job for job in fetch_jobs if job[0] not in skipped]
     fetch_results = run_fetch_jobs(
         fetch_jobs,
         enable_circuit_breaker=not bool(args.reports),
@@ -283,6 +295,9 @@ def main() -> int:
                     db_conn.close()
                     db_conn = connect_mysql(DB_CONFIG)
                 etl(db_conn)
+                if checkpoint is not None and code in DAILY_REPORTS:
+                    daily[code] = day
+                    runner.save_json(checkpoint, daily)
             except Exception:
                 db_conn.rollback()
                 raise

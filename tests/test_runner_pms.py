@@ -91,6 +91,88 @@ class PMSRunnerTests(unittest.TestCase):
         self.assertIn("timeout after 60s", result["error_summary"])
         self.assertIn("cannot launch", result["error_summary"])
 
+    def test_bypms_daily_success_persists_and_failed_report_retries(self):
+        from datetime import datetime
+        import pms_subtasks
+
+        self.settings["pms"]["provider"] = "bypms"
+        self.settings["foxhis"]["enabled"] = False
+        self.settings["bypms"] = {"enabled": True}
+        scripts = ["bypms_room_status_data.py", "bypms_channel_mapping_data.py",
+                   "bypms_jl11_data.py", "bypms_jd01_data.py", "bypms_rs01_data.py"]
+        self.specs[:] = [("bypms", name, []) for name in scripts]
+        for name in scripts:
+            (self.root / name).touch()
+        env = {"MYSQL_HOST": "localhost", "MYSQL_DATABASE": "hotel_a", "HOTEL_ID": "a"}
+        failure = ProcessResult(1, "Error: report unavailable")
+        success = ProcessResult(0, "OK")
+        self.execute.side_effect = [success, success, failure, success, success]
+        with patch.object(runner, "build_env", return_value=env), patch.object(pms_subtasks, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 11, 16, 12)
+            self.assertEqual(self.run_task()["status"], "partial_failed")
+            self.execute.reset_mock(side_effect=True)
+            result = self.run_task()
+            self.assertEqual([entry["status"] for entry in result["subtasks"]],
+                             ["success", "skipped", "success", "success", "success"])
+            self.assertEqual([Path(call.args[0][1]).name for call in self.execute.call_args_list],
+                             [scripts[i] for i in (0, 2, 3, 4)])
+
+            env["MYSQL_DATABASE"] = "hotel_b"
+            self.assertTrue(all(item["status"] == "success" for item in self.run_task()["subtasks"]))
+            env["MYSQL_DATABASE"] = "hotel_a"
+            clock.now.return_value = datetime(2026, 11, 17, 12)
+            self.assertTrue(all(item["status"] == "success" for item in self.run_task()["subtasks"]))
+
+    def test_meituan_refreshes_live_reports_and_scopes_daily_marks_by_org(self):
+        from datetime import datetime
+        import pms_subtasks
+
+        self.settings["pms"]["provider"] = "meituan_pms"
+        self.settings["foxhis"]["enabled"] = False
+        self.settings["meituan_pms"] = {"enabled": True}
+        live = ("collector.py", "booking_report.py")
+        daily = ("daily_report.py", "monthly_report.py", "performance_report.py", "classification_report.py",
+                 "room_performance_report.py", "revenue_report.py", "guest_report.py")
+        self.specs[:] = [("meituan_pms", name, []) for name in (*live, *daily)]
+        for _, name, _ in self.specs:
+            (self.root / name).touch()
+        env = {"MYSQL_DATABASE": "hotel_a", "HOTEL_ID": "a", "MEITUAN_PMS_ORG_ID": "1"}
+        with patch.object(runner, "build_env", return_value=env), patch.object(pms_subtasks, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 11, 16, 12)
+            self.assertEqual(self.run_task()["status"], "success")
+            self.execute.reset_mock()
+            result = self.run_task()
+            self.assertEqual(result["status"], "success")
+            self.assertEqual([Path(call.args[0][1]).name for call in self.execute.call_args_list], list(live))
+            self.assertEqual(sum(item["status"] == "skipped" for item in result["subtasks"]), len(daily))
+            env["MEITUAN_PMS_ORG_ID"] = "2"
+            self.assertTrue(all(item["status"] == "success" for item in self.run_task()["subtasks"]))
+
+    def test_yolo_and_foxhis_night_audit_skip_does_not_mark_month_report(self):
+        for platform in ("yolo", "foxhis"):
+            with self.subTest(platform=platform):
+                self.settings["pms"]["provider"] = platform
+                self.settings[platform] = {"enabled": True}
+                name = f"{platform}_jy03_data.py"
+                (self.root / name).touch()
+                self.specs[:] = [(platform, name, [])]
+                self.execute.side_effect = [ProcessResult(0, "SKIP [jy03] before night audit"),
+                                            ProcessResult(0, "OK [jy03]")]
+                for expected in ("skipped", "success", "skipped"):
+                    self.assertEqual(self.run_task()["subtasks"][0]["status"], expected)
+
+    def test_dual_monthly_retries_failed_merge_then_skips_after_success(self):
+        self.settings["pms"]["provider"] = "meituan_rezen"
+        self.settings["foxhis"]["enabled"] = False
+        self.settings["meituan_rezen"] = {"enabled": True}
+        self.settings["meituan_pms"] = {"enabled": True}
+        self.settings["rezen"] = {"enabled": True}
+        self.specs[:] = [("meituan_rezen", "monthly_report.py", [])]
+        (self.root / "monthly_report.py").touch()
+        self.execute.side_effect = [ProcessResult(1, "Error: one side failed"), ProcessResult(0, "OK")]
+        for expected in ("failed", "success", "skipped"):
+            self.assertEqual(self.run_task()["subtasks"][0]["status"], expected)
+
     def test_missing_script_does_not_block_other_scripts(self):
         (self.root / "jl01.py").unlink()
         result = self.run_task()

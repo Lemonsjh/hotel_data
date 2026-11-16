@@ -120,6 +120,32 @@ class PmsPasswordLoginTests(unittest.TestCase):
                     self.assertEqual(len(codes), 10)
                     self.assertIn('JD11', codes)
 
+    def test_default_collection_marks_jy03_after_etl_and_skips_it_next_round(self):
+        daily = {}
+        etl = Mock()
+        with patch.dict(os.environ, {'PMS_DAILY_CHECKPOINT': '1'}), \
+                patch.object(sys, 'argv', ['fetch_main.py']), \
+                patch.object(self.fetch, 'need_login', return_value=False), \
+                patch.object(pms_utils, 'ensure_hotel_name', return_value=''), \
+                patch.object(self.fetch, 'connect_mysql'), \
+                patch.object(self.fetch, 'cleanup_pms_history'), \
+                patch.object(runner, 'load_settings', return_value={}), \
+                patch.object(runner, 'load_json', return_value=daily), \
+                patch.object(runner, 'save_json') as save, \
+                patch.dict(sys.modules, {'jy03_etl': SimpleNamespace(main=etl)}), \
+                patch.object(self.fetch, 'run_fetch_jobs', return_value={'JY03': True}) as jobs:
+            self.assertEqual(self.fetch.main(), 0)
+            etl.assert_called_once()
+            save.assert_called_once()
+            self.assertIn('JY03', daily)
+
+            jobs.return_value = {}
+            self.assertEqual(self.fetch.main(), 0)
+            codes = {job[0] for job in jobs.call_args.args[0]}
+            self.assertNotIn('JY03', codes)
+            self.assertTrue({'JD01', 'FORECAST', 'ROOM_STATUS'} <= codes)
+            etl.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
