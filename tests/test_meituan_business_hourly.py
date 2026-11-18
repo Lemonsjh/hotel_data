@@ -30,6 +30,30 @@ class MeituanBusinessHourlyTests(unittest.TestCase):
         cls.module = load_module()
         cls.module.HOTEL_ID = "test-hotel"
 
+    def test_business_save_sends_daily_scores_and_hourly_rows_directly_to_mysql(self):
+        captured_at = datetime(2026, 8, 18, 10, 56, 32)
+        today = {"metrics": {"PAY_AMT": {"value": "88.00"}, "SCORE_HOS": {"value": "5.8"}}}
+        yesterday = {"metrics": {"PAY_AMT": {"value": "30.00"}}}
+        with patch.object(self.module, "datetime", wraps=datetime) as clock, \
+                patch.object(self.module, "sync_metric_history") as daily_writer, \
+                patch.object(self.module, "sync_meituan_business_metrics_hourly") as hourly_writer:
+            clock.now.return_value = captured_at
+            self.module.save_business_metrics(today, yesterday)
+
+        daily_writer.assert_called_once()
+        hourly_writer.assert_called_once()
+        headers, rows = daily_writer.call_args.args
+        daily = [dict(zip(headers, row)) for row in rows]
+        self.assertEqual(
+            [(row["business_date"].isoformat(), row["metric_code"], row["metric_value"]) for row in daily],
+            [("2026-08-18", "PAY_AMT", 88), ("2026-08-17", "PAY_AMT", 30), ("2026-08-17", "SCORE_HOS", 5.8)],
+        )
+        headers, rows = hourly_writer.call_args.args
+        hourly_by_code = {row["metric_code"]: row for row in (dict(zip(headers, values)) for values in rows)}
+        hourly = hourly_by_code["PAY_AMT"]
+        self.assertEqual((hourly["hotel_id"], hourly["snapshot_time"], hourly["metric_value"]),
+                         ("test-hotel", captured_at, 88))
+
     def test_build_hourly_rows_keep_ten_realtime_metrics_with_peer_data(self):
         metrics = {
             "DAY_ROOM_LOWEST_PRICE_AVG": {"value": "197.00", "unit": "元", "rank": "13/20", "peer_avg": "218.1"},
