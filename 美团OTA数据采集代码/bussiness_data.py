@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from zipfile import BadZipFile
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -359,12 +360,31 @@ def save_to_excel(today_data, yesterday_data, output_path=DEFAULT_EXCEL_PATH):
     write_rows_to_workbook(rows, output_path)
     save_hourly_snapshot(today_data, captured_at)
     return output_path
+
+
+def load_workbook_or_rebuild(path: Path) -> Workbook:
+    """历史工作簿损坏时先备份再重建，避免采集因为坏文件整轮失败。"""
+    if not path.exists():
+        return Workbook()
+    try:
+        return load_workbook(path)
+    except (BadZipFile, KeyError, ValueError, OSError) as exc:
+        backup = path.with_name(f"{path.stem}.corrupt-{datetime.now():%Y%m%d%H%M%S}{path.suffix}")
+        try:
+            path.replace(backup)
+            note = f"已备份为 {backup.name}"
+        except OSError:
+            note = "备份失败，直接重建"
+        print(f"工作簿无法读取（{exc}），{note}")
+        return Workbook()
+
+
 def write_rows_to_workbook(rows, output_path):
     headers = [*EXCEL_HEADERS, "hotel_id"]
     rows = [list(row) + [HOTEL_ID] for row in rows]
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    wb = load_workbook(output_path) if output_path.exists() else Workbook()
+    wb = load_workbook_or_rebuild(output_path)
     if SHEET_NAME in wb.sheetnames: del wb[SHEET_NAME]
     ws = wb.create_sheet(SHEET_NAME, 0)
     ws.append(headers)
