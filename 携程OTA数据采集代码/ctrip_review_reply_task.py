@@ -1,9 +1,10 @@
-"""Send explicitly queued Ctrip review replies and verify them against the review list."""
+"""Send queued Ctrip review replies and record confirmed submissions."""
 from __future__ import annotations
 
 import argparse
 import os
 import time
+from datetime import datetime
 
 from ctrip_review_detail_data import CHANNELS, COOKIE, TABLE_NAME, CtripReviewDetailClient, build_payload, merchant_reply, to_datetime
 from ota_mysql_writer import connect_mysql
@@ -46,25 +47,25 @@ def submit_reply(client, review_id, source, content):
         raise ValueError(f"携程回复接口 HTTP {response.status_code}")
     result = response.json()
     if (not isinstance(result, dict) or (result.get("ResponseStatus") or {}).get("Ack") != "Success"
-            or str((result.get("resStatus") or {}).get("rcode")) != "200"
-            or str(result.get("replystatus")) != "1"):
+            or (result.get("ResponseStatus") or {}).get("Errors")
+            or str((result.get("resStatus") or {}).get("rcode")) != "200"):
+        raise ValueError("携程接口未确认回复成功")
+    qunar_ack_only = source == CHANNELS["qunar"][0] and "replystatus" not in result
+    if str(result.get("replystatus")) != "1" and not qunar_ack_only:
         raise ValueError("携程接口未确认回复成功")
 
 
 def execute_reply(client, channel, review_id, poi_id, content):
     review = find_review(client, channel, review_id, poi_id)
     existing = merchant_reply(review)
-    if str(existing.get("replyContent") or "").strip() != content:
-        if (str(existing.get("replyId") or "") not in {"", "0", "-1"}
-                or existing.get("replyContent")):
-            raise ValueError("该评论已有其他回复")
-        if review.get("enableReply") is not True:
-            raise ValueError("携程当前不允许回复该评论")
-        submit_reply(client, review_id, CHANNELS[channel][0], content)
-        existing = merchant_reply(find_review(client, channel, review_id, poi_id))
-        if str(existing.get("replyContent") or "").strip() != content:
-            raise ValueError("提交后未查到对应回复，请在携程后台核对")
-    return to_datetime(existing.get("replyTime"))
+    if str(existing.get("replyContent") or "").strip() == content:
+        return to_datetime(existing.get("replyTime"))
+    if str(existing.get("replyId") or "") not in {"", "0", "-1"} or existing.get("replyContent"):
+        raise ValueError("该评论已有其他回复")
+    if review.get("enableReply") is not True:
+        raise ValueError("携程当前不允许回复该评论")
+    submit_reply(client, review_id, CHANNELS[channel][0], content)
+    return datetime.now().replace(microsecond=0)
 
 
 def run_tasks(hotel_id, limit, task_id=None):
