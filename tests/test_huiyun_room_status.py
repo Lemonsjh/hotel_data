@@ -57,7 +57,7 @@ class RoomStatusTests(unittest.TestCase):
 
     def test_missing_money_wrong_date_or_mismatched_counts_fail(self):
         for field, value in [('ResvAmt', None), ('tmpAmt', 'NaN'), ('stay_date', '2026-11-04'),
-                             ('total', 7), ('definiteResv', 2), ('room_type_id', 'OTHER')]:
+                             ('total', 7), ('definiteResv', 3), ('room_type_id', 'OTHER')]:
             payload = fixture()
             payload['reports']['GetRoomUsedInfoObj'][0]['records'][0][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
@@ -66,6 +66,15 @@ class RoomStatusTests(unittest.TestCase):
         del payload['reports']['GetRoomUsedInfoObj']
         with self.assertRaises(ValueError):
             transform(payload)
+
+    def test_unassigned_booking_is_corrected_from_revenue_counts(self):
+        payload = fixture()
+        record = payload['reports']['GetRoomUsedInfoObj'][0]['records'][0]
+        record['definiteResv'] = 2
+        row = transform(payload)['room_types'][0]
+        self.assertEqual((row['occupied_rooms'], row['reserved_rooms'], row['available_rooms']), (3, 2, 0))
+        self.assertEqual(row['adr'], '40.0000')
+        self.assertEqual(row['revpar'], '20.0000')
 
     def test_empty_room_type_has_zero_rates_but_nonzero_revenue_is_rejected(self):
         payload = fixture()
