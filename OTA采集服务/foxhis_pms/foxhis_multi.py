@@ -204,7 +204,7 @@ def sum_jy01(batches: list[list[dict[str, Any]]], config: Config, stamp: datetim
         room_count = sum(_whole(row.get("room_count"), "房量") for row in items)
         nights = sum((_decimal(row.get("room_nights")) for row in items), Decimal(0))
         revenue = sum((_decimal(row.get("room_revenue")) for row in items), Decimal(0))
-        sold = sum(_whole(row.get("sold_rooms"), "已售房") for row in items)
+        sold = sum((_decimal(row.get("sold_rooms")) for row in items), Decimal(0))
         remaining = sum(_whole(row.get("remaining_rooms"), "可售房") for row in items)
         available = sold + remaining
         merged.append({
@@ -559,6 +559,13 @@ def _write(report_key: str, rows: list[dict[str, Any]], config: Config, stamp: d
         written = sync(rows, config, start, end)
     else:
         written = sync(rows, config)
+    if report_key == "jy01":
+        foxhis_common.save_output("foxhis_jy01_multi_summary.json", {
+            "hotel_id": config.hotel_id, "snapshot_time": stamp, "written": written,
+            "by_date": {row["business_date"].isoformat(): {
+                "sold_rooms": row["sold_rooms"], "sold_rooms_fraction": row["sold_rooms"] % 1,
+            } for row in rows},
+        }, config)
     print(f"OK [{report_key}] rows={len(rows)} written={written}")
     return 0
 

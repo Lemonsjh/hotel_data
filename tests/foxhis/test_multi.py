@@ -470,7 +470,7 @@ class MultiRunTests(unittest.TestCase):
             count = 63 if config.database == "foxhis" else 61
             nights = 30 if config.database == "foxhis" else 20
             revenue = 3000 if config.database == "foxhis" else 1000
-            sold = 20 if config.database == "foxhis" else 10
+            sold = Decimal("20.50") if config.database == "foxhis" else Decimal("10.75")
             remaining = 40 if config.database == "foxhis" else 30
             return {"rows": [{"business_date": day, "room_count": count, "room_nights": Decimal(nights),
                               "room_revenue": Decimal(revenue), "sold_rooms": sold, "remaining_rooms": remaining}]}
@@ -479,6 +479,9 @@ class MultiRunTests(unittest.TestCase):
         self.run_report("jy01", daily, [account("foxhis"), account("foxhis1")], sync)
         self.assertEqual(sync.call_args.args[0][0]["room_count"], 124)
         self.assertEqual(sync.call_args.args[0][0]["revpar"], Decimal("32.26"))
+        self.assertEqual(sync.call_args.args[0][0]["sold_rooms"], Decimal("31.25"))
+        summary = json.loads((Path(self.output) / "foxhis_jy01_multi_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["by_date"][day.isoformat()]["sold_rooms_fraction"], "0.25")
 
         def monthly(config, _day, _stamp, *, write=True):
             part = {"room_nights": Decimal(100), "net_room_revenue": Decimal(2000), "room_days": Decimal(300),

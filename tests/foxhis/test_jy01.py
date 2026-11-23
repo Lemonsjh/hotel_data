@@ -82,6 +82,28 @@ class JY01Tests(unittest.TestCase):
         self.assertEqual((rows[0]["room_nights"], rows[0]["sold_rooms"], rows[0]["remaining_rooms"]), (36, 37, 20))
         self.assertEqual(rows[0]["adr"], Decimal("204.55"))
 
+    def test_fractional_nights_keep_precision_and_sold_rooms_round_down_only_on_write(self):
+        nights = Decimal("34.50")
+        revenue = Decimal(self.values["room_revenue"])
+        changes = {"011000": nights, "018530": 1, "012000": jy.rounded(nights * 100 / 55),
+                   "014000": jy.rounded(revenue / nights)}
+        day = self.days[0].strftime("%Y%m%d")
+        metrics = [{**row, "metric_value": str(changes[row["metric_code"]])}
+                   if row["business_date"] == day and row["metric_code"] in changes else row for row in self.metrics]
+        rooms = [{**row, "sold_rooms": "35.50", "free_rooms": "1"}
+                 if row["business_date"] == day else row for row in self.rooms]
+
+        rows, summary = self.build(metrics, rooms)
+        self.assertEqual(rows[0]["room_nights"], nights)
+        self.assertEqual(rows[0]["sold_rooms"], Decimal("35.50"))
+        self.assertEqual(summary["by_date"][self.days[0].isoformat()]["sold_rooms_fraction"], Decimal("0.50"))
+        jy.sync_rows(rows, self.config)
+        written = self.db.db.execute(
+            "SELECT room_nights, sold_rooms FROM jy01_hotel_statistics_daily WHERE business_date=?",
+            (self.days[0].isoformat(),),
+        ).fetchone()
+        self.assertEqual(written, ("34.50", "35"))
+
     def test_source_vacant_count_is_kept_when_it_differs_from_available_minus_sold(self):
         changed = dict(total_rooms=62, maintain_rooms=5, available_rooms=57, room_nights=36,
                        room_revenue="7363.63", room_income_total="7363.63", free_rooms=1,
@@ -183,6 +205,9 @@ class JY01Tests(unittest.TestCase):
         for value in ("NaN", "Infinity", "", "-1", "1.5"):
             records = [{**r, "metric_value": value} if r["metric_code"] == "010100" else r for r in self.metrics]
             with self.assertRaises(FoxhisError): self.build(metrics=records)
+        rooms = [{**self.rooms[0], "free_rooms": "1.5"}, *self.rooms[1:]]
+        with self.assertRaisesRegex(FoxhisError, r"free_rooms=1\.5"):
+            self.build(rooms=rooms)
 
     def test_journal_formulas_and_room_detail_mismatches_fail(self):
         for code in ("012000", "014000", "018560", "013000", "011000"):

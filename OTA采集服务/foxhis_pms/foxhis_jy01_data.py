@@ -53,9 +53,10 @@ def rounded(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def whole(value: Decimal) -> int:
+def whole(value: Decimal, *, field: str = "") -> int:
     if value < 0 or value != value.to_integral_value():
-        raise FoxhisError("JY01 房量必须是非负整数。")
+        detail = f"（{field}={value}）" if field else ""
+        raise FoxhisError(f"JY01 房量必须是非负整数{detail}。")
     return int(value)
 
 
@@ -88,8 +89,10 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
         seen.add((day, code, hall))
         values = {field: number(record.get(field)) for field in ROOM_FIELDS}
         for field in ROOM_FIELDS:
-            if field != "room_revenue":
-                whole(values[field])
+            if field not in {"room_revenue", "sold_rooms"}:
+                whole(values[field], field=field)
+        if values["sold_rooms"] < 0:
+            raise FoxhisError(f"JY01 已售房数必须非负（sold_rooms={values['sold_rooms']}）。")
         if code == "{{{":
             if day in totals:
                 raise FoxhisError("JY01 同日房型总计重复。")
@@ -115,6 +118,7 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
                 raise FoxhisError(f"JY01 {day} 房型明细与总计 {field} 不一致。")
         for field in ("total_rooms", "maintain_rooms", "locked_rooms", "own_use_rooms",
                       "available_rooms", "free_rooms"):
+            whole(metric[field], field=field)
             if metric[field] != total[field]:
                 raise FoxhisError(f"JY01 {day} 酒店日报与房型日结 {field} 不一致。")
         if metric["room_revenue"] + rebates[day]["013000"] != total["room_revenue"]:
@@ -123,9 +127,8 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
                 or rebates[day]["018000"] != rebates[day]["013000"] + rebates[day]["017000"]):
             raise FoxhisError(f"JY01 {day} 客房收入合计与房租、其他收入不一致。")
         revenue = metric["room_income_total"] + rebates[day]["018000"]
-        for field in ("total_rooms", "maintain_rooms", "locked_rooms", "own_use_rooms",
-                      "available_rooms", "free_rooms", "room_nights"):
-            whole(metric[field])
+        if metric["room_nights"] < 0:
+            raise FoxhisError(f"JY01 计费间夜必须非负（room_nights={metric['room_nights']}）。")
         if total["total_rooms"] - total["maintain_rooms"] - total["locked_rooms"] - total["own_use_rooms"] != total["available_rooms"]:
             raise FoxhisError(f"JY01 {day} 房量与可售房不一致。")
         if total["sold_rooms"] - total["free_rooms"] != metric["room_nights"]:
@@ -140,16 +143,17 @@ def build_rows(records: list[dict], room_records: list[dict], config: Config,
                 raise FoxhisError(f"JY01 {day} 原生 {field} 与房费/房量不一致。")
         rows.append({"hotel_name": config.hotel_name, "hotel_id": config.hotel_id, "source_platform": SOURCE_PLATFORM,
                      "business_date": day, "dimension_type": DIMENSION, "dimension_name": DIMENSION,
-                     "room_type_id": None, "room_count": whole(metric["total_rooms"]),
+                     "room_type_id": None, "room_count": int(metric["total_rooms"]),
                      "room_nights": metric["room_nights"], "room_revenue": rounded(revenue),
                      "occupancy_rate": rounded(metric["occupancy_rate"]),
                      "adr": rounded(revenue / metric["room_nights"]) if metric["room_nights"] else Decimal(0),
                      "revpar": rounded(revenue / metric["total_rooms"]) if metric["total_rooms"] else Decimal(0),
-                     "sold_rooms": whole(total["sold_rooms"]),
-                     "remaining_rooms": whole(total["remaining_rooms"]), "orders_today": None,
+                     "sold_rooms": total["sold_rooms"],
+                     "remaining_rooms": int(total["remaining_rooms"]), "orders_today": None,
                      "snapshot_time": snapshot.replace(microsecond=0)})
         audits[day.isoformat()] = {**metric, "net_room_income_total": revenue, "room_rebate": rebates[day]["018000"],
                                   "sold_rooms": total["sold_rooms"], "remaining_rooms": total["remaining_rooms"],
+                                  "sold_rooms_fraction": total["sold_rooms"] % 1,
                                   "vacant_gap": total["available_rooms"] - total["sold_rooms"] - total["remaining_rooms"]}
     return rows, {"requested_dates": [d.isoformat() for d in days], "by_date": audits,
                   "manual_zero_rows": manual_zero_rows,
@@ -196,8 +200,10 @@ def sync_rows(rows: list[dict], config: Config) -> int:
             if any(item[0] > stamp for item in cursor.fetchall()):
                 raise FoxhisError("JY01 已有更新批次，拒绝旧快照覆盖。")
             cursor.execute(f"DELETE FROM `{JY01_TABLE}` WHERE {condition}", args)
+            # 已售房数非负，在最后一次写入时向下取整。
+            db_rows = [{**row, "sold_rooms": int(row["sold_rooms"])} for row in rows]
             cursor.executemany(f"INSERT INTO `{JY01_TABLE}` ({', '.join('`'+c+'`' for c in COLUMNS)}) "
-                               f"VALUES ({', '.join(['%s']*len(COLUMNS))})", [tuple(r[c] for c in COLUMNS) for r in rows])
+                               f"VALUES ({', '.join(['%s']*len(COLUMNS))})", [tuple(r[c] for c in COLUMNS) for r in db_rows])
             cleanup_history(cursor, JY01_TABLE, rows, config)
         connection.commit()
     except Exception:
