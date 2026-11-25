@@ -25,6 +25,7 @@ JY01_TABLE_NAME = "jy01_hotel_statistics_daily"
 SOURCE_PLATFORM = "PMS（宝寓）"
 OUTPUT_DIR = Path(os.environ.get("HOTEL_OTA_OUTPUT_DIR", "OTA数据"))
 RECENT_DAYS = 30
+JY01_DIMENSION = "总营业指标"
 
 
 def mysql_config() -> dict[str, Any]:
@@ -58,6 +59,20 @@ def collection_dates(today: date | None = None, days: int = RECENT_DAYS) -> list
         raise ValueError("days must be positive")
     latest = (today or date.today()) - timedelta(days=1)
     return [latest - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
+
+
+def has_jy01_history(today: date) -> bool:
+    connection = pymysql.connect(**mysql_config())
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"SELECT 1 FROM `{JY01_TABLE_NAME}` WHERE hotel_id=%s AND source_platform=%s "
+                "AND dimension_type=%s AND dimension_name=%s AND business_date<%s LIMIT 1",
+                (HOTEL_ID, SOURCE_PLATFORM, JY01_DIMENSION, JY01_DIMENSION, today),
+            )
+            return cursor.fetchone() is not None
+    finally:
+        connection.close()
 
 
 def jl01_collection_dates(today: date | None = None) -> list[date]:
@@ -137,8 +152,8 @@ def build_jy01_rows(payload: dict[str, Any], fallback_date: date, snapshot_time:
         "hotel_id": HOTEL_ID,
         "source_platform": SOURCE_PLATFORM,
         "business_date": business_date,
-        "dimension_type": "总营业指标",
-        "dimension_name": "总营业指标",
+        "dimension_type": JY01_DIMENSION,
+        "dimension_name": JY01_DIMENSION,
         "room_count": int(number(data.get("roomCount")) or 0),
         "room_nights": number(data.get("nightCount")),
         "room_revenue": number(data.get("contractIncomeTotalPrice")),
@@ -219,7 +234,8 @@ def main() -> int:
     if not HOTEL_ID:
         raise RuntimeError("HOTEL_ID is empty")
     snapshot_time = datetime.now()
-    jy01_dates = collection_dates(snapshot_time.date())
+    today = snapshot_time.date()
+    jy01_dates = collection_dates(today, days=1 if has_jy01_history(today) else RECENT_DAYS)
     jl01_dates = jl01_collection_dates(snapshot_time.date())
     requested_dates = list(dict.fromkeys([*jy01_dates, *jl01_dates]))
     session = requests.Session()

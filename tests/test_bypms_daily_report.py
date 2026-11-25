@@ -6,6 +6,8 @@ import sys
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +83,33 @@ class BypmsDailyReportTests(unittest.TestCase):
             target.jl01_collection_dates(date(2026, 9, 22)),
             [date(2026, 9, 21), date(2025, 9, 21)],
         )
+
+    def test_daily_task_backfills_only_without_existing_bypms_jy01_rows(self):
+        target = load_target()
+        today = date(2026, 9, 22)
+        yesterday = date(2026, 9, 21)
+        last_year = date(2025, 9, 21)
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.side_effect = [None, (1,)]
+
+        def report(day, _session):
+            return {"data": {"today": day.isoformat(), "roomType": [{"roomTypeName": "大床房"}]}}
+
+        with TemporaryDirectory() as output, patch.object(target, "OUTPUT_DIR", Path(output)), \
+                patch.object(target, "datetime", wraps=datetime) as clock, \
+                patch.object(target.pymysql, "connect", return_value=connection), \
+                patch.object(target, "fetch_report", side_effect=report) as fetch, \
+                patch.object(target, "sync_jy01") as write_jy01, patch.object(target, "sync_mysql") as write_jl01:
+            clock.now.return_value = datetime(2026, 9, 22, 6)
+            for expected in (target.collection_dates(today), [yesterday]):
+                fetch.reset_mock()
+                self.assertEqual(target.main(), 0)
+                self.assertEqual([call.args[0] for call in fetch.call_args_list], [*expected, last_year])
+                self.assertEqual([row["business_date"] for row in write_jy01.call_args.args[0]], expected)
+                self.assertEqual([row["business_date"] for row in write_jl01.call_args.args[0]], [yesterday, last_year])
+        self.assertEqual(cursor.execute.call_args.args[1],
+                         (target.HOTEL_ID, target.SOURCE_PLATFORM, "总营业指标", "总营业指标", today))
 
     def test_sync_uses_jl01_table_and_upsert(self):
         target = load_target()
