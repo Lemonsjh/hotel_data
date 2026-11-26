@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from datetime import date, datetime, timedelta
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -146,6 +147,11 @@ def build_rows(payload: dict[str, Any], fallback_date: date, snapshot_time: date
 def build_jy01_rows(payload: dict[str, Any], fallback_date: date, snapshot_time: datetime) -> list[dict[str, Any]]:
     data = payload.get("data") or {}
     business_date = report_date(data.get("today"), fallback_date)
+    room_count = number(data.get("roomCount"))
+    room_nights = number(data.get("nightCount"))
+    room_revenue = number(data.get("contractIncomeTotalPrice"))
+    if any(value is None or not isfinite(value) for value in (room_count, room_nights, room_revenue)):
+        raise RuntimeError(f"宝寓 JY01 {business_date} 总营业指标尚未齐全，缺少有效的房数、间夜或房费")
     occupancy = number(data.get("occupancyRate"))
     return [{
         "hotel_name": str(data.get("companyName") or data.get("shopName") or HOTEL_NAME).strip(),
@@ -154,9 +160,9 @@ def build_jy01_rows(payload: dict[str, Any], fallback_date: date, snapshot_time:
         "business_date": business_date,
         "dimension_type": JY01_DIMENSION,
         "dimension_name": JY01_DIMENSION,
-        "room_count": int(number(data.get("roomCount")) or 0),
-        "room_nights": number(data.get("nightCount")),
-        "room_revenue": number(data.get("contractIncomeTotalPrice")),
+        "room_count": int(room_count),
+        "room_nights": room_nights,
+        "room_revenue": room_revenue,
         "occupancy_rate": round(occupancy * 100, 2) if occupancy is not None else None,
         "adr": number(data.get("contractIncomeAvgPrice")),
         "revpar": number(data.get("revPar")),
@@ -258,6 +264,9 @@ def main() -> int:
         if requested_date in jy01_dates
         for row in build_jy01_rows(report, requested_date, snapshot_time)
     ]
+    yesterday = jy01_dates[-1]
+    if not any(row["business_date"] == yesterday for row in rows):
+        raise RuntimeError(f"宝寓 JL01 {yesterday} 尚未返回有效房型明细")
     sync_mysql(rows)
     sync_jy01(jy01_rows)
     hotel_name = next((row["hotel_name"] for row in jy01_rows if row["hotel_name"]), "")

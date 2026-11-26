@@ -94,7 +94,8 @@ class BypmsDailyReportTests(unittest.TestCase):
         cursor.fetchone.side_effect = [None, (1,)]
 
         def report(day, _session):
-            return {"data": {"today": day.isoformat(), "roomType": [{"roomTypeName": "大床房"}]}}
+            return {"data": {"today": day.isoformat(), "roomCount": 1, "nightCount": 0,
+                             "contractIncomeTotalPrice": 0, "roomType": [{"roomTypeName": "大床房"}]}}
 
         with TemporaryDirectory() as output, patch.object(target, "OUTPUT_DIR", Path(output)), \
                 patch.object(target, "datetime", wraps=datetime) as clock, \
@@ -110,6 +111,39 @@ class BypmsDailyReportTests(unittest.TestCase):
                 self.assertEqual([row["business_date"] for row in write_jl01.call_args.args[0]], [yesterday, last_year])
         self.assertEqual(cursor.execute.call_args.args[1],
                          (target.HOTEL_ID, target.SOURCE_PLATFORM, "总营业指标", "总营业指标", today))
+
+    def test_unready_yesterday_leaves_both_reports_unwritten_until_retry(self):
+        target = load_target()
+        yesterday = date(2026, 9, 21)
+        last_year = date(2025, 9, 21)
+        summary = {"today": yesterday.isoformat(), "roomCount": 1, "nightCount": 0, "contractIncomeTotalPrice": 0}
+        room_types = [{"roomTypeName": "大床房", "roomTypeNightCount": 0, "roomTypeContractIncomePrice": 0}]
+        last_year_report = {"data": {"today": last_year.isoformat(), "roomType": []}}
+        attempts = [
+            {"data": {}},
+            {"data": {**summary, "roomType": []}},
+            {"data": {**summary, "roomType": room_types}},
+        ]
+        responses = [response for attempt in attempts for response in (attempt, last_year_report)]
+        with TemporaryDirectory() as output, patch.object(target, "OUTPUT_DIR", Path(output)), \
+                patch.object(target, "datetime", wraps=datetime) as clock, \
+                patch.object(target, "has_jy01_history", return_value=True), \
+                patch.object(target, "fetch_report", side_effect=responses), \
+                patch.object(target, "sync_jy01") as write_jy01, patch.object(target, "sync_mysql") as write_jl01:
+            clock.now.return_value = datetime(2026, 9, 22, 0, 15)
+            for report in ("JY01", "JL01"):
+                with self.assertRaisesRegex(RuntimeError, rf"{report} {yesterday}"):
+                    target.main()
+                write_jy01.assert_not_called()
+                write_jl01.assert_not_called()
+                self.assertFalse((Path(output) / "bypms_daily_report_summary.json").exists())
+
+            clock.now.return_value = datetime(2026, 9, 22, 6)
+            self.assertEqual(target.main(), 0)
+            write_jy01.assert_called_once()
+            write_jl01.assert_called_once()
+            self.assertEqual(write_jy01.call_args.args[0][0]["room_nights"], 0)
+            self.assertEqual([row["business_date"] for row in write_jl01.call_args.args[0]], [yesterday])
 
     def test_sync_uses_jl01_table_and_upsert(self):
         target = load_target()
