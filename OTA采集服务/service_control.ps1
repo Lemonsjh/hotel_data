@@ -88,11 +88,21 @@ function Start-ManualService {
         Remove-Item -LiteralPath $StopPath -Force -ErrorAction SilentlyContinue
         $scheduler = Get-TrackedProcess $SchedulerPidPath "manual_scheduler.py"
         if (-not $scheduler) {
-            Start-Process -FilePath $pythonPath -ArgumentList "`"$SchedulerPath`"" `
-                -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
-            Start-Sleep -Seconds 1
-            $scheduler = Get-TrackedProcess $SchedulerPidPath "manual_scheduler.py"
-            if (-not $scheduler) { throw "Manual scheduler failed to start. Check logs\manual_scheduler.log." }
+            $logDir = Join-Path $Root "logs"
+            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+            $startupLog = Join-Path $logDir "manual_scheduler_startup.log"
+            $process = Start-Process -FilePath $pythonPath -ArgumentList "`"$SchedulerPath`"" `
+                -WorkingDirectory $Root -WindowStyle Hidden -PassThru -RedirectStandardError $startupLog
+            $deadline = [datetime]::UtcNow.AddSeconds(10)
+            do {
+                Start-Sleep -Milliseconds 200
+                $publishedPid = [string](Get-Content -LiteralPath $SchedulerPidPath -Raw -ErrorAction SilentlyContinue)
+                if ($process.HasExited) { break }
+                if ($publishedPid -and $publishedPid.Trim() -eq [string]$process.Id) { $scheduler = $process }
+            } until ($scheduler -or [datetime]::UtcNow -ge $deadline)
+            if (-not $scheduler) {
+                throw "Manual scheduler failed to start. Check $startupLog and state\manual_scheduler_status.json."
+            }
         }
     } else {
         Set-Content -LiteralPath $StopPath -Value "stop" -Encoding ASCII
