@@ -16,6 +16,7 @@ $PanelPath = Join-Path $Root "panel.py"
 $SchedulerPidPath = Join-Path $StateDir "manual_scheduler.pid"
 $PriceSchedulerPidPath = Join-Path $StateDir "price_scheduler.pid"
 $ReplySchedulerPidPath = Join-Path $StateDir "review_reply_scheduler.pid"
+$ReplySchedulerStatusPath = Join-Path $StateDir "review_reply_scheduler_status.json"
 $PromotionSchedulerPidPath = Join-Path $StateDir "promotion_scheduler.pid"
 $PanelPidPath = Join-Path $StateDir "panel.pid"
 $StopPath = Join-Path $StateDir "manual_scheduler.stop"
@@ -26,7 +27,8 @@ $PromotionStopPath = Join-Path $StateDir "promotion_scheduler.stop"
 function Get-TrackedProcess([string]$PidPath, [string]$ExpectedScript) {
     if (-not (Test-Path -LiteralPath $PidPath)) { return $null }
     $savedPid = 0
-    if (-not [int]::TryParse((Get-Content -LiteralPath $PidPath -Raw).Trim(), [ref]$savedPid)) {
+    $pidText = Get-Content -LiteralPath $PidPath -Raw -ErrorAction SilentlyContinue
+    if (-not [int]::TryParse("$pidText".Trim(), [ref]$savedPid) -or $savedPid -le 0) {
         Remove-Item -LiteralPath $PidPath -Force -ErrorAction SilentlyContinue
         return $null
     }
@@ -134,11 +136,26 @@ function Start-ManualService {
         Remove-Item -LiteralPath $ReplyStopPath -Force -ErrorAction SilentlyContinue
         $replyScheduler = Get-TrackedProcess $ReplySchedulerPidPath "review_reply_scheduler.py"
         if (-not $replyScheduler) {
-            Start-Process -FilePath $pythonPath -ArgumentList "`"$ReplySchedulerPath`"" `
-                -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
-            Start-Sleep -Seconds 1
-            $replyScheduler = Get-TrackedProcess $ReplySchedulerPidPath "review_reply_scheduler.py"
-            if (-not $replyScheduler) { throw "Review reply scheduler failed to start. Check logs\review_reply_scheduler.log." }
+            $logDir = Join-Path $Root "logs"
+            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+            $startupLog = Join-Path $logDir "review_reply_scheduler_startup.log"
+            $process = Start-Process -FilePath $pythonPath -ArgumentList "`"$ReplySchedulerPath`"" `
+                -WorkingDirectory $Root -WindowStyle Hidden -PassThru -RedirectStandardError $startupLog
+            $deadline = [datetime]::UtcNow.AddSeconds(10)
+            do {
+                Start-Sleep -Milliseconds 200
+                if ($process.HasExited) { break }
+                $status = $null
+                try {
+                    $status = Get-Content -LiteralPath $ReplySchedulerStatusPath -Raw -Encoding UTF8 |
+                        ConvertFrom-Json -ErrorAction Stop
+                } catch { }
+                $publishedPid = Get-Content -LiteralPath $ReplySchedulerPidPath -Raw -ErrorAction SilentlyContinue
+                if ("$publishedPid".Trim() -eq [string]$process.Id -and $status.pid -eq $process.Id) {
+                    $replyScheduler = $process
+                }
+            } until ($replyScheduler -or [datetime]::UtcNow -ge $deadline)
+            if (-not $replyScheduler) { throw "Review reply scheduler failed to start. Check $startupLog and $ReplySchedulerStatusPath." }
         }
     } else {
         Set-Content -LiteralPath $ReplyStopPath -Value "stop" -Encoding ASCII

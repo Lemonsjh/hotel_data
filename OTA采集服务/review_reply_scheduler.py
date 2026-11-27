@@ -33,8 +33,16 @@ def interval_minutes(settings: dict[str, Any]) -> int:
     return max(1, int((settings.get("price_scheduler") or {}).get("interval_minutes", 5)))
 
 
+def load_status() -> dict[str, Any]:
+    try:
+        data = runner.load_json(STATUS_PATH, {})
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def save_status(**changes: Any) -> None:
-    data = runner.load_json(STATUS_PATH, {})
+    data = load_status()
     data.update(changes)
     runner.save_json(STATUS_PATH, data)
 
@@ -96,12 +104,12 @@ def run_executor(settings: dict[str, Any], max_tasks: int) -> int:
 def run_scheduler() -> int:
     settings = runner.load_settings()
     pid = claim_process()
-    STOP_PATH.unlink(missing_ok=True)
-    save_status(
-        scheduler_status="waiting", pid=pid, started_at=now_text(), next_run_at=now_text(),
-        last_run_finished_at="", last_run_return_code=None, message="waiting for pending review replies",
-    )
     try:
+        STOP_PATH.unlink(missing_ok=True)
+        save_status(
+            scheduler_status="waiting", pid=pid, started_at=now_text(), next_run_at=now_text(),
+            last_run_finished_at="", last_run_return_code=None, message="waiting for pending review replies",
+        )
         while not STOP_PATH.exists():
             settings = runner.load_settings()
             cfg = config(settings)
@@ -116,10 +124,10 @@ def run_scheduler() -> int:
             )
             if wait_until(next_run):
                 break
-        return 0
-    finally:
         save_status(scheduler_status="stopped", pid=None, next_run_at="", message="review reply scheduler stopped")
         STOP_PATH.unlink(missing_ok=True)
+        return 0
+    finally:
         release_process(pid)
 
 
@@ -127,7 +135,10 @@ if __name__ == "__main__":
     try:
         raise SystemExit(run_scheduler())
     except Exception as exc:
-        if not PID_PATH.exists():
-            save_status(scheduler_status="failed", pid=None, next_run_at="", message=str(exc))
         print(f"review reply scheduler failed: {exc}", file=sys.stderr)
+        if not PID_PATH.exists():
+            try:
+                save_status(scheduler_status="failed", pid=None, next_run_at="", message=str(exc))
+            except OSError:
+                pass
         raise

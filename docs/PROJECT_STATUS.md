@@ -1,5 +1,9 @@
 # 项目当前进度（PROJECT_STATUS）
 
+## 评论回复调度器启动恢复
+
+评论回复调度器可以从空白或损坏的状态文件恢复，启动失败会清理本次登记的 PID。Windows 启动脚本最多等 10 秒确认 PID 和状态都已写入，Python 启动错误记录在 `logs/review_reply_scheduler_startup.log`。
+
 ## Windows 采集调度器启动诊断
 
 启动脚本最多等待 10 秒确认采集调度器已经登记 PID。Python 启动错误写入 `logs/manual_scheduler_startup.log`，便于排查采集尚未开始时的导入、配置或权限错误。
