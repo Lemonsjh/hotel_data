@@ -233,7 +233,12 @@ ROOM_REVENUE_TABLE = "rs01_room_revenue_daily"
 
 
 # ---------------------------------------------------------------------------
-# RS01：当月已退房订单的完整房费过账流水（当前账 + 历史账）
+# RS01：按营业日采集一日内全部已过账房费流水（含在住、已退房、跨月长住）
+#
+# 口径（2026-11-27 修正）：营业日期 bdate 落在窗口内即采集，不再要求主单已退房。
+# 原口径以 cotime（退房时间）+ sta='O' 筛选，只覆盖退房客人，实测漏掉 86% 当日房费。
+# 订单改为按流水已出现的账号反查，避免对 hmaster 全表做 exists。
+# jierep=010 为现场房费科目；charge 为费用，不混入押金/代收的 credit。
 # ---------------------------------------------------------------------------
 
 def _rs01_order_select(table: str, origin: str) -> str:
@@ -242,10 +247,10 @@ def _rs01_order_select(table: str, origin: str) -> str:
 select '{origin}' as order_origin, m.accnt as folio_no, m.roomno as room_no, m.class as account_class,
        m.type as room_type_code, {name} as guest_name,
        m.market as market_code, m.ratecode as price_type,
-       convert(char(8),m.citime,112)+' '+convert(char(8),m.citime,108) as checkin_time,
-       convert(char(8),m.cotime,112)+' '+convert(char(8),m.cotime,108) as checkout_time
+       isnull(convert(char(8),m.citime,112)+' '+convert(char(8),m.citime,108),' ') as checkin_time,
+       isnull(convert(char(8),m.cotime,112)+' '+convert(char(8),m.cotime,108),' ') as checkout_time
 from {table} m left join guest g on m.haccnt = g.no
-where m.sta = 'O' and m.cotime >= '{{checkout_start}}' and m.cotime < '{{checkout_end}}'
+where m.accnt in ({{folio_list}})
 """.strip()
 
 
@@ -262,17 +267,11 @@ select '{origin}' as ledger_origin, a.accnt as folio_no, a.number as line_no,
        a.empno as operator_code, e.name as operator_name
 from {table} a join pccode p on a.pccode = p.pccode
 left join sys_empno e on a.empno = e.empno
-where p.jierep = '010' and (
- exists(select 1 from master m where m.accnt=a.accnt and m.sta='O'
-        and m.cotime >= '{{checkout_start}}' and m.cotime < '{{checkout_end}}')
- or exists(select 1 from hmaster m where m.accnt=a.accnt and m.sta='O'
-        and m.cotime >= '{{checkout_start}}' and m.cotime < '{{checkout_end}}')
-)
+where p.jierep = '010'
+  and a.bdate >= '{{ledger_start}}' and a.bdate < '{{ledger_end}}'
 """.strip()
 
 
-# 按退房月筛选订单，保留其全部房费日期，不以账务日期截断跨月住宿。
-# jierep=010 为现场房费科目；charge 为费用，不混入押金/代收的 credit。
 ROOM_REVENUE_QUERY = _rs01_ledger_select("account", "current") + "\nunion all\n" + _rs01_ledger_select("haccount", "history")
 ROOM_REVENUE_REQUIRED = ("haccount", ["accnt", "number", "bdate", "roomno", "charge", "quantity", "pccode", "empno"])
 

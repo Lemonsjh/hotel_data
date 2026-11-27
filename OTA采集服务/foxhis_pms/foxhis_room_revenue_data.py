@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""RS01：当月已退房订单的房费科目流水；保留现有字段和跨月账务日期。
+"""RS01：按营业日采集当月全部已过账房费流水（含在住客人）。
 
+口径（2026-11-27 修正）：营业日期 bdate 落在当月窗口即采集，不再要求主单已退房。
+原口径按 cotime + sta='O' 筛选，实测只覆盖当日房费的 13.7%，漏掉在住客人。
 order_id 是主单账号，流水号写入 source_payment_id。--dry-run 不写 MySQL。
 """
 from __future__ import annotations
@@ -28,6 +30,7 @@ INSERT_COLUMNS = [
 
 
 def month_window(today: date) -> tuple[date, date]:
+    """营业日窗口：当月起、下月起（左闭右开）。用于 business_date 过滤与清理。"""
     start = today.replace(day=1)
     return start, date(start.year + (start.month == 12), start.month % 12 + 1, 1)
 
@@ -55,15 +58,20 @@ def rounded(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def order_map(records: list[dict[str, str]], start: date, end: date, snapshot: datetime) -> dict[str, dict]:
+def order_map(records: list[dict[str, str]], snapshot: datetime) -> dict[str, dict]:
+    """主单字典。在住订单没有退房时间，checkout_time 允许为空。"""
     orders: dict[str, dict] = {}
     for record in records:
         folio = (record.get("folio_no") or "").strip()
         checkout = _datetime(record.get("checkout_time") or "")
         checkin = _datetime(record.get("checkin_time") or "")
-        if not folio or not checkout or not start <= checkout.date() < end or checkout > snapshot:
-            raise FoxhisError("RS01 退房主单账号、状态范围或退房时间不合法。")
-        if checkin and checkin > checkout:
+        if not folio:
+            raise FoxhisError("RS01 主单账号缺失。")
+        if checkout and checkout > snapshot:
+            raise FoxhisError("RS01 主单退房时间晚于采集时点。")
+        if checkin and checkin > snapshot:
+            raise FoxhisError("RS01 主单入住时间晚于采集时点。")
+        if checkin and checkout and checkin > checkout:
             raise FoxhisError("RS01 主单入住时间晚于退房时间。")
         order = {**{key: (value or "").strip() for key, value in record.items()},
                  "checkin_time": checkin, "checkout_time": checkout}
@@ -83,6 +91,7 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
     rows = []
     seen: dict[tuple[str, str], tuple] = {}
     duplicate_count = zero_count = unassigned_group_count = 0
+    unassigned_by_class: dict[str, int] = {}
     for record in records:
         folio = (record.get("folio_no") or "").strip()
         line = (record.get("line_no") or "").strip()
@@ -90,7 +99,7 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
             raise FoxhisError("RS01 流水缺少账号或流水号。")
         order = orders.get(folio)
         if not order:
-            raise FoxhisError("RS01 流水未关联当月已退房订单，请重新采集。")
+            raise FoxhisError("RS01 流水未关联到当月有房费流水的订单，请重新采集。")
         amount = _decimal(record.get("amount"))
         quantity = _decimal(record.get("quantity"))
         try:
@@ -116,10 +125,14 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
         room = source_room or order["room_no"]
         # 同退房房号时保留历史主单房型，换房前的流水再按其实际房号查字典。
         type_code = (order["room_type_code"] if room == order["room_no"] else "") or room_types.get(room)
-        unassigned_group = (order.get("account_class") == "G" and not room and not order["room_type_code"])
+        unassigned_group = (not room and not order["room_type_code"]
+                            and order.get("account_class") != "F")
         if unassigned_group:
-            # 团队总账可直接过账房费，保留原始金额，不分摊到客房。
+            # 团队(G)/会议(M)等非散客主账可直接过账房费，保留原始金额，不分摊到客房；
+            # 散客(F)必须核验到房号与房型，缺一即拒绝。
             unassigned_group_count += 1
+            key = order.get("account_class") or ""
+            unassigned_by_class[key] = unassigned_by_class.get(key, 0) + 1
         elif not room or not type_code or type_code not in type_names:
             raise FoxhisError(f"RS01 有效房费流水缺少可核验的房号或房型（账号：{folio}，流水：{line}）。")
         is_room_night = (record.get("charge_tail") or "").strip() == "01"
@@ -142,7 +155,22 @@ def build_rows(records: list[dict[str, str]], orders: dict[str, dict], type_name
         })
     return rows, {"source_rows": len(records), "unique_transactions": len(seen), "deduplicated_rows": duplicate_count,
                   "zero_placeholders_skipped": zero_count, "checkout_orders": len(orders),
-                  "unassigned_group_postings": unassigned_group_count}
+                  "unassigned_group_postings": unassigned_group_count,
+                  "unassigned_by_class": unassigned_by_class}
+
+
+def _orders_for(records: list[dict[str, str]], config: Config, snapshot: datetime) -> dict[str, dict]:
+    """按流水已出现的账号反查主单，分批拼 in 列表。"""
+    folios = sorted({(record.get("folio_no") or "").strip() for record in records} - {""})
+    if not folios:
+        return {}
+    raw: list[dict[str, str]] = []
+    # isql 单条语句有长度上限，账号 in 列表按 100 个一批，避免被截断后静默漏单。
+    for index in range(0, len(folios), 100):
+        chunk = folios[index:index + 100]
+        folio_list = ",".join("'" + folio.replace("'", "''") + "'" for folio in chunk)
+        raw.extend(query(ROOM_REVENUE_ORDERS_QUERY.format(folio_list=folio_list), config, timeout=180))
+    return order_map(raw, snapshot)
 
 
 def fetch_rows(config: Config, snapshot_time: datetime) -> tuple[list[dict], dict]:
@@ -156,14 +184,14 @@ def fetch_rows(config: Config, snapshot_time: datetime) -> tuple[list[dict], dic
                            "rmsta": ["roomno", "type"], "mktcode": ["code", "descript"]}.items():
         require_columns(config, table, columns)
     require_columns(config, "hmaster", ["name"])
-    params = {"checkout_start": start.strftime("%Y%m%d"), "checkout_end": end.strftime("%Y%m%d")}
-    orders = order_map(query(ROOM_REVENUE_ORDERS_QUERY.format(**params), config, timeout=180), start, end, snapshot_time)
+    params = {"ledger_start": start.strftime("%Y%m%d"), "ledger_end": end.strftime("%Y%m%d")}
     records = query(ROOM_REVENUE_QUERY.format(**params), config, timeout=240)
+    orders = _orders_for(records, config, snapshot_time)
     type_names = {row["type"].strip(): row["descript"].strip() for row in query("select type,descript from typim", config)}
     room_types = {row["roomno"].strip(): row["type"].strip() for row in query("select roomno,type from rmsta", config)}
     markets = {row["code"].strip(): row["descript"].strip() for row in query("select code,descript from mktcode", config)}
     rows, summary = build_rows(records, orders, type_names, room_types, markets, config, snapshot_time)
-    summary.update(checkout_start=start.isoformat(), checkout_end_exclusive=end.isoformat(),
+    summary.update(ledger_start=start.isoformat(), ledger_end_exclusive=end.isoformat(),
                    room_fee_total=str(sum((row["room_fee"] for row in rows), Decimal("0"))),
                    room_nights_total=str(sum((row["room_nights"] for row in rows), Decimal("0"))),
                    orders_with_room_charges=len({row["order_id"] for row in rows}))
@@ -194,14 +222,14 @@ def sync_rows(rows: list[dict], config: Config, start: date, end: date) -> int:
     if len(stable) != len(rows):
         raise FoxhisError("RS01 输出稳定键重复。")
     if any(row["hotel_id"] != config.hotel_id or row["source_platform"] != SOURCE_PLATFORM or
-           row["snapshot_time"] != stamp or not start <= row["checkout_time"].date() < end for row in rows):
-        raise FoxhisError("RS01 酒店、来源、采集时间或退房范围不一致。")
+           row["snapshot_time"] != stamp or not start <= row["business_date"] < end for row in rows):
+        raise FoxhisError("RS01 酒店、来源、采集时间或营业日范围不一致。")
     connection = mysql_connection(config)
     try:
         with connection.cursor() as cursor:
             ensure_source_payment_id(cursor)
             scope = (config.hotel_id, SOURCE_PLATFORM, start, end)
-            condition = "hotel_id=%s AND source_platform=%s AND checkout_time >= %s AND checkout_time < %s"
+            condition = "hotel_id=%s AND source_platform=%s AND business_date >= %s AND business_date < %s"
             cursor.execute(f"SELECT snapshot_time FROM `{ROOM_REVENUE_TABLE}` WHERE {condition} FOR UPDATE", scope)
             if any(item[0] > stamp for item in cursor.fetchall()):
                 raise FoxhisError("RS01 已有更新快照，拒绝较早批次覆盖。")
@@ -229,7 +257,7 @@ def collect(config: Config, business_date: date, snapshot_time: datetime, *, wri
     summary.update(report="room_revenue", source_platform=SOURCE_PLATFORM, hotel_id=config.hotel_id,
                    business_date=snapshot_time.date().isoformat(), snapshot_time=snapshot_time.isoformat(),
                    row_count=len(rows), written=written, dry_run=dry_run,
-                   basis="当月已退房订单的房费科目净过账流水；按退房日期筛选，保留跨月营业日期，不混入押金与代收款")
+                   basis="按营业日采集当月全部已过账房费流水（含在住、已退房）；以 bdate 筛选，不混入押金与代收款")
     if not write:
         summary["rows"] = rows
     save_output(SUMMARY_FILE, summary, config)

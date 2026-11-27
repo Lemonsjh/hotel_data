@@ -1,4 +1,4 @@
-"""RS01 字段映射、流水稳定键及退房月替换事务回归测试。"""
+"""RS01 字段映射、流水稳定键及营业日替换事务回归测试。"""
 import sys
 import sqlite3
 import unittest
@@ -20,21 +20,25 @@ class RS01Tests(unittest.TestCase):
         self.config = Config(hotel_id="TEST", hotel_name="测试酒店")
         self.raw_order = {"folio_no": "F1", "order_origin": "current", "room_no": "101", "room_type_code": "A",
                           "guest_name": "测试客人", "market_code": "OTA", "price_type": "OTA",
-                          "checkin_time": "20260930 14:00:00", "checkout_time": "20261002 12:00:00"}
-        self.orders = rs.order_map([self.raw_order], self.start, self.end, self.stamp)
+                          "checkin_time": "20261010 14:00:00", "checkout_time": "20261016 12:00:00"}
+        self.orders = rs.order_map([self.raw_order], self.stamp)
         self.db = DatabaseAdapter()
         columns = ",".join(f"`{name}` TEXT" for name in rs.INSERT_COLUMNS)
         self.db.db.execute(f"CREATE TABLE rs01_room_revenue_daily ({columns}, UNIQUE(hotel_id,order_id,business_date,room_no,charge_subject,source_payment_id))")
         self.db.db.commit()
         self.connection_patch = patch.object(rs, "mysql_connection", return_value=self.db)
         self.connection_patch.start()
+        # sqlite 测试桩不支持 MySQL 的 SHOW COLUMNS/ALTER TABLE 补列，跳过该前置步骤。
+        self.payment_patch = patch.object(rs, "ensure_source_payment_id")
+        self.payment_patch.start()
 
     def tearDown(self):
+        self.payment_patch.stop()
         self.connection_patch.stop()
         self.db.db.close()
 
     def record(self, **changes):
-        return {"folio_no": "F1", "line_no": "1", "business_date": "20260930", "room_no": "101",
+        return {"folio_no": "F1", "line_no": "1", "business_date": "20261015", "room_no": "101",
                 "charge_code": "1000", "charge_subject": "房费", "charge_tail": "01", "amount": "120.00",
                 "quantity": "1", "operator_code": "OP", "operator_name": "操作员", **changes}
 
@@ -53,11 +57,11 @@ class RS01Tests(unittest.TestCase):
         self.assertEqual(rs.month_window(date(2026, 12, 31)), (date(2026, 12, 1), date(2027, 1, 1)))
         self.assertEqual(rs.month_window(date(2024, 2, 29)), (date(2024, 2, 1), date(2024, 3, 1)))
 
-    def test_cross_month_fee_dates_and_checkout_metadata(self):
+    def test_fee_date_and_checkout_metadata(self):
         rows, summary = self.build([self.record()])
         row = rows[0]
-        self.assertEqual(row["business_date"], date(2026, 9, 30))
-        self.assertEqual(row["checkout_time"], datetime(2026, 10, 2, 12))
+        self.assertEqual(row["business_date"], date(2026, 10, 15))
+        self.assertEqual(row["checkout_time"], datetime(2026, 10, 16, 12))
         self.assertEqual(row["guest_name"], "测试客人")
         self.assertEqual(row["customer_source"], "携程")
         self.assertEqual(row["room_type_name"], "大床房")
@@ -105,21 +109,31 @@ class RS01Tests(unittest.TestCase):
                 self.build([self.record(**changes)])
 
     def test_historical_order_name_is_preferred_without_double_join(self):
-        orders = rs.order_map([self.raw_order, {**self.raw_order, "order_origin": "history", "guest_name": "历史姓名"}], self.start, self.end, self.stamp)
+        orders = rs.order_map([self.raw_order, {**self.raw_order, "order_origin": "history", "guest_name": "历史姓名"}], self.stamp)
         self.assertEqual(len(orders), 1)
         self.assertEqual(orders["F1"]["guest_name"], "历史姓名")
         with self.assertRaises(FoxhisError):
-            rs.order_map([self.raw_order, {**self.raw_order, "room_no": "201"}], self.start, self.end, self.stamp)
+            rs.order_map([self.raw_order, {**self.raw_order, "room_no": "201"}], self.stamp)
 
-    def test_checkout_outside_month_or_in_future_fails(self):
-        for checkout in ("20260930 12:00:00", "20261101 00:00:00", "20261030 12:00:00", "bad"):
+    def test_checkout_time_only_rejects_future_or_invalid(self):
+        # 退房时间允许早于窗口（跨月长住），但不能晚于采集时点。
+        early = {**self.raw_order, "checkin_time": "20260915 14:00:00"}
+        orders = rs.order_map([{**early, "checkout_time": "20260930 12:00:00"}], self.stamp)
+        self.assertEqual(orders["F1"]["checkout_time"], datetime(2026, 9, 30, 12))
+        for checkout in ("20261030 12:00:00", "20261101 00:00:00", "bad"):
             with self.assertRaises(FoxhisError):
-                rs.order_map([{**self.raw_order, "checkout_time": checkout}], self.start, self.end, self.stamp)
+                rs.order_map([{**self.raw_order, "checkout_time": checkout}], self.stamp)
+
+    def test_inhouse_order_without_checkout_time_is_allowed(self):
+        orders = rs.order_map([{**self.raw_order, "checkout_time": ""}], self.stamp)
+        self.assertIsNone(orders["F1"]["checkout_time"])
+        rows, _ = rs.build_rows([self.record()], orders, {"A": "大床房"}, {"101": "A"}, {}, self.config, self.stamp)
+        self.assertIsNone(rows[0]["checkout_time"])
 
     def test_replacement_preserves_other_scopes_and_removes_stale_current_month(self):
         rows, _ = self.build([self.record()]); row = rows[0]
         self.seed({**row, "order_id": "STALE"})
-        self.seed({**row, "order_id": "OLD_MONTH", "checkout_time": datetime(2026, 9, 20, 12)})
+        self.seed({**row, "order_id": "OLD_MONTH", "business_date": date(2026, 9, 20)})
         self.seed({**row, "hotel_id": "OTHER"})
         self.seed({**row, "source_platform": "PMS（宝寓）", "order_id": "BYPMS"})
         rs.sync_rows(rows, self.config, self.start, self.end)
