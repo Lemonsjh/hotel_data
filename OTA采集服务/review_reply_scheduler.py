@@ -30,7 +30,7 @@ def config(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 def interval_minutes(settings: dict[str, Any]) -> int:
-    return max(1, int((settings.get("price_scheduler") or {}).get("interval_minutes", 5)))
+    return max(1, int((settings.get("price_scheduler") or {}).get("interval_minutes") or 5))
 
 
 def load_status() -> dict[str, Any]:
@@ -116,7 +116,7 @@ def run_scheduler() -> int:
             if not cfg.get("enabled", False):
                 break
             save_status(scheduler_status="executing", next_run_at="", message="executing pending review replies")
-            return_code = run_executor(settings, max(1, int(cfg.get("max_tasks_per_run", 10))))
+            return_code = run_executor(settings, max(1, int(cfg.get("max_tasks_per_run") or 10)))
             next_run = datetime.now() + timedelta(minutes=interval_minutes(settings))
             save_status(
                 scheduler_status="waiting", last_run_finished_at=now_text(), last_run_return_code=return_code,
