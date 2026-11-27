@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,27 @@ class StaleRunRecoveryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.runner = load_runner()
+
+    def test_corrupt_collection_status_does_not_block_startup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "status.json"
+            with patch.object(self.runner, "STATUS_PATH", path):
+                for content in (b"", b'{"tasks":', b"[]", b"\xff"):
+                    with self.subTest(content=content):
+                        path.write_bytes(content)
+                        status = self.runner.reconcile_stale_run()
+                        self.assertEqual(status["last_run_status"], "never_run")
+                        self.assertEqual(status["tasks"], {})
+                        self.assertEqual(path.read_bytes(), content)
+                        self.runner.save_json(path, status)
+                        self.assertEqual(self.runner.load_status(), status)
+
+    def test_invalid_json_in_other_files_still_raises(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "settings.json"
+            path.write_bytes(b"")
+            with self.assertRaises(json.JSONDecodeError):
+                self.runner.load_json(path, {})
 
     def test_reconcile_marks_missing_stopping_process_as_cancelled(self):
         with tempfile.TemporaryDirectory() as temp_dir:

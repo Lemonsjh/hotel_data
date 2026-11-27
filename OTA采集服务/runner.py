@@ -257,15 +257,22 @@ def output_path(settings: dict[str, Any]) -> Path:
 
 
 def load_status() -> dict[str, Any]:
-    return load_json(
-        STATUS_PATH,
-        {
-            "last_run_started_at": "",
-            "last_run_finished_at": "",
-            "last_run_status": "never_run",
-            "tasks": {},
-        },
-    )
+    default = {
+        "last_run_started_at": "",
+        "last_run_finished_at": "",
+        "last_run_status": "never_run",
+        "tasks": {},
+    }
+    try:
+        status = load_json(STATUS_PATH, default)
+    except FileNotFoundError:
+        return default
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        status = None
+    if isinstance(status, dict):
+        return status
+    print(f"采集状态文件无法解析，将按初始状态继续：{STATUS_PATH}", file=sys.stderr)
+    return default
 
 
 def process_alive(pid: Any) -> bool:

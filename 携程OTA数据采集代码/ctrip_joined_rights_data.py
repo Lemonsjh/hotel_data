@@ -50,10 +50,18 @@ def validate_payload(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RuntimeError("Ctrip joined-rights response is not an object")
     status = payload.get("resStatus") or {}
+    if not isinstance(status, dict):
+        raise RuntimeError("Ctrip joined-rights response has invalid resStatus")
     if status and status.get("rcode") != 200:
         raise RuntimeError(f"Ctrip joined-rights request failed: {status.get('rmsg') or 'unknown error'}")
-    if not isinstance(payload.get("registeredConditions"), list):
+    conditions = payload.get("registeredConditions")
+    if not isinstance(conditions, list):
         raise RuntimeError("Ctrip joined-rights response is missing registeredConditions")
+    if not conditions:
+        response_status = payload.get("ResponseStatus") or {}
+        if (status.get("rcode") != 200 or not isinstance(response_status, dict)
+                or response_status.get("Ack") not in (None, "Success") or response_status.get("Errors")):
+            raise RuntimeError("Ctrip joined-rights empty response did not confirm success")
     return payload
 
 
@@ -84,7 +92,8 @@ def request_rights_with_cookie() -> dict[str, Any]:
 def build_rows(payload: dict[str, Any], captured_at: datetime) -> list[list[Any]]:
     hotel_id = require_hotel_id()
     rows: list[list[Any]] = []
-    for item in payload.get("registeredConditions") or []:
+    conditions = payload["registeredConditions"]
+    for item in conditions:
         if not isinstance(item, dict):
             continue
         right_type = str(item.get("rightType") or "").strip()
@@ -101,7 +110,7 @@ def build_rows(payload: dict[str, Any], captured_at: datetime) -> list[list[Any]
             scope, str(item.get("invalidDates") or "").strip(), str(item.get("rightsRules") or "").strip(),
             str(item.get("stockUseConditions") or "").strip(), str(item.get("status") or "").strip(), captured_at,
         ])
-    if not rows:
+    if conditions and not rows:
         raise RuntimeError("Ctrip joined-rights response contains no valid rights")
     return rows
 
@@ -129,8 +138,11 @@ def main() -> int:
         print(f"Ctrip browser session unavailable ({type(browser_error).__name__}); trying configured Cookie session")
         payload = request_rights_with_cookie()
     rows = build_rows(payload, captured_at)
+    if not rows:
+        sync_table(TABLE_NAME, HEADERS, rows, empty_scope=(require_hotel_id(), "ctrip"))
+    else:
+        sync_table(TABLE_NAME, HEADERS, rows)
     write_output(rows, captured_at)
-    sync_table(TABLE_NAME, HEADERS, rows)
     print(f"Ctrip joined-rights sync completed: rows={len(rows)}")
     return 0
 

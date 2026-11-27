@@ -77,11 +77,15 @@ def sync_table(
     rows: Sequence[Sequence[Any]],
     *,
     allow_empty_replace: bool = False,
+    empty_scope: tuple[str, str] | None = None,
 ) -> None:
     if not table_name.replace("_", "").isalnum():
         raise MysqlSyncError(f"Invalid table name: {table_name}")
-    if not rows and not allow_empty_replace:
+    if not rows and not allow_empty_replace and empty_scope is None:
         raise MysqlSyncError(f"Refusing to replace {table_name} with empty rows")
+    if empty_scope is not None and (rows or not all(empty_scope)
+                                    or not {"hotel_id", "platform_scope"}.issubset(headers)):
+        raise MysqlSyncError(f"Invalid empty snapshot scope: {table_name}")
 
     connection = connect_mysql(autocommit=False)
     try:
@@ -105,7 +109,10 @@ def sync_table(
             if missing:
                 raise MysqlSyncError(f"Table {table_name} missing columns: {', '.join(missing)}")
 
-            delete_scope(cursor, table_name, headers, rows)
+            if empty_scope is None:
+                delete_scope(cursor, table_name, headers, rows)
+            else:
+                cursor.execute(f"DELETE FROM `{table_name}` WHERE hotel_id=%s AND platform_scope=%s", empty_scope)
             if rows:
                 placeholders = ", ".join(["%s"] * len(insert_headers))
                 columns = ", ".join(f"`{header}`" for header in insert_headers)
