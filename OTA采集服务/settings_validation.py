@@ -70,6 +70,10 @@ def get_path(data: dict[str, Any], dotted: str) -> Any:
     return current
 
 
+def optional_int(value: Any, default: int) -> int:
+    return default if value in (None, "") else int(value)
+
+
 def foxhis_account_errors(settings: dict[str, Any]) -> list[str]:
     foxhis = settings.get("foxhis")
     if not isinstance(foxhis, dict) or "accounts" not in foxhis:

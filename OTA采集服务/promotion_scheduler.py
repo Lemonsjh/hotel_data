@@ -11,6 +11,7 @@ from typing import Any
 import runner
 from log_maintenance import maintain_logs
 from panel_common import process_alive
+from settings_validation import optional_int
 
 
 ROOT = Path(__file__).resolve().parent
@@ -48,7 +49,7 @@ def start_scheduler(settings: dict[str, Any]) -> None:
 
 
 def interval_minutes(settings: dict[str, Any]) -> int:
-    return max(1, int((settings.get("price_scheduler") or {}).get("interval_minutes", 5)))
+    return max(1, optional_int((settings.get("price_scheduler") or {}).get("interval_minutes"), 5))
 
 
 def save_status(**changes: Any) -> None:
@@ -111,7 +112,7 @@ def run_scheduler() -> int:
             if not cfg.get("enabled", False):
                 break
             save_status(scheduler_status="executing", next_run_at="", message="executing pending promotion controls")
-            result = run_executor(settings, max(1, int(cfg.get("max_tasks_per_run", 5))))
+            result = run_executor(settings, max(1, optional_int(cfg.get("max_tasks_per_run"), 5)))
             next_run = datetime.now() + timedelta(minutes=interval_minutes(settings))
             save_status(scheduler_status="waiting", last_run_finished_at=now_text(), last_run_return_code=result, next_run_at=next_run.strftime("%Y-%m-%d %H:%M:%S"), message="waiting for pending promotion controls")
             if wait_until(next_run):

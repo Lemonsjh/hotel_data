@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from log_maintenance import maintain_logs
+from settings_validation import optional_int
 
 
 ROOT = Path(__file__).resolve().parent
@@ -106,7 +107,7 @@ def run_scheduler() -> int:
     pid = claim_process()
     STOP_PATH.unlink(missing_ok=True)
     cfg = config()
-    delay = max(0, int(cfg.get("startup_delay_seconds", 60)))
+    delay = max(0, optional_int(cfg.get("startup_delay_seconds"), 60))
     first_run = datetime.now() + timedelta(seconds=delay)
     save_status(
         scheduler_status="waiting",
@@ -125,8 +126,8 @@ def run_scheduler() -> int:
             if not cfg.get("enabled", True):
                 break
             save_status(scheduler_status="executing", next_run_at="", message="executing pending price tasks")
-            return_code = run_executor(max(1, int(cfg.get("max_tasks_per_run", 20))))
-            interval = max(1, int(cfg.get("interval_minutes", 5)))
+            return_code = run_executor(max(1, optional_int(cfg.get("max_tasks_per_run"), 20)))
+            interval = max(1, optional_int(cfg.get("interval_minutes"), 5))
             next_run = datetime.now() + timedelta(minutes=interval)
             save_status(
                 scheduler_status="waiting",
