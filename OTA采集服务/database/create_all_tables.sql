@@ -460,6 +460,42 @@ CREATE TABLE IF NOT EXISTS `ctrip_ota_review_detail` (
   KEY `idx_hotel_room_type_id` (`hotel_id`,`room_type_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Table: meituan_ota_pending_review_snapshot
+CREATE TABLE IF NOT EXISTS `meituan_ota_pending_review_snapshot` (
+  `hotel_id` varchar(100) NOT NULL,
+  `platform_scope` varchar(20) NOT NULL,
+  `channel_source` varchar(50) NOT NULL,
+  `poi_id` varchar(100) NOT NULL,
+  `review_id` varchar(100) NOT NULL,
+  `review_time` datetime DEFAULT NULL,
+  `reviewer_name_masked` varchar(100) DEFAULT NULL,
+  `review_score` decimal(10,2) DEFAULT NULL,
+  `review_content` text,
+  `room_type_name` text,
+  `enable_reply` tinyint(1) DEFAULT NULL,
+  `snapshot_time` datetime NOT NULL,
+  PRIMARY KEY (`hotel_id`,`platform_scope`,`review_id`),
+  KEY `idx_meituan_pending_review_time` (`hotel_id`,`platform_scope`,`review_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Table: ctrip_ota_pending_review_snapshot
+CREATE TABLE IF NOT EXISTS `ctrip_ota_pending_review_snapshot` (
+  `hotel_id` varchar(100) NOT NULL,
+  `platform_scope` varchar(20) NOT NULL,
+  `channel_source` varchar(50) NOT NULL,
+  `poi_id` varchar(100) NOT NULL,
+  `review_id` varchar(100) NOT NULL,
+  `review_time` datetime DEFAULT NULL,
+  `reviewer_name_masked` varchar(100) DEFAULT NULL,
+  `review_score` decimal(10,2) DEFAULT NULL,
+  `review_content` text,
+  `room_type_name` text,
+  `enable_reply` tinyint(1) DEFAULT NULL,
+  `snapshot_time` datetime NOT NULL,
+  PRIMARY KEY (`hotel_id`,`platform_scope`,`review_id`),
+  KEY `idx_ctrip_pending_review_time` (`hotel_id`,`platform_scope`,`review_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- Table: ctrip_ota_review_overview
 CREATE TABLE IF NOT EXISTS `ctrip_ota_review_overview` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,

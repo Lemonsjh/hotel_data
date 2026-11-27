@@ -4,19 +4,25 @@ from __future__ import annotations
 import argparse
 import os
 import time
+from contextlib import nullcontext
 from datetime import datetime
 
 from ctrip_review_detail_data import CHANNELS, COOKIE, TABLE_NAME, CtripReviewDetailClient, build_payload, merchant_reply, to_datetime
+from ctrip_pending_reviews import PENDING_TABLE, TASK_TABLE, channel_lock, pending_pages, table_exists
 from ota_mysql_writer import connect_mysql
 from update_guard import ensure_not_updating
 
-TASK_TABLE = "ota_review_reply_task"
 REPLY_URL = "https://ebooking.ctrip.com/restapi/soa2/26353/setCommentReply"
 CHANNEL_KEYS = {label: key for key, (_, label) in CHANNELS.items()} | {key: key for key in CHANNELS}
 
 
-def find_review(client, channel, review_id, poi_id):
+def find_review(client, channel, review_id, poi_id, *, prefer_pending=False):
     source, _ = CHANNELS[channel]
+    if prefer_pending:
+        for _, reviews in pending_pages(client, source, poi_id):
+            for review in reviews:
+                if str(review.get("commentId")) == review_id:
+                    return review
     for page in range(1, 21):
         payload = client.fetch_page(page, 30, source)
         reviews = payload.get("commentlist")
@@ -55,8 +61,8 @@ def submit_reply(client, review_id, source, content):
         raise ValueError("携程接口未确认回复成功")
 
 
-def execute_reply(client, channel, review_id, poi_id, content):
-    review = find_review(client, channel, review_id, poi_id)
+def execute_reply(client, channel, review_id, poi_id, content, *, prefer_pending=False):
+    review = find_review(client, channel, review_id, poi_id, prefer_pending=prefer_pending)
     existing = merchant_reply(review)
     if str(existing.get("replyContent") or "").strip() == content:
         return to_datetime(existing.get("replyTime"))
@@ -66,6 +72,68 @@ def execute_reply(client, channel, review_id, poi_id, content):
         raise ValueError("携程当前不允许回复该评论")
     submit_reply(client, review_id, CHANNELS[channel][0], content)
     return datetime.now().replace(microsecond=0)
+
+
+def resolve_review(cursor, hotel_id, channel, review_id, has_snapshot):
+    scope = (hotel_id, channel, review_id)
+    pending = None
+    if has_snapshot:
+        cursor.execute(f"SELECT poi_id FROM `{PENDING_TABLE}` "
+                       "WHERE hotel_id=%s AND platform_scope=%s AND review_id=%s", scope)
+        pending = cursor.fetchone()
+    conditions = "hotel_id=%s AND platform_scope=%s AND review_id=%s"
+    if pending:
+        conditions += " AND poi_id=%s"
+    cursor.execute(f"SELECT id,poi_id FROM `{TABLE_NAME}` WHERE {conditions} LIMIT 2", (*scope, *pending) if pending else scope)
+    matches = cursor.fetchall()
+    if pending and not matches:
+        return None, pending[0], True
+    if len(matches) != 1 or not matches[0][1]:
+        raise ValueError("本地评价无法唯一匹配到携程门店")
+    local_id, poi_id = matches[0]
+    return local_id, poi_id, bool(pending)
+
+
+def process_task(client, db, cursor, hotel_id, task):
+    item_id, label, review_id, content = task
+    channel = CHANNEL_KEYS.get(label)
+    lock = channel_lock(cursor, hotel_id, channel) if channel else nullcontext(True)
+    with lock as locked:
+        if not locked:
+            print(f"Ctrip reply task {item_id} deferred: channel synchronization in progress")
+            return True
+        cursor.execute(f"UPDATE `{TASK_TABLE}` SET status='processing',error_message=NULL "
+                       "WHERE id=%s AND status='pending'", (item_id,))
+        if not cursor.rowcount:
+            return True
+        try:
+            content = str(content or "").strip()
+            if not channel or not review_id or not content:
+                raise ValueError("评价渠道、评论 ID 或回复内容无效")
+            has_snapshot = table_exists(cursor, PENDING_TABLE)
+            local_id, poi_id, prefer_pending = resolve_review(cursor, hotel_id, channel, review_id, has_snapshot)
+            replied_at = execute_reply(client, channel, str(review_id), str(poi_id), content,
+                                       prefer_pending=prefer_pending)
+            db.begin()
+            if local_id is not None:
+                cursor.execute(f"UPDATE `{TABLE_NAME}` SET is_replied=1,merchant_reply_content=%s,"
+                               "merchant_reply_time=%s WHERE id=%s AND hotel_id=%s", (content, replied_at, local_id, hotel_id))
+            if has_snapshot:
+                cursor.execute(f"DELETE FROM `{PENDING_TABLE}` "
+                               "WHERE hotel_id=%s AND platform_scope=%s AND review_id=%s AND poi_id=%s",
+                               (hotel_id, channel, review_id, poi_id))
+            cursor.execute(f"UPDATE `{TASK_TABLE}` SET status='success',replied_at=COALESCE(%s,NOW()) "
+                           "WHERE id=%s AND status='processing'", (replied_at, item_id))
+            db.commit()
+            print(f"Ctrip reply task {item_id} completed")
+            return True
+        except Exception as exc:
+            db.rollback()
+            reason = str(exc) if type(exc) is ValueError else f"携程回复未确认（{type(exc).__name__}），请在后台核对"
+            cursor.execute(f"UPDATE `{TASK_TABLE}` SET status='failed',error_message=%s "
+                           "WHERE id=%s AND status='processing'", (reason[:500], item_id))
+            print(f"Ctrip reply task {item_id} failed: {reason}")
+            return False
 
 
 def run_tasks(hotel_id, limit, task_id=None):
@@ -85,37 +153,8 @@ def run_tasks(hotel_id, limit, task_id=None):
     failed = False
     try:
         with connect_mysql(autocommit=True) as db, db.cursor() as cursor:
-            for item_id, label, review_id, content in tasks:
-                cursor.execute(f"UPDATE `{TASK_TABLE}` SET status='processing',error_message=NULL "
-                               "WHERE id=%s AND status='pending'", (item_id,))
-                if not cursor.rowcount:
-                    continue
-                try:
-                    channel = CHANNEL_KEYS.get(label)
-                    content = str(content or "").strip()
-                    if not channel or not review_id or not content:
-                        raise ValueError("评价渠道、评论 ID 或回复内容无效")
-                    cursor.execute(f"SELECT id,poi_id FROM `{TABLE_NAME}` WHERE hotel_id=%s "
-                                   "AND platform_scope=%s AND review_id=%s LIMIT 2", (hotel_id, channel, review_id))
-                    matches = cursor.fetchall()
-                    if len(matches) != 1 or not matches[0][1]:
-                        raise ValueError("本地评价无法唯一匹配到携程门店")
-                    local_id, poi_id = matches[0]
-                    replied_at = execute_reply(client, channel, str(review_id), str(poi_id), content)
-                    db.begin()
-                    cursor.execute(f"UPDATE `{TABLE_NAME}` SET is_replied=1,merchant_reply_content=%s,"
-                                   "merchant_reply_time=%s WHERE id=%s AND hotel_id=%s", (content, replied_at, local_id, hotel_id))
-                    cursor.execute(f"UPDATE `{TASK_TABLE}` SET status='success',replied_at=COALESCE(%s,NOW()) "
-                                   "WHERE id=%s AND status='processing'", (replied_at, item_id))
-                    db.commit()
-                    print(f"Ctrip reply task {item_id} completed")
-                except Exception as exc:
-                    db.rollback()
-                    failed = True
-                    reason = str(exc) if type(exc) is ValueError else f"携程回复未确认（{type(exc).__name__}），请在后台核对"
-                    cursor.execute(f"UPDATE `{TASK_TABLE}` SET status='failed',error_message=%s "
-                                   "WHERE id=%s AND status='processing'", (reason[:500], item_id))
-                    print(f"Ctrip reply task {item_id} failed: {reason}")
+            for task in tasks:
+                failed |= not process_task(client, db, cursor, hotel_id, task)
     finally:
         client.session.close()
     return int(failed)

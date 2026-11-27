@@ -94,7 +94,7 @@ class MeituanReviewDetailClient:
             self.close()
             raise
 
-    def fetch_page(self, offset: int, limit: int) -> dict[str, Any]:
+    def fetch_page(self, offset: int, limit: int, *, reply_type: int = 0) -> dict[str, Any]:
         query = urlencode(
             {
                 "poiId": POI_ID,
@@ -102,7 +102,7 @@ class MeituanReviewDetailClient:
                 "platform": self.platform,
                 "tag": "",
                 "keywords": "",
-                "replyType": 0,
+                "replyType": reply_type,
                 "offset": offset,
                 "limit": limit,
                 "bizAccountId": BIZ_ACCOUNT_ID,

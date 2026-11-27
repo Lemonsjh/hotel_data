@@ -77,6 +77,8 @@ TASKS = {
     "ctrip_promotion_balance": ("ctrip", "ctrip_promotion_balance_data.py", []),
     "ctrip_review": ("ctrip", "ctrip_review_data.py", ["--sync-db"]),
     "ctrip_review_detail": ("ctrip", "ctrip_review_detail_data.py", ["--sync-db"]),
+    "meituan_pending_reviews": ("meituan", "meituan_pending_reviews.py", []),
+    "ctrip_pending_reviews": ("ctrip", "ctrip_pending_reviews.py", []),
     "ctrip_promotion": ("ctrip", "ctrip_promotion_data.py", ["--sync-db"]),
     "ctrip_goods_price": ("ctrip", "ctrip_goods_price_mapping.py", []),
     "pms_fetch": ("pms", "fetch_main.py", []),
@@ -134,7 +136,9 @@ def load_settings() -> dict[str, Any]:
         changed = True
     for name in TASKS:
         if name not in tasks:
-            tasks[name] = name in {"meituan_promotion_balance", "ctrip_promotion_balance"}
+            tasks[name] = (bool(tasks.get(name.replace("_pending_reviews", "_review_detail")))
+                           if name in {"meituan_pending_reviews", "ctrip_pending_reviews"}
+                           else name in {"meituan_promotion_balance", "ctrip_promotion_balance"})
             changed = True
     pms = settings.setdefault("pms", {})
     selected, provider_changed = pms_providers.normalize_provider(settings)

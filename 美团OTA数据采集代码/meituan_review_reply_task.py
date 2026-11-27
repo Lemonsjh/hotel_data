@@ -13,6 +13,8 @@ from meituan_config import BIZ_ACCOUNT_ID, PARTNER_ID, POI_ID, USER_AGENT
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ota_mysql_writer import connect_mysql
+from meituan_pending_reviews import PENDING_TABLE
+from pending_review_store import channel_lock, table_exists
 from meituan_page_capture import browser_profile_lock, page_access_issue, profile_path
 
 
@@ -68,42 +70,45 @@ def review_reply_state(hotel_id: str, review_id: str, channel_source: str) -> bo
                 (hotel_id, channel_source, "美团" if channel_source == "meituan" else "大众点评", review_id),
             )
             result = cursor.fetchone()
+            if result is None and table_exists(cursor, PENDING_TABLE):
+                cursor.execute(f"SELECT 0 FROM `{PENDING_TABLE}` WHERE hotel_id=%s AND platform_scope=%s "
+                               "AND review_id=%s AND poi_id=%s", (hotel_id, channel_source, review_id, POI_ID))
+                result = cursor.fetchone()
         return None if result is None else bool(result[0])
     finally:
         connection.close()
 
 
-def finish_task(task_id: int, status: str, error: str | None = None) -> None:
-    connection = connect_mysql(autocommit=True)
-    try:
-        with connection.cursor() as cursor:
-            if status == "success":
-                cursor.execute(
-                    f"UPDATE `{TASK_TABLE}` SET status=%s, error_message=NULL, replied_at=NOW() WHERE id=%s",
-                    (status, task_id),
-                )
-            else:
-                cursor.execute(
-                    f"UPDATE `{TASK_TABLE}` SET status=%s, error_message=%s WHERE id=%s",
-                    (status, (error or "reply failed")[:500], task_id),
-                )
-    finally:
-        connection.close()
+def fail_task(task_id: int, error: str) -> None:
+    with connect_mysql(autocommit=True) as db, db.cursor() as cursor:
+        cursor.execute(f"UPDATE `{TASK_TABLE}` SET status='failed', error_message=%s WHERE id=%s",
+                       (error[:500], task_id))
 
 
-def mark_review_replied(hotel_id: str, review_id: str, channel_source: str, content: str) -> None:
-    """Keep the local detail record aligned only after platform confirmation."""
-    connection = connect_mysql(autocommit=True)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"UPDATE `{REVIEW_TABLE}` SET is_replied=1, merchant_reply_content=%s, "
-                "merchant_reply_time=NOW() WHERE hotel_id=%s "
-                "AND channel_source IN (%s, %s) AND review_id=%s",
-                (content, hotel_id, channel_source, "美团" if channel_source == "meituan" else "大众点评", review_id),
-            )
-    finally:
-        connection.close()
+def complete_task(hotel_id, task, *, newly_replied):
+    channel = task["channel_source"]
+    with connect_mysql(autocommit=True) as db, db.cursor() as cursor:
+        with channel_lock(cursor, hotel_id, channel, timeout=30) as locked:
+            if not locked:
+                raise RuntimeError("美团待回复快照正在更新")
+            db.begin()
+            try:
+                if newly_replied:
+                    cursor.execute(
+                        f"UPDATE `{REVIEW_TABLE}` SET is_replied=1, merchant_reply_content=%s, "
+                        "merchant_reply_time=NOW() WHERE hotel_id=%s AND channel_source IN (%s,%s) AND review_id=%s",
+                        (task["reply_content"], hotel_id, channel, "美团" if channel == "meituan" else "大众点评",
+                         task["review_id"]),
+                    )
+                cursor.execute(f"UPDATE `{TASK_TABLE}` SET status='success', error_message=NULL, "
+                               "replied_at=NOW() WHERE id=%s", (task["id"],))
+                if table_exists(cursor, PENDING_TABLE):
+                    cursor.execute(f"DELETE FROM `{PENDING_TABLE}` WHERE hotel_id=%s AND platform_scope=%s "
+                                   "AND review_id=%s AND poi_id=%s", (hotel_id, channel, task["review_id"], POI_ID))
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
 
 
 def fail_interrupted_tasks(hotel_id: str) -> None:
@@ -146,7 +151,8 @@ class ReplyClient:
             raise
 
     def platform_reply_state(self, review_id: str, review_platform: int) -> bool | None:
-        for offset in range(1, 11):
+        offset = 1
+        while True:
             query = urlencode({
                 "poiId": POI_ID, "partnerId": PARTNER_ID, "platform": review_platform,
                 "tag": "", "keywords": "", "replyType": 0, "offset": offset, "limit": 10,
@@ -173,8 +179,9 @@ class ReplyClient:
             for item in comments:
                 if str(item.get("id") or "") == review_id:
                     return bool(item.get("replyId") or str(item.get("bizReply") or "").strip())
-            if len(comments) < 10:
+            if len(comments) < 10 or offset * 10 >= int(payload["data"]["total"]):
                 break
+            offset += 1
         return None
 
     def reply(self, review_id: str, content: str, review_platform: int) -> None:
@@ -257,18 +264,17 @@ def run(hotel_id: str, limit: int, task_id: int | None) -> int:
                     raise RuntimeError("Review was not found in the collected Meituan review table")
                 state = client.platform_reply_state(task["review_id"], review_platform)
                 if state:
-                    finish_task(task["id"], "success")
+                    complete_task(hotel_id, task, newly_replied=False)
                     print(f"Reply task {task['id']} already completed")
                     continue
                 client.reply(task["review_id"], task["reply_content"], review_platform)
                 if client.platform_reply_state(task["review_id"], review_platform) is not True:
                     raise RuntimeError("Reply request returned but platform confirmation was not found")
-                mark_review_replied(hotel_id, task["review_id"], channel_source, task["reply_content"])
-                finish_task(task["id"], "success")
+                complete_task(hotel_id, task, newly_replied=True)
                 print(f"Reply task {task['id']} completed")
             except Exception as exc:
                 failed += 1
-                finish_task(task["id"], "failed", str(exc))
+                fail_task(task["id"], str(exc))
                 print(f"Reply task {task['id']} failed: {exc}")
     finally:
         if client:

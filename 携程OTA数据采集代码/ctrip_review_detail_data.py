@@ -65,10 +65,10 @@ class CtripReviewDetailClient:
         if EXTRA_HEADERS:
             self.session.headers.update(EXTRA_HEADERS)
 
-    def fetch_page(self, page_index: int, page_size: int, channel_source: str) -> dict[str, Any]:
+    def fetch_page(self, page_index: int, page_size: int, channel_source: str, *, pending: bool = False) -> dict[str, Any]:
         response = self.session.post(
             API_URL,
-            json=build_payload(page_index, page_size, channel_source),
+            json=build_payload(page_index, page_size, channel_source, pending=pending),
             timeout=30,
         )
         response.raise_for_status()
@@ -88,7 +88,7 @@ class CtripReviewDetailClient:
         return payload
 
 
-def build_payload(page_index: int, page_size: int, channel_source: str) -> dict[str, Any]:
+def build_payload(page_index: int, page_size: int, channel_source: str, *, pending: bool = False) -> dict[str, Any]:
     return {
         "reqHead": {
             "host": "ebooking.ctrip.com",
@@ -110,8 +110,8 @@ def build_payload(page_index: int, page_size: int, channel_source: str) -> dict[
             "protocal": "https:",
         },
         "keyWord": "", "pageIndex": page_index, "commentStatus": "",
-        "isNeedTranslate": False, "sortType": 0, "catalogTab": "all",
-        "catalogName": "\u5168\u90e8\u70b9\u8bc4", "pageSize": page_size,
+        "isNeedTranslate": False, "sortType": 0, "catalogTab": "NotFeedBack" if pending else "all",
+        "catalogName": "待回复" if pending else "全部点评", "pageSize": page_size,
         "needOrder": True, "endDate": "", "startDate": "",
         "channelSource": channel_source, "header": {"platform": "WEB"},
     }

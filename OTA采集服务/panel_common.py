@@ -55,6 +55,8 @@ TASK_LABELS = {
     "ctrip_promotion_balance": "携程金字塔余额",
     "ctrip_review": "携程评价",
     "ctrip_review_detail": "携程评价明细",
+    "meituan_pending_reviews": "美团待回复评价",
+    "ctrip_pending_reviews": "携程待回复评价",
     "ctrip_promotion": "携程活动",
     "ctrip_goods_price": "携程调价商品",
     "pms_fetch": "PMS 数据采集",

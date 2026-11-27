@@ -38,8 +38,8 @@ class FoxhisIntegrationTests(unittest.TestCase):
 
     def test_task_registry_and_defaults_still_match_confirmed_rules(self):
         settings = local_reset.default_settings()
-        self.assertEqual(len(runner.TASKS), 33)
-        self.assertTrue({'meituan_promotion_balance', 'ctrip_promotion_balance'} <= runner.TASKS.keys())
+        self.assertEqual(len(runner.TASKS), 35)
+        self.assertTrue({'meituan_promotion_balance', 'ctrip_promotion_balance', 'ctrip_pending_reviews'} <= runner.TASKS.keys())
         self.assertNotIn("meituan_exposure_source", runner.TASKS)
         self.assertEqual(settings["pms"]["provider"], "byh")
         self.assertFalse(settings["foxhis"]["enabled"])

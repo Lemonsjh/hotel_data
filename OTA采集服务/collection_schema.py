@@ -37,6 +37,8 @@ TASK_TABLES = {
     'ctrip_promotion_balance': ('ota_promotion_balance',),
     'ctrip_review': ('ctrip_ota_review_overview', 'ctrip_ota_review_ranking'),
     'ctrip_review_detail': ('ctrip_ota_review_detail',),
+    'meituan_pending_reviews': ('meituan_ota_pending_review_snapshot',),
+    'ctrip_pending_reviews': ('ctrip_ota_pending_review_snapshot',),
     'ctrip_promotion': ('ctrip_ota_promotion_activity', 'ctrip_ota_activity_product_detail',
                         'ctrip_ota_promotion_activity_performance'),
     'ctrip_goods_price': ('ctrip_ota_goods_price_mapping',),

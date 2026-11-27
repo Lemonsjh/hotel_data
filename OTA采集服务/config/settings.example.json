@@ -191,6 +191,8 @@
     "ctrip_promotion_balance": true,
     "ctrip_review": true,
     "ctrip_review_detail": true,
+    "meituan_pending_reviews": true,
+    "ctrip_pending_reviews": true,
     "ctrip_promotion": true,
     "ctrip_goods_price": true,
     "pms_fetch": true
