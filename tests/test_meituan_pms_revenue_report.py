@@ -110,11 +110,11 @@ class RevenueTests(unittest.TestCase):
         windows = report.collection_windows(self.now.date(), True)
         self.assertEqual((len(windows), windows[0], windows[-1]),
                          (4, (date(2026, 7, 1), date(2026, 7, 31)), (self.start, self.end)))
-        self.assertEqual(report.collection_windows(self.now.date(), False), [(self.start, self.end)])
+        self.assertEqual(report.collection_windows(self.now.date(), False), [(self.end, self.end)])
         first = report.collection_windows(date(2027, 1, 1), True)
         self.assertEqual((len(first), first[0], first[-1]),
                          (3, (date(2026, 10, 1), date(2026, 10, 31)), (date(2026, 12, 1), date(2026, 12, 31))))
-        self.assertEqual(report.collection_windows(date(2024, 3, 1), False), [(date(2024, 2, 1), date(2024, 2, 29))])
+        self.assertEqual(report.collection_windows(date(2024, 3, 1), False), [(date(2024, 2, 29), date(2024, 2, 29))])
 
     def test_initial_detection_is_only_current_hotel_and_meituan_source(self):
         db = self.database()
@@ -252,18 +252,28 @@ class RevenueTests(unittest.TestCase):
         report.sync_mysql([], "hotel", self.now, initial=False, connection=empty)
         empty.cursor.assert_not_called()
 
+    def test_missing_yesterday_only_completes_for_confirmed_zero_revenue(self):
+        with patch.object(report, "connect_mysql") as connect:
+            cur = connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+            for result in (None, (None,), (150,)):
+                cur.fetchone.return_value = result
+                with self.assertRaises(ValueError):
+                    report.check_missing_yesterday([], "hotel", self.end, None)
+            cur.fetchone.return_value = (Decimal("0.00"),)
+            report.check_missing_yesterday([], "hotel", self.end, None)
+
     def test_takeover_clamps_windows_to_start_date(self):
         takeover = date(2026, 11, 5)
         self.assertEqual(report.collection_windows(date(2026, 11, 12), True, takeover),
                          [(takeover, date(2026, 11, 11))])
         self.assertEqual(report.collection_windows(date(2026, 11, 12), False, takeover),
-                         [(takeover, date(2026, 11, 11))])
+                         [(date(2026, 11, 11), date(2026, 11, 11))])
         self.assertEqual(report.collection_windows(date(2026, 11, 12), True, date(2027, 1, 1)), [])
 
     def test_takeover_replaces_other_pms_rows_inside_window(self):
         takeover = date(2026, 11, 5)
         now = datetime(2026, 11, 12, 10, 0)
-        rows = [{**row, "business_date": date(2026, 11, 6), "snapshot_time": now} for row in self.rows()]
+        rows = [{**row, "business_date": date(2026, 11, 11), "snapshot_time": now} for row in self.rows()]
         db = self.database()
         db.seed(dict(rows[0], source_platform="PMS（别样红）", room_no="999"))
         db.commit()
@@ -274,7 +284,7 @@ class RevenueTests(unittest.TestCase):
 
     def test_takeover_after_window_rejects_rows_without_writing(self):
         now = datetime(2026, 11, 12, 10, 0)
-        rows = [{**row, "business_date": date(2026, 11, 6), "snapshot_time": now} for row in self.rows()]
+        rows = [{**row, "business_date": date(2026, 11, 11), "snapshot_time": now} for row in self.rows()]
         connection = MagicMock()
         with self.assertRaises(ValueError):
             report.sync_mysql(rows, "hotel", now, initial=False, connection=connection, takeover=date(2027, 1, 1))

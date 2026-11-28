@@ -379,7 +379,7 @@ def ensure_source_payment_id(cursor) -> None:
 def write_rs01(rows: list[dict], snapshot: datetime, *, initial: bool, connection=None) -> None:
     from meituan_pms.revenue_report import collection_windows
 
-    windows = collection_windows(snapshot.date(), initial)
+    windows = collection_windows(snapshot.date(), initial, monthly_refresh=True)
     if not rows:
         return
     first = rows[0]

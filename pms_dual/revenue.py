@@ -17,7 +17,7 @@ def _month_is_blank(item: dict) -> bool:
 def collect_rezen(snapshot: datetime, *, initial: bool) -> list[dict]:
     from rezen_pms.business import fetch_daily, fetch_months, fetch_room_fee_lines
 
-    windows = collection_windows(snapshot.date(), initial)
+    windows = collection_windows(snapshot.date(), initial, monthly_refresh=True)
     months = fetch_months(windows[0][0], snapshot.date())
     lines = []
     daily: dict = {}
@@ -44,7 +44,7 @@ def collect_rezen(snapshot: datetime, *, initial: bool) -> list[dict]:
 def collect_meituan(cookie: str, hotel_id: str, hotel_name: str, org_id: str, snapshot: datetime, *,
                     initial: bool) -> list[dict]:
     rows = collect_revenue(cookie, hotel_id, hotel_name, org_id, initial=initial, snapshot=snapshot,
-                           clock=lambda: snapshot)
+                           clock=lambda: snapshot, monthly_refresh=True)
     for row in rows:
         row["source_platform"] = SOURCE
         row["snapshot_time"] = snapshot

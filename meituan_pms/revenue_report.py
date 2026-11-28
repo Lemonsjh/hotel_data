@@ -47,11 +47,11 @@ def needs_initial_backfill(hotel_id, connection=None):
             connection.close()
 
 
-def collection_windows(today, initial, takeover=None):
+def collection_windows(today, initial, takeover=None, *, monthly_refresh=False):
     latest = today - timedelta(days=1)
     current = (latest.replace(day=1), latest)
     if not initial:
-        return _clamp([current], takeover)
+        return _clamp([current if monthly_refresh else (latest, latest)], takeover)
     windows, end = [], today.replace(day=1) - timedelta(days=1)
     for _ in range(BACKFILL_MONTHS):
         start = end.replace(day=1)
@@ -151,13 +151,13 @@ def transform(response, org_id, start, end, snapshot, hotel_id, hotel_name):
     return rows
 
 
-def collect(cookie, hotel_id, hotel_name, org_id, *, initial, snapshot=None, session=None, clock=now_shanghai, wait=time.sleep):
+def collect(cookie, hotel_id, hotel_name, org_id, *, initial, snapshot=None, session=None, clock=now_shanghai, wait=time.sleep, monthly_refresh=False):
     if not hotel_id or not hotel_name:
         raise ValueError("请配置酒店 ID 和美团 PMS 酒店名称")
     if not cookie.strip() or "\r" in cookie or "\n" in cookie:
         raise ValueError("请先手动登录美团 PMS")
     snapshot = snapshot or clock()
-    windows = collection_windows(snapshot.date(), initial, takeover_date())
+    windows = collection_windows(snapshot.date(), initial, takeover_date(), monthly_refresh=monthly_refresh)
     bodies = [request_body(org_id, start, end) for start, end in windows]
     owns = session is None
     session = session or requests.Session()
@@ -243,9 +243,20 @@ def sync_mysql(rows, hotel_id, snapshot, *, initial, connection=None, takeover=N
             connection.close()
 
 
+def check_missing_yesterday(rows, hotel_id, yesterday, takeover):
+    if (takeover and yesterday < takeover) or any(row["business_date"] == yesterday for row in rows):
+        return
+    with connect_mysql() as db, db.cursor() as cur:
+        cur.execute("SELECT room_revenue FROM jy01_hotel_statistics_daily WHERE hotel_id=%s "
+                    "AND source_platform=%s AND business_date=%s AND dimension_type='总营业指标' "
+                    "AND dimension_name='总营业指标' AND room_count>0", (hotel_id, SOURCE, yesterday))
+        if cur.fetchone() != (0,):
+            raise ValueError(f"RS01 {yesterday} 暂无明细，经营日报尚未确认零房费，下轮重试")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="美团 PMS RS01 CW04 房费日报采集")
-    parser.add_argument("--dry-run", action="store_true", help="只查询本月至昨日，不连接数据库或补采历史")
+    parser.add_argument("--dry-run", action="store_true", help="只查询昨日，不连接数据库或补采历史")
     args = parser.parse_args(argv)
     try:
         hotel_id = os.environ.get("HOTEL_ID", "").strip()
@@ -255,6 +266,7 @@ def main(argv=None):
                        os.environ.get("MEITUAN_PMS_HOTEL_NAME", "").strip(), os.environ.get("MEITUAN_PMS_ORG_ID", "").strip(),
                        initial=initial, snapshot=snapshot)
         if not args.dry_run:
+            check_missing_yesterday(rows, hotel_id, snapshot.date() - timedelta(days=1), takeover_date())
             sync_mysql(rows, hotel_id, snapshot, initial=initial)
         print(f"美团 PMS RS01 房费日报{'校验' if args.dry_run else '入库'}完成：{len(rows)} 条")
         return 0
