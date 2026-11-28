@@ -123,6 +123,22 @@ class PMSRunnerTests(unittest.TestCase):
             clock.now.return_value = datetime(2026, 11, 17, 12)
             self.assertTrue(all(item["status"] == "success" for item in self.run_task()["subtasks"]))
 
+    def test_rs01_before_five_skips_then_retries_failure(self):
+        from datetime import datetime
+        import pms_subtasks
+
+        self.specs[:] = [("meituan_pms", "revenue_report.py", [])]
+        (self.root / "revenue_report.py").touch()
+        self.execute.side_effect = [ProcessResult(1, "Error: failed"), ProcessResult(0, "OK")]
+        with patch.object(pms_subtasks, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 11, 28, 4, 59)
+            self.assertEqual(self.run_task()["subtasks"][0]["status"], "skipped")
+            self.execute.assert_not_called()
+            clock.now.return_value = datetime(2026, 11, 28, 5)
+            self.assertEqual(self.run_task()["status"], "failed")
+            self.assertEqual(self.run_task()["subtasks"][0]["status"], "success")
+            self.assertEqual(self.run_task()["subtasks"][0]["status"], "skipped")
+
     def test_meituan_refreshes_live_reports_and_scopes_daily_marks_by_org(self):
         from datetime import datetime
         import pms_subtasks

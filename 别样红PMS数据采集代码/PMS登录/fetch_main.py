@@ -30,7 +30,7 @@ import pms_utils
 import runner
 from data_retention import cleanup_pms_history
 from mysql_connection import connect_mysql
-from pms_subtasks import SHANGHAI, daily_state
+from pms_subtasks import RS01_START_HOUR, SHANGHAI, daily_state
 
 OUTPUT_DIR = os.path.join(current_dir, "output")
 FETCH_DELAY_MIN_SECONDS = 2.0
@@ -233,6 +233,9 @@ def main() -> int:
         fetch_jobs = [job for job in fetch_jobs if job[0] in selected]
     else:
         fetch_jobs = [job for job in fetch_jobs if job[0] not in {"KF11", "JD04"}]
+        if datetime.now(SHANGHAI).hour < RS01_START_HOUR:
+            print("⏭️ RS01 在北京时间 05:00 后采集，本轮跳过")
+            fetch_jobs = [job for job in fetch_jobs if job[0] != "RS01"]
     checkpoint = None
     if os.environ.get("PMS_DAILY_CHECKPOINT") == "1" and not args.reports:
         checkpoint = daily_state(runner, "pms", os.environ)

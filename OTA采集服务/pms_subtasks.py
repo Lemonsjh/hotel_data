@@ -23,6 +23,13 @@ DAILY_SCRIPTS = {
     "foxhis": {"foxhis_jl01_data.py", "foxhis_jy01_data.py", "foxhis_jy03_data.py", "foxhis_jl11_data.py"},
 }
 SHANGHAI = timezone(timedelta(hours=8))
+RS01_START_HOUR = 5
+RS01_SCRIPTS = {
+    ("bypms", "bypms_rs01_data.py"),
+    ("huiyun", "revenue_report.py"),
+    ("meituan_pms", "revenue_report.py"),
+    ("meituan_rezen", "revenue_report.py"),
+}
 
 
 def daily_state(api, platform, env):
@@ -60,6 +67,12 @@ def run_pms_subtasks(specs, settings, status, result, python, base_dir, log_path
         with log_path.open("w" if index == 0 else "a", encoding="utf-8") as log:
             log.write(f"=== PMS 子采集：{script.name} ===\n")
         try:
+            if (platform, script.name) in RS01_SCRIPTS and datetime.now(SHANGHAI).hour < RS01_START_HOUR:
+                child["status"] = "skipped"
+                with log_path.open("a", encoding="utf-8") as log:
+                    log.write("RS01 在北京时间 05:00 后采集，本轮跳过。\n")
+                api.save_json(api.STATUS_PATH, status)
+                continue
             if not script.exists():
                 raise FileNotFoundError(f"Script not found: {script}")
             env = api.build_env(settings, platform)
